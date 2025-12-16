@@ -1,30 +1,37 @@
-# AI_DnD_Assistante-
+# Natural Language D&D Character Sheet Assistant 
+## Evgeny Mishlyakov - 337637698, Mikhail Gruntov - 34595031
+### Problem & Motivation
+ Creating a character for a tabletop role-playing game (TTRPG), such as Dungeons & Dragons 5th Edition (D&D 5e) [1], is a highly creative but mechanically complex process. Players often have a vivid narrative concept—a half-elf ranger abandoned in the woods, a charming rogue with a tragic past—but struggle to translate this into valid, rule-compliant, and optimized character sheet mechanics (e.g., ability scores, class features, spells, equipment). This mechanical "heavy lifting" can deter new players and disrupt creative flow for veterans, forcing them to switch between storytelling and rulebook look-ups.
+Our project, the AI D&D Assistant (ADA), addresses this by enabling users to describe their character concept in plain English and instantly generate a complete, valid character sheet, bridging the gap between narrative creativity and mechanical correctness.
+### System Objectives
+- Core Objective: Translate a short natural-language character concept into a complete and valid D&D 5e character sheet, including ability scores, skills, proficiencies, equipment, and spells.
+ 
+- Secondary Objective: Provide an AI-assisted journaling feature that transforms rough notes about in-game events (e.g., “We fought a goblin ambush…”) into polished, concise first-person or third-person journal entries for the character sheet’s Notes section, sustaining a narrative-first workflow throughout play.
+### Existing Technology and Theoretical Review
+ Current tools either rely on structured, menu-driven workflows (e.g., D&D Beyond [2]) or generic LLM assistants that generate backstories or art but not consistently valid stat blocks. Tools like CharGen [3] automate stat generation but still require structured inputs rather than pure natural language. ADA instead focuses on Narrative-to-Mechanics Translation with minimal user structure, acting as a creativity support system by reducing cognitive load.
+The design aligns with Human-AI Co-creation, where AI supports rather than replaces human creativity. The AI-produced sheet becomes a strong, rule-correct baseline that the player iteratively refines, promoting a sense of agency and collaborative synergy.
+### Approach (Intelligence Design)
+ The system’s “intelligence” is built around a specialized LLM orchestrated through a hybrid design.
 
-AI D&D assistant.
+- LLM-based Components: Role Configuration: The model is framed as an “Expert D&D 5e Rule Arbitrator” and “Narrative Translator.”
 
-## ADA Voice Capture (Speech → Text)
 
-The first feature in this project is a lightweight speech-to-text capture UI, intended as the front door for ADA's narrative-to-mechanics pipeline.
+- Prompting Strategy: The model extracts core attributes (race, class, background, personality traits, key strengths) and assigns appropriate mechanics based on D&D 5e rules.
 
-### What it does
 
-- Records from your microphone using the browser's speech recognition API (Chrome/Edge)
-- Streams recognized speech into a live-updating text area
-- Lets you start/stop capture without any menus or complex flows
+- Orchestration Logic: A deterministic validation layer checks race-based bonuses, starting equipment, proficiency bonus, saving throws, and other common rule elements. Detected violations trigger an automatic self-correction loop before results reach the user.
 
-This gives you a quick way to dictate rough gameplay notes that future components can turn into polished narrative or mechanics-ready data.
+- Algorithmic Components: Rule Database Integration: A database of D&D 5e mechanics (spells, equipment, proficiency tables) ensures mechanical accuracy.
 
-### Files
+- Template Generation: Output is placed into a fixed JSON or structured text template to guarantee completeness and consistency.
 
-- `index.html` – Main page and UI shell
-- `style.css` – Minimal styling for a clean, dark ADA-themed interface
-- `speech.js` – All client-side logic for speech recognition and transcript handling
+- Personalization/Search: Clustering or keyword matching may guide ambiguous class or spell assignments.
 
-### How to run
 
-1. Open `index.html` in a modern Chromium-based browser (Chrome or Edge recommended).
-2. When prompted, allow microphone access.
-3. Click **Start Recording**, then speak your D&D notes or character ideas.
-4. Click **Stop** when you are done; the transcript remains in the text area for copying or later processing.
+### Enabling Meaningful Human Interaction:
+ The system reduces creative friction and encourages iterative collaboration. The user provides the narrative what, while the AI handles the mechanical how, allowing the player to act as editor and creative director over a solid, rule-correct baseline.
 
-> Note: The current implementation uses the browser's built-in speech recognition, so support on Firefox and some Linux setups may be limited. A server-side speech engine (e.g., Whisper) can be wired in later as part of ADA's full architecture.
+### References
+Wizards of the Coast. (2014). Player’s handbook (5th ed.). Wizards of the Coast.
+Wizards of the Coast. (n.d.). D&D Beyond. https://www.dndbeyond.com
+CharGen. (n.d.). CharGen: D&D 5e character generator. https://char-gen.com/character

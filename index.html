@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>ADA Voice Capture</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <main class="app">
+    <header class="app__header">
+      <h1>ADA Voice Capture</h1>
+      <p>Speak your D&D notes and let ADA turn them into text.</p>
+    </header>
+
+    <section class="controls">
+      <button id="startBtn" class="btn btn--primary">Start Recording</button>
+      <button id="stopBtn" class="btn" disabled>Stop</button>
+      <span id="status" class="status">Idle</span>
+    </section>
+
+    <section class="output">
+      <label for="transcript">Transcript</label>
+      <textarea id="transcript" class="output__text" rows="12" placeholder="Your spoken notes will appear here..."></textarea>
+    </section>
+
+    <section class="notes">
+      <p class="hint">Tip: Talk as if you were journaling. For example, "We descended into the crypt and met a nervous goblin..."</p>
+      <p class="warning" id="supportWarning" hidden>
+        Speech recognition is not supported in this browser. Try the latest Chrome or Edge.
+      </p>
+    </section>
+  </main>
+
+  <script src="speech.js"></script>
+</body>
+</html>

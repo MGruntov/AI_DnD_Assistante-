@@ -9,6 +9,40 @@
   const statusEl = document.getElementById("status");
   const transcriptEl = document.getElementById("transcript");
   const supportWarning = document.getElementById("supportWarning");
+  const generatePortraitsBtn = document.getElementById("generatePortraitsBtn");
+  const portraitStatusEl = document.getElementById("portraitStatus");
+
+  const authSection = document.getElementById("authSection");
+  const homeSection = document.getElementById("homeSection");
+  const profileSection = document.getElementById("profileSection");
+  const loginView = document.getElementById("loginView");
+  const registerView = document.getElementById("registerView");
+  const loginForm = document.getElementById("loginForm");
+  const registerForm = document.getElementById("registerForm");
+  const showRegisterBtn = document.getElementById("showRegisterBtn");
+  const showLoginBtn = document.getElementById("showLoginBtn");
+  const authMessageEl = document.getElementById("authMessage");
+  const currentUserLabel = document.getElementById("currentUserLabel");
+  const appNav = document.getElementById("appNav");
+  const logoutBtn = document.getElementById("logoutBtn");
+  const profileUsernameEl = document.getElementById("profileUsername");
+  const profilePortraitEl = document.getElementById("profilePortrait");
+
+  const portraitImgs = [
+    document.getElementById("portraitImg0"),
+    document.getElementById("portraitImg1"),
+    document.getElementById("portraitImg2"),
+  ];
+  const portraitCards = Array.from(
+    document.querySelectorAll(".portrait-card")
+  );
+  const portraitSelectButtons = Array.from(
+    document.querySelectorAll(".portrait-card__select-btn")
+  );
+
+  const PORTRAIT_STORAGE_KEY = "adaCurrentCharacterPortraitUrl";
+  const USERS_STORAGE_KEY = "adaUsers";
+  const CURRENT_USER_STORAGE_KEY = "adaCurrentUser";
 
   const SpeechRecognition =
     window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -35,6 +69,16 @@
     statusEl.textContent = text;
   }
 
+  function setPortraitStatus(text) {
+    if (!portraitStatusEl) return;
+    portraitStatusEl.textContent = text || "";
+  }
+
+  function setAuthMessage(message) {
+    if (!authMessageEl) return;
+    authMessageEl.textContent = message || "";
+  }
+
   function setListeningUI(listening) {
     isListening = listening;
     if (startBtn) startBtn.disabled = listening;
@@ -51,6 +95,143 @@
       transcriptEl.value = prefix ? prefix + " " + text : text;
     }
     transcriptEl.scrollTop = transcriptEl.scrollHeight;
+  }
+
+  function getUsers() {
+    try {
+      const raw = localStorage.getItem(USERS_STORAGE_KEY);
+      if (!raw) return {};
+      const parsed = JSON.parse(raw);
+      return parsed && typeof parsed === "object" ? parsed : {};
+    } catch {
+      return {};
+    }
+  }
+
+  function setUsers(users) {
+    try {
+      localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(users));
+    } catch (e) {
+      console.warn("Failed to persist users", e);
+    }
+  }
+
+  function getCurrentUser() {
+    try {
+      return localStorage.getItem(CURRENT_USER_STORAGE_KEY);
+    } catch {
+      return null;
+    }
+  }
+
+  function setCurrentUser(username) {
+    try {
+      localStorage.setItem(CURRENT_USER_STORAGE_KEY, username);
+    } catch (e) {
+      console.warn("Failed to persist current user", e);
+    }
+  }
+
+  function clearCurrentUser() {
+    try {
+      localStorage.removeItem(CURRENT_USER_STORAGE_KEY);
+    } catch {
+      // ignore
+    }
+  }
+
+  function showView(view) {
+    // view: "auth-login" | "auth-register" | "home" | "profile"
+    const isAuthView = view === "auth-login" || view === "auth-register";
+
+    if (authSection) authSection.hidden = !isAuthView;
+    if (loginView) loginView.hidden = view !== "auth-login";
+    if (registerView) registerView.hidden = view !== "auth-register";
+    if (homeSection) homeSection.hidden = view !== "home";
+    if (profileSection) profileSection.hidden = view !== "profile";
+
+    // While on login/register screens, always hide nav and user label
+    if (isAuthView) {
+      if (appNav) appNav.hidden = true;
+      if (currentUserLabel) currentUserLabel.hidden = true;
+    }
+  }
+
+  function updateNav(username) {
+    const loggedIn = !!username;
+    if (currentUserLabel) {
+      currentUserLabel.hidden = !loggedIn;
+      currentUserLabel.textContent = loggedIn ? `Logged in as ${username}` : "";
+    }
+    if (appNav) {
+      appNav.hidden = !loggedIn;
+    }
+  }
+
+  function refreshProfileFromStorage() {
+    if (!profilePortraitEl) return;
+    profilePortraitEl.innerHTML = "";
+    try {
+      const url = localStorage.getItem(PORTRAIT_STORAGE_KEY);
+      if (!url) return;
+      const img = document.createElement("img");
+      img.src = url;
+      img.alt = "Saved character portrait";
+      profilePortraitEl.appendChild(img);
+    } catch {
+      // ignore
+    }
+  }
+
+  function buildPortraitPrompt() {
+    if (!transcriptEl) return null;
+    const raw = transcriptEl.value.trim();
+    if (!raw) return null;
+
+    const clipped = raw.length > 280 ? raw.slice(0, 280) + "..." : raw;
+    return `fantasy D&D character portrait, digital painting, ${clipped}`;
+  }
+
+  function buildPortraitImageUrl(prompt, seed) {
+    // Uses the Pollinations free image generation endpoint.
+    // You can swap this for another provider if you prefer.
+    const encodedPrompt = encodeURIComponent(prompt);
+    return `https://image.pollinations.ai/prompt/${encodedPrompt}?seed=${seed}`;
+  }
+
+  function clearPortraitSelection() {
+    portraitCards.forEach((card) => {
+      card.classList.remove("portrait-card--selected");
+    });
+  }
+
+  function enablePortraitSelection() {
+    portraitSelectButtons.forEach((btn) => {
+      btn.disabled = false;
+    });
+  }
+
+  function handlePortraitSelect(index) {
+    const img = portraitImgs[index];
+    if (!img || !img.src) return;
+
+    const url = img.src;
+    clearPortraitSelection();
+    const card = portraitCards[index];
+    if (card) {
+      card.classList.add("portrait-card--selected");
+    }
+
+    try {
+      localStorage.setItem(PORTRAIT_STORAGE_KEY, url);
+      setPortraitStatus(
+        "Portrait saved for this character (stored locally on this device)."
+      );
+      refreshProfileFromStorage();
+    } catch (e) {
+      console.warn("Could not persist portrait selection", e);
+      setPortraitStatus("Portrait selected (could not save locally).");
+    }
   }
 
   recognition.onresult = (event) => {
@@ -126,4 +307,173 @@
 
   // Initial status
   setStatus("Idle");
+
+   // Portrait generation wiring
+  if (generatePortraitsBtn) {
+    generatePortraitsBtn.addEventListener("click", () => {
+      const prompt = buildPortraitPrompt();
+      if (!prompt) {
+        setPortraitStatus(
+          "Add some transcript text first, then we'll generate portraits from it."
+        );
+        return;
+      }
+
+      setPortraitStatus(
+        "Generating portraits... this may take a few seconds on the first request."
+      );
+
+      const baseSeed = Math.floor(Math.random() * 1_000_000_000);
+      portraitImgs.forEach((img, index) => {
+        if (!img) return;
+        const seed = baseSeed + index;
+        const url = buildPortraitImageUrl(prompt, seed);
+        img.hidden = false;
+        img.src = url;
+      });
+
+      enablePortraitSelection();
+    });
+  }
+
+  portraitSelectButtons.forEach((btn) => {
+    btn.addEventListener("click", (event) => {
+      const index = Number(event.currentTarget.getAttribute("data-index"));
+      if (Number.isNaN(index)) return;
+      handlePortraitSelect(index);
+    });
+  });
+
+  try {
+    const existingPortrait = localStorage.getItem(PORTRAIT_STORAGE_KEY);
+    if (existingPortrait) {
+      setPortraitStatus(
+        "A portrait is already saved for this character. You can generate new ones if you want to change it."
+      );
+      refreshProfileFromStorage();
+    }
+  } catch {
+    // Ignore storage issues on load.
+  }
+
+  // Auth wiring
+  const initialUser = getCurrentUser();
+  if (initialUser) {
+    updateNav(initialUser);
+    if (profileUsernameEl) profileUsernameEl.textContent = initialUser;
+    showView("home");
+  } else {
+    updateNav(null);
+    showView("auth-login");
+  }
+
+  if (showRegisterBtn) {
+    showRegisterBtn.addEventListener("click", () => {
+      setAuthMessage("");
+      showView("auth-register");
+    });
+  }
+
+  if (showLoginBtn) {
+    showLoginBtn.addEventListener("click", () => {
+      setAuthMessage("");
+      showView("auth-login");
+    });
+  }
+
+  if (loginForm) {
+    loginForm.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const form = event.currentTarget;
+      const username = form.username.value.trim();
+      const password = form.password.value;
+
+      if (!username || !password) {
+        setAuthMessage("Please enter username and password.");
+        return;
+      }
+
+      const users = getUsers();
+      console.log("[ADA DEBUG] Known user accounts (username -> password):");
+      Object.entries(users).forEach(([name, data]) => {
+        console.log("  ", name, "->", data && data.password);
+      });
+
+      const record = users[username];
+      if (!record || record.password !== password) {
+        setAuthMessage("Invalid username or password.");
+        return;
+      }
+
+      setCurrentUser(username);
+      updateNav(username);
+      if (profileUsernameEl) profileUsernameEl.textContent = username;
+      setAuthMessage("");
+      showView("home");
+    });
+  }
+
+  if (registerForm) {
+    registerForm.addEventListener("submit", (event) => {
+      event.preventDefault();
+        console.log("[ADA DEBUG] Register form submitted");
+      const form = event.currentTarget;
+      const username = form.username.value.trim();
+      const password = form.password.value;
+      const passwordConfirm = form.passwordConfirm.value;
+
+      if (!username || !password || !passwordConfirm) {
+        setAuthMessage("Please fill in all fields.");
+        return;
+      }
+
+      if (password !== passwordConfirm) {
+        setAuthMessage("Passwords do not match.");
+        return;
+      }
+
+      const users = getUsers();
+      console.log("[ADA DEBUG] Users before registration:", users);
+
+      if (users[username]) {
+        setAuthMessage("That username is already taken.");
+        return;
+      }
+
+      users[username] = { password };
+      setUsers(users);
+      console.log("[ADA DEBUG] Users after registration:", getUsers());
+      console.log(
+        "[ADA DEBUG] Registered account:",
+        username,
+        "password:",
+        password
+      );
+      setAuthMessage("Account created. Please log in.");
+      showView("auth-login");
+    });
+  }
+
+  if (appNav) {
+    appNav.addEventListener("click", (event) => {
+      const target = event.target;
+      if (!(target instanceof HTMLElement)) return;
+      const view = target.getAttribute("data-view");
+      if (!view) return;
+      if (view === "home") {
+        showView("home");
+      } else if (view === "profile") {
+        showView("profile");
+      }
+    });
+  }
+
+  if (logoutBtn) {
+    logoutBtn.addEventListener("click", () => {
+      clearCurrentUser();
+      updateNav(null);
+      setAuthMessage("");
+      showView("auth-login");
+    });
+  }
 })();

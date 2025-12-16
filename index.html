@@ -9,25 +9,161 @@
 <body>
   <main class="app">
     <header class="app__header">
-      <h1>ADA Voice Capture</h1>
-      <p>Speak your D&D notes and let ADA turn them into text.</p>
+      <div class="app__header-main">
+        <h1>ADA</h1>
+        <p>AI D&D assistant for narrative, mechanics, and character art.</p>
+      </div>
+      <div class="app__header-user">
+        <span id="currentUserLabel" class="user-label" hidden></span>
+        <nav id="appNav" class="nav" hidden>
+          <button type="button" class="nav__link" data-view="home">Home</button>
+          <button type="button" class="nav__link" data-view="profile">Profile</button>
+          <button type="button" class="nav__link nav__link--danger" id="logoutBtn">Logout</button>
+        </nav>
+      </div>
     </header>
 
-    <section class="controls">
-      <button id="startBtn" class="btn btn--primary">Start Recording</button>
-      <button id="stopBtn" class="btn" disabled>Stop</button>
-      <span id="status" class="status">Idle</span>
+    <section id="authSection" class="auth">
+      <div id="loginView" class="auth__panel">
+        <h2>Log in</h2>
+        <form id="loginForm" autocomplete="on">
+          <div class="field">
+            <label for="loginUsername">Username</label>
+            <input id="loginUsername" name="username" type="text" required />
+          </div>
+          <div class="field">
+            <label for="loginPassword">Password</label>
+            <input id="loginPassword" name="password" type="password" required />
+          </div>
+          <button type="submit" class="btn btn--primary">Log in</button>
+        </form>
+        <p class="auth__switch">
+          New here?
+          <button type="button" id="showRegisterBtn" class="link-btn">Create an account</button>
+        </p>
+        <p id="authMessage" class="auth__message"></p>
+      </div>
+
+      <div id="registerView" class="auth__panel" hidden>
+        <h2>Create account</h2>
+        <form id="registerForm" autocomplete="off">
+          <div class="field">
+            <label for="registerUsername">Username</label>
+            <input id="registerUsername" name="username" type="text" required />
+          </div>
+          <div class="field">
+            <label for="registerPassword">Password</label>
+            <input id="registerPassword" name="password" type="password" required />
+          </div>
+          <div class="field">
+            <label for="registerPasswordConfirm">Confirm password</label>
+            <input id="registerPasswordConfirm" name="passwordConfirm" type="password" required />
+          </div>
+          <button type="submit" class="btn btn--primary">Sign up</button>
+        </form>
+        <p class="auth__switch">
+          Already have an account?
+          <button type="button" id="showLoginBtn" class="link-btn">Back to login</button>
+        </p>
+      </div>
     </section>
 
-    <section class="output">
-      <label for="transcript">Transcript</label>
-      <textarea id="transcript" class="output__text" rows="12" placeholder="Your spoken notes will appear here..."></textarea>
+    <section id="homeSection" hidden>
+      <section class="controls">
+        <button id="startBtn" class="btn btn--primary">Start Recording</button>
+        <button id="stopBtn" class="btn" disabled>Stop</button>
+        <span id="status" class="status">Idle</span>
+      </section>
+
+      <section class="output">
+        <label for="transcript">Transcript</label>
+        <textarea
+          id="transcript"
+          class="output__text"
+          rows="12"
+          placeholder="Your spoken notes will appear here..."
+        ></textarea>
+      </section>
+
+      <section class="notes">
+        <p class="hint">
+          Tip: Talk as if you were journaling. For example, "We descended into the crypt and met a nervous goblin..."
+        </p>
+        <p class="warning" id="supportWarning" hidden>
+          Speech recognition is not supported in this browser. Try the latest Chrome or Edge.
+        </p>
+      </section>
+
+      <section class="portraits">
+        <div class="portraits__header">
+          <h2>Character Portraits</h2>
+          <button id="generatePortraitsBtn" class="btn btn--secondary">
+            Generate from Transcript
+          </button>
+        </div>
+        <p class="portraits__hint">
+          We'll suggest three D&amp;D-style character portraits from your notes. Pick one to save for this character.
+        </p>
+        <div class="portraits__grid">
+          <article class="portrait-card" data-index="0">
+            <div class="portrait-card__thumb-wrapper">
+              <div class="portrait-card__placeholder">Portrait 1</div>
+              <img
+                id="portraitImg0"
+                class="portrait-card__image"
+                alt="Character portrait option 1"
+                hidden
+              />
+            </div>
+            <button class="btn portrait-card__select-btn" data-index="0" disabled>
+              Select
+            </button>
+          </article>
+
+          <article class="portrait-card" data-index="1">
+            <div class="portrait-card__thumb-wrapper">
+              <div class="portrait-card__placeholder">Portrait 2</div>
+              <img
+                id="portraitImg1"
+                class="portrait-card__image"
+                alt="Character portrait option 2"
+                hidden
+              />
+            </div>
+            <button class="btn portrait-card__select-btn" data-index="1" disabled>
+              Select
+            </button>
+          </article>
+
+          <article class="portrait-card" data-index="2">
+            <div class="portrait-card__thumb-wrapper">
+              <div class="portrait-card__placeholder">Portrait 3</div>
+              <img
+                id="portraitImg2"
+                class="portrait-card__image"
+                alt="Character portrait option 3"
+                hidden
+              />
+            </div>
+            <button class="btn portrait-card__select-btn" data-index="2" disabled>
+              Select
+            </button>
+          </article>
+        </div>
+
+        <p id="portraitStatus" class="portraits__status"></p>
+      </section>
     </section>
 
-    <section class="notes">
-      <p class="hint">Tip: Talk as if you were journaling. For example, "We descended into the crypt and met a nervous goblin..."</p>
-      <p class="warning" id="supportWarning" hidden>
-        Speech recognition is not supported in this browser. Try the latest Chrome or Edge.
+    <section id="profileSection" class="profile" hidden>
+      <h2>Your profile</h2>
+      <p>
+        <strong>Username:</strong>
+        <span id="profileUsername"></span>
+      </p>
+      <div id="profilePortrait" class="profile__portrait"></div>
+      <p class="profile__hint">
+        Portrait and settings are stored locally for now and tied to this browser.
       </p>
     </section>
   </main>

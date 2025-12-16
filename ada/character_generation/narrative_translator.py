@@ -15,6 +15,21 @@ class NarrativeToMechanicsTranslator:
     Uses LLM to parse narrative input and generate valid character sheets.
     """
     
+    CLASS_HIT_DICE = {
+        "Barbarian": 12,
+        "Fighter": 10,
+        "Paladin": 10,
+        "Ranger": 10,
+        "Cleric": 8,
+        "Druid": 8,
+        "Monk": 8,
+        "Rogue": 8,
+        "Bard": 8,
+        "Warlock": 8,
+        "Sorcerer": 6,
+        "Wizard": 6,
+    }
+    
     SYSTEM_PROMPT = """You are an expert D&D 5e rules engine and character creation assistant.
 Your task is to convert natural language character descriptions into valid D&D 5e character sheets.
 
@@ -133,23 +148,7 @@ Return as JSON object."""
     
     def _calculate_hit_points(self, character_class: str, level: int, constitution: int) -> int:
         """Calculate hit points based on class, level, and constitution."""
-        # Hit dice by class
-        hit_dice = {
-            "Barbarian": 12,
-            "Fighter": 10,
-            "Paladin": 10,
-            "Ranger": 10,
-            "Cleric": 8,
-            "Druid": 8,
-            "Monk": 8,
-            "Rogue": 8,
-            "Bard": 8,
-            "Warlock": 8,
-            "Sorcerer": 6,
-            "Wizard": 6,
-        }
-        
-        hit_die = hit_dice.get(character_class, 8)
+        hit_die = self.CLASS_HIT_DICE.get(character_class, 8)
         con_modifier = (constitution - 10) // 2
         
         # First level: max hit die + con modifier

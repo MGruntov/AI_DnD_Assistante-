@@ -24,6 +24,8 @@ class JournalEngine:
     into polished narrative entries in the style of a fantasy adventure chronicle.
     """
     
+    MAX_EVENTS_IN_SUMMARY = 10
+    
     SYSTEM_PROMPT = """You are a skilled fantasy chronicler and storyteller specializing in D&D campaign journals.
 Your task is to transform rough gameplay notes into engaging, polished narrative entries.
 
@@ -159,9 +161,14 @@ Format the output as a polished journal entry with a title."""
                 # Check if we're hitting a list section
                 if line.startswith("-") or line.startswith("•") or line.startswith("*"):
                     # Might be start of lists, check context
-                    if any(keyword in lines[max(0, lines.index(line + "\n") - 1)].lower() 
-                          for keyword in ["character", "location", "event"]):
-                        current_section = "characters"
+                    try:
+                        line_index = lines.index(line + "\n")
+                        if line_index > 0 and any(keyword in lines[line_index - 1].lower() 
+                              for keyword in ["character", "location", "event"]):
+                            current_section = "characters"
+                    except ValueError:
+                        # Line not found with newline, continue processing as content
+                        pass
                 content_lines.append(line)
             elif current_section == "characters":
                 if line.startswith("-") or line.startswith("•") or line.startswith("*"):
@@ -232,7 +239,7 @@ Main Characters: {', '.join(all_characters) if all_characters else 'Unknown'}
 Locations: {', '.join(all_locations) if all_locations else 'Unknown'}
 
 Major Events:
-{chr(10).join(f'- {event}' for event in all_events[:10])}
+{chr(10).join(f'- {event}' for event in all_events[:self.MAX_EVENTS_IN_SUMMARY])}
 
 Provide a concise campaign summary (2-3 paragraphs) highlighting the main story arc."""
         

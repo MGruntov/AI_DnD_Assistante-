@@ -17,7 +17,8 @@
         <span id="currentUserLabel" class="user-label" hidden></span>
         <nav id="appNav" class="nav" hidden>
           <button type="button" class="nav__link" data-view="home">Home</button>
-          <button type="button" class="nav__link" data-view="profile">Profile</button>
+            <button type="button" class="nav__link" data-view="campaigns">My Campaigns</button>
+            <button type="button" class="nav__link" data-view="profile">Profile</button>
           <button type="button" class="nav__link nav__link--danger" id="logoutBtn">Logout</button>
         </nav>
       </div>
@@ -41,6 +42,7 @@
           New here?
           <button type="button" id="showRegisterBtn" class="link-btn">Create an account</button>
         </p>
+        <p id="authMessage" class="auth__message"></p>
       </div>
 
       <div id="registerView" class="auth__panel" hidden>
@@ -65,7 +67,6 @@
           <button type="button" id="showLoginBtn" class="link-btn">Back to login</button>
         </p>
       </div>
-      <p id="authMessage" class="auth__message"></p>
     </section>
 
     <section id="homeSection" hidden>
@@ -165,6 +166,39 @@
       <p class="profile__hint">
         Portrait and settings are stored locally for now and tied to this browser.
       </p>
+    </section>
+    <section id="campaignsSection" class="view" hidden>
+      <div class="card">
+        <h2>My Campaigns</h2>
+        <p class="text-muted">Create campaigns, see where you're the Dungeon Master, and where you're a player.</p>
+
+        <div class="campaigns__controls">
+          <div class="campaigns__filters">
+            <button id="campaignFilterAll" class="btn btn--secondary btn--small" data-filter="all">All</button>
+            <button id="campaignFilterDm" class="btn btn--secondary btn--small" data-filter="dm">As DM</button>
+            <button id="campaignFilterPlayer" class="btn btn--secondary btn--small" data-filter="player">As Player</button>
+          </div>
+        </div>
+
+        <div class="campaigns__new">
+          <h3>Create a New Campaign</h3>
+          <form id="createCampaignForm" class="campaigns__form">
+            <div class="field">
+              <label for="campaignName">Campaign name</label>
+              <input type="text" id="campaignName" name="campaignName" placeholder="Curse of the Moonlit Isles" required />
+            </div>
+            <div class="field">
+              <label for="campaignParticipants">Participants (comma-separated usernames, include yourself if desired)</label>
+              <input type="text" id="campaignParticipants" name="campaignParticipants" placeholder="alice, bob, charlie" />
+              <p class="field__hint">You'll be set as the Dungeon Master for campaigns you create.</p>
+            </div>
+            <button type="submit" class="btn btn--primary">Create campaign</button>
+          </form>
+        </div>
+
+        <div class="campaigns__list" id="campaignsList" aria-live="polite"></div>
+        <p id="campaignsMessage" class="text-muted"></p>
+      </div>
     </section>
   </main>
 

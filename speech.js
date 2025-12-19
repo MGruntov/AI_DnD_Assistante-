@@ -15,6 +15,7 @@
   const authSection = document.getElementById("authSection");
   const homeSection = document.getElementById("homeSection");
   const profileSection = document.getElementById("profileSection");
+  const campaignsSection = document.getElementById("campaignsSection");
   const loginView = document.getElementById("loginView");
   const registerView = document.getElementById("registerView");
   const loginForm = document.getElementById("loginForm");
@@ -27,6 +28,14 @@
   const logoutBtn = document.getElementById("logoutBtn");
   const profileUsernameEl = document.getElementById("profileUsername");
   const profilePortraitEl = document.getElementById("profilePortrait");
+  const campaignsList = document.getElementById("campaignsList");
+  const campaignsMessage = document.getElementById("campaignsMessage");
+  const createCampaignForm = document.getElementById("createCampaignForm");
+  const campaignNameInput = document.getElementById("campaignName");
+  const campaignParticipantsInput = document.getElementById("campaignParticipants");
+  const campaignFilterAllBtn = document.getElementById("campaignFilterAll");
+  const campaignFilterDmBtn = document.getElementById("campaignFilterDm");
+  const campaignFilterPlayerBtn = document.getElementById("campaignFilterPlayer");
 
   const portraitImgs = [
     document.getElementById("portraitImg0"),
@@ -145,7 +154,7 @@
   }
 
   function showView(view) {
-    // view: "auth-login" | "auth-register" | "home" | "profile"
+    // view: "auth-login" | "auth-register" | "home" | "profile" | "campaigns"
     const isAuthView = view === "auth-login" || view === "auth-register";
 
     if (authSection) authSection.hidden = !isAuthView;
@@ -153,6 +162,7 @@
     if (registerView) registerView.hidden = view !== "auth-register";
     if (homeSection) homeSection.hidden = view !== "home";
     if (profileSection) profileSection.hidden = view !== "profile";
+    if (campaignsSection) campaignsSection.hidden = view !== "campaigns";
 
     // While on login/register screens, always hide nav and user label
     if (isAuthView) {
@@ -368,6 +378,132 @@
     // Ignore storage issues on load.
   }
 
+  async function apiGet(path) {
+    const url = `${BACKEND_BASE_URL}${path}`;
+    try {
+      const res = await fetch(url, {
+        method: "GET",
+        headers: { Accept: "application/json" },
+      });
+      const data = await res.json().catch(() => ({}));
+      return { ok: res.ok, status: res.status, data };
+    } catch (e) {
+      console.error("[ADA] API GET error", e);
+      return { ok: false, status: 0, data: null };
+    }
+  }
+
+  function renderCampaigns(campaigns, filter, currentUser) {
+    if (!campaignsList) return;
+    campaignsList.innerHTML = "";
+
+    if (!Array.isArray(campaigns) || campaigns.length === 0) {
+      if (campaignsMessage)
+        campaignsMessage.textContent =
+          "No campaigns yet. Create one to get started!";
+      return;
+    }
+
+    const filtered = campaigns.filter((c) => {
+      const isDm = c.dm === currentUser;
+      const isParticipant =
+        Array.isArray(c.participants) && c.participants.includes(currentUser);
+      if (!isParticipant) return false;
+      if (filter === "dm") return isDm;
+      if (filter === "player") return !isDm;
+      return true;
+    });
+
+    if (filtered.length === 0) {
+      if (campaignsMessage) {
+        if (filter === "dm") {
+          campaignsMessage.textContent =
+            "You're not a DM in any campaigns yet.";
+        } else if (filter === "player") {
+          campaignsMessage.textContent =
+            "You're not listed as a player in any campaigns yet.";
+        } else {
+          campaignsMessage.textContent = "No campaigns yet.";
+        }
+      }
+      return;
+    }
+
+    if (campaignsMessage) campaignsMessage.textContent = "";
+
+    filtered.forEach((c) => {
+      const card = document.createElement("article");
+      card.className = "campaign-card";
+
+      const header = document.createElement("div");
+      header.className = "campaign-card__header";
+
+      const title = document.createElement("h3");
+      title.className = "campaign-card__title";
+      title.textContent = c.name || "Untitled campaign";
+
+      const badge = document.createElement("span");
+      badge.className = "campaign-card__badge";
+      badge.textContent =
+        c.dm === currentUser ? "Dungeon Master" : "Player";
+
+      header.appendChild(title);
+      header.appendChild(badge);
+
+      const meta = document.createElement("p");
+      meta.className = "campaign-card__meta";
+      meta.textContent = `Created ${new Date(
+        c.createdAt || Date.now()
+      ).toLocaleString()}`;
+
+      const participants = document.createElement("p");
+      participants.className = "campaign-card__participants";
+      const others = (Array.isArray(c.participants) ? c.participants : []).filter(
+        (p) => p !== currentUser
+      );
+      participants.textContent = others.length
+        ? `Participants: ${others.join(", ")}`
+        : "Participants: just you for now";
+
+      card.appendChild(header);
+      card.appendChild(meta);
+      card.appendChild(participants);
+
+      campaignsList.appendChild(card);
+    });
+  }
+
+  async function loadCampaigns(filter) {
+    const currentUser = getCurrentUser();
+    if (!currentUser) {
+      if (campaignsMessage)
+        campaignsMessage.textContent =
+          "You need to be logged in to see campaigns.";
+      if (campaignsList) campaignsList.innerHTML = "";
+      return;
+    }
+
+    if (campaignsMessage)
+      campaignsMessage.textContent = "Loading campaigns...";
+    if (campaignsList) campaignsList.innerHTML = "";
+
+    const result = await apiGet(
+      `/api/campaigns?user=${encodeURIComponent(currentUser)}`
+    );
+    if (!result.ok) {
+      if (campaignsMessage)
+        campaignsMessage.textContent =
+          "Could not load campaigns. Please try again later.";
+      return;
+    }
+
+    const campaigns =
+      result.data && Array.isArray(result.data.campaigns)
+        ? result.data.campaigns
+        : [];
+    renderCampaigns(campaigns, filter, currentUser);
+  }
+
   // Auth wiring
   const initialUser = getCurrentUser();
   if (initialUser) {
@@ -471,6 +607,9 @@
         showView("home");
       } else if (view === "profile") {
         showView("profile");
+      } else if (view === "campaigns") {
+        showView("campaigns");
+        loadCampaigns("all");
       }
     });
   }
@@ -482,5 +621,76 @@
       setAuthMessage("");
       showView("auth-login");
     });
+  }
+
+  if (createCampaignForm) {
+    createCampaignForm.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const currentUser = getCurrentUser();
+      if (!currentUser) {
+        if (campaignsMessage)
+          campaignsMessage.textContent =
+            "You need to be logged in to create a campaign.";
+        return;
+      }
+
+      const name = campaignNameInput.value.trim();
+      const rawParticipants = campaignParticipantsInput.value
+        .split(",")
+        .map((p) => p.trim())
+        .filter((p) => p.length > 0);
+
+      if (!rawParticipants.includes(currentUser)) {
+        rawParticipants.push(currentUser);
+      }
+
+      if (!name) {
+        if (campaignsMessage)
+          campaignsMessage.textContent =
+            "Please give your campaign a name.";
+        return;
+      }
+
+      if (campaignsMessage)
+        campaignsMessage.textContent = "Creating campaign...";
+
+      apiPost("/api/campaigns", {
+        name,
+        dm: currentUser,
+        participants: rawParticipants,
+      }).then((result) => {
+        if (!result.ok) {
+          if (
+            result.status === 400 &&
+            result.data &&
+            result.data.error &&
+            campaignsMessage
+          ) {
+            campaignsMessage.textContent = result.data.error;
+          } else if (campaignsMessage) {
+            campaignsMessage.textContent =
+              "Could not create campaign. Please try again later.";
+          }
+          return;
+        }
+
+        campaignNameInput.value = "";
+        campaignParticipantsInput.value = "";
+        if (campaignsMessage) campaignsMessage.textContent = "Campaign created!";
+        loadCampaigns("all");
+      });
+    });
+  }
+
+  if (campaignFilterAllBtn) {
+    campaignFilterAllBtn.addEventListener("click", () => loadCampaigns("all"));
+  }
+  if (campaignFilterDmBtn) {
+    campaignFilterDmBtn.addEventListener("click", () => loadCampaigns("dm"));
+  }
+  if (campaignFilterPlayerBtn) {
+    campaignFilterPlayerBtn.addEventListener("click", () =>
+      loadCampaigns("player")
+    );
   }
 })();

@@ -62,6 +62,14 @@ async function hashPassword(password: string): Promise<string> {
 	return bytes.map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
+type Campaign = {
+	id: string;
+	name: string;
+	dm: string;
+	participants: string[];
+	createdAt: string;
+};
+
 async function handleHealth(origin: string | null): Promise<Response> {
 	return jsonResponse({ status: 'ok' }, undefined, origin);
 }
@@ -135,6 +143,96 @@ async function handleLogin(request: Request, env: Env, origin: string | null): P
 	return jsonResponse({ ok: true, username }, undefined, origin);
 }
 
+async function handleCreateCampaign(request: Request, env: Env, origin: string | null): Promise<Response> {
+	let body: any;
+	try {
+		body = await request.json();
+	} catch {
+		return errorResponse('Invalid JSON body', 400, origin);
+	}
+
+	const name = (body?.name ?? '').trim();
+	const dm = (body?.dm ?? '').trim();
+	let participants: string[] = Array.isArray(body?.participants) ? body.participants : [];
+	participants = participants.map((p) => String(p || '').trim()).filter((p) => p.length > 0);
+
+	if (!name || !dm) {
+		return errorResponse('Campaign name and dungeon master are required', 400, origin);
+	}
+
+	if (!participants.includes(dm)) {
+		participants.push(dm);
+	}
+
+	// Deduplicate participants
+	participants = Array.from(new Set(participants));
+
+	if (participants.length === 0) {
+		return errorResponse('At least one participant is required', 400, origin);
+	}
+
+	const id = crypto.randomUUID();
+	const createdAt = new Date().toISOString();
+	const campaign: Campaign = { id, name, dm, participants, createdAt };
+
+	await env.ADA_DATA.put(`campaign:${id}`, JSON.stringify(campaign));
+
+	// Maintain a simple index of campaigns per user
+	for (const username of participants) {
+		const idxKey = `campaignsByUser:${username}`;
+		const existing = await env.ADA_DATA.get(idxKey);
+		let ids: string[] = [];
+		if (existing) {
+			try {
+				ids = JSON.parse(existing) as string[];
+				if (!Array.isArray(ids)) ids = [];
+			} catch {
+				ids = [];
+			}
+		}
+		if (!ids.includes(id)) {
+			ids.push(id);
+			await env.ADA_DATA.put(idxKey, JSON.stringify(ids));
+		}
+	}
+
+	return jsonResponse({ ok: true, campaign }, { status: 201 }, origin);
+}
+
+async function handleListCampaigns(request: Request, env: Env, origin: string | null): Promise<Response> {
+	const url = new URL(request.url);
+	const user = (url.searchParams.get('user') ?? '').trim();
+	if (!user) {
+		return errorResponse('Missing user parameter', 400, origin);
+	}
+
+	const idxKey = `campaignsByUser:${user}`;
+	const existing = await env.ADA_DATA.get(idxKey);
+	let ids: string[] = [];
+	if (existing) {
+		try {
+			ids = JSON.parse(existing) as string[];
+			if (!Array.isArray(ids)) ids = [];
+		} catch {
+			ids = [];
+		}
+	}
+
+	const campaigns: Campaign[] = [];
+	for (const id of ids) {
+		const stored = await env.ADA_DATA.get(`campaign:${id}`);
+		if (!stored) continue;
+		try {
+			const parsed = JSON.parse(stored) as Campaign;
+			if (parsed && parsed.id) campaigns.push(parsed);
+		} catch {
+			// ignore malformed
+		}
+	}
+
+	return jsonResponse({ ok: true, campaigns }, undefined, origin);
+}
+
 export default {
 	async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
 		const url = new URL(request.url);
@@ -161,6 +259,14 @@ export default {
 
 		if (pathname === '/api/login' && method === 'POST') {
 			return handleLogin(request, env, origin);
+		}
+
+		if (pathname === '/api/campaigns' && method === 'POST') {
+			return handleCreateCampaign(request, env, origin);
+		}
+
+		if (pathname === '/api/campaigns' && method === 'GET') {
+			return handleListCampaigns(request, env, origin);
 		}
 
 		return errorResponse('Not Found', 404, origin);

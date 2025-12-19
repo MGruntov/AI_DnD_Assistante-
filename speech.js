@@ -41,8 +41,10 @@
   );
 
   const PORTRAIT_STORAGE_KEY = "adaCurrentCharacterPortraitUrl";
-  const USERS_STORAGE_KEY = "adaUsers";
   const CURRENT_USER_STORAGE_KEY = "adaCurrentUser";
+
+  // Backend API base URL (Cloudflare Worker)
+  const BACKEND_BASE_URL = "https://backend.ada-assistante.workers.dev";
 
   const SpeechRecognition =
     window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -97,22 +99,24 @@
     transcriptEl.scrollTop = transcriptEl.scrollHeight;
   }
 
-  function getUsers() {
+  async function apiPost(path, payload) {
+    const url = `${BACKEND_BASE_URL}${path}`;
     try {
-      const raw = localStorage.getItem(USERS_STORAGE_KEY);
-      if (!raw) return {};
-      const parsed = JSON.parse(raw);
-      return parsed && typeof parsed === "object" ? parsed : {};
-    } catch {
-      return {};
-    }
-  }
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
 
-  function setUsers(users) {
-    try {
-      localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(users));
+      const data = await res.json().catch(() => ({}));
+      return { ok: res.ok, status: res.status, data };
     } catch (e) {
-      console.warn("Failed to persist users", e);
+      console.error("[ADA] API error", e);
+      return {
+        ok: false,
+        status: 0,
+        data: { error: "Network error. Please try again." },
+      };
     }
   }
 
@@ -152,8 +156,14 @@
 
     // While on login/register screens, always hide nav and user label
     if (isAuthView) {
-      if (appNav) appNav.hidden = true;
-      if (currentUserLabel) currentUserLabel.hidden = true;
+      if (appNav) {
+        appNav.hidden = true;
+        appNav.style.display = "none";
+      }
+      if (currentUserLabel) {
+        currentUserLabel.hidden = true;
+        currentUserLabel.style.display = "none";
+      }
     }
   }
 
@@ -162,9 +172,11 @@
     if (currentUserLabel) {
       currentUserLabel.hidden = !loggedIn;
       currentUserLabel.textContent = loggedIn ? `Logged in as ${username}` : "";
+      currentUserLabel.style.display = loggedIn ? "inline" : "none";
     }
     if (appNav) {
       appNav.hidden = !loggedIn;
+      appNav.style.display = loggedIn ? "flex" : "none";
     }
   }
 
@@ -393,30 +405,28 @@
         return;
       }
 
-      const users = getUsers();
-      console.log("[ADA DEBUG] Known user accounts (username -> password):");
-      Object.entries(users).forEach(([name, data]) => {
-        console.log("  ", name, "->", data && data.password);
+      setAuthMessage("Logging in...");
+
+      apiPost("/api/login", { username, password }).then((result) => {
+        if (!result.ok) {
+          const msg = result.data && result.data.error;
+          setAuthMessage(msg || "Invalid username or password.");
+          return;
+        }
+
+        setCurrentUser(username);
+        updateNav(username);
+        if (profileUsernameEl) profileUsernameEl.textContent = username;
+        setAuthMessage("");
+        showView("home");
       });
-
-      const record = users[username];
-      if (!record || record.password !== password) {
-        setAuthMessage("Invalid username or password.");
-        return;
-      }
-
-      setCurrentUser(username);
-      updateNav(username);
-      if (profileUsernameEl) profileUsernameEl.textContent = username;
-      setAuthMessage("");
-      showView("home");
     });
   }
 
   if (registerForm) {
     registerForm.addEventListener("submit", (event) => {
       event.preventDefault();
-        console.log("[ADA DEBUG] Register form submitted");
+      console.log("[ADA DEBUG] Register form submitted");
       const form = event.currentTarget;
       const username = form.username.value.trim();
       const password = form.password.value;
@@ -432,25 +442,22 @@
         return;
       }
 
-      const users = getUsers();
-      console.log("[ADA DEBUG] Users before registration:", users);
+      setAuthMessage("Creating account...");
 
-      if (users[username]) {
-        setAuthMessage("That username is already taken.");
-        return;
-      }
+      apiPost("/api/register", { username, password }).then((result) => {
+        if (!result.ok) {
+          const msg = result.data && result.data.error;
+          if (result.status === 409) {
+            setAuthMessage(msg || "That username is already taken.");
+          } else {
+            setAuthMessage(msg || "Could not create account.");
+          }
+          return;
+        }
 
-      users[username] = { password };
-      setUsers(users);
-      console.log("[ADA DEBUG] Users after registration:", getUsers());
-      console.log(
-        "[ADA DEBUG] Registered account:",
-        username,
-        "password:",
-        password
-      );
-      setAuthMessage("Account created. Please log in.");
-      showView("auth-login");
+        setAuthMessage("Account created. Please log in.");
+        showView("auth-login");
+      });
     });
   }
 

@@ -234,6 +234,55 @@ body {
   color: var(--danger);
 }
 
+.forge {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(148, 163, 184, 0.25);
+}
+
+.forge__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 6px;
+}
+
+.forge__header h2 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+.forge__hint {
+  margin: 0 0 8px;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.forge__status {
+  font-size: 0.82rem;
+  color: var(--muted);
+  min-height: 1.2em;
+}
+
+.forge__result {
+  margin-top: 8px;
+  padding: 10px 12px;
+  border-radius: var(--radius-lg);
+  border: 1px solid rgba(148, 163, 184, 0.4);
+  background: rgba(15, 23, 42, 0.9);
+  font-size: 0.9rem;
+}
+
+.forge__result-title {
+  margin: 0 0 6px;
+  font-weight: 600;
+}
+
+.forge__result-row {
+  margin: 2px 0;
+}
+
 .auth {
   margin-top: 16px;
 }

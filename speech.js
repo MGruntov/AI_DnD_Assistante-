@@ -11,6 +11,9 @@
   const supportWarning = document.getElementById("supportWarning");
   const generatePortraitsBtn = document.getElementById("generatePortraitsBtn");
   const portraitStatusEl = document.getElementById("portraitStatus");
+  const forgeCharacterBtn = document.getElementById("forgeCharacterBtn");
+  const forgeStatusEl = document.getElementById("forgeStatus");
+  const forgedCharacterEl = document.getElementById("forgedCharacter");
 
   const authSection = document.getElementById("authSection");
   const homeSection = document.getElementById("homeSection");
@@ -83,6 +86,11 @@
   function setPortraitStatus(text) {
     if (!portraitStatusEl) return;
     portraitStatusEl.textContent = text || "";
+  }
+
+  function setForgeStatus(text) {
+    if (!forgeStatusEl) return;
+    forgeStatusEl.textContent = text || "";
   }
 
   function setAuthMessage(message) {
@@ -378,6 +386,57 @@
     // Ignore storage issues on load.
   }
 
+  function renderForgedCharacter(character) {
+    if (!forgedCharacterEl) return;
+    if (!character) {
+      forgedCharacterEl.hidden = true;
+      forgedCharacterEl.innerHTML = "";
+      return;
+    }
+
+    const { concept, mechanics } = character;
+    const classes = concept?.classSummary || "";
+    const levels = concept?.levelSummary || "";
+
+    const ability = mechanics?.abilityScores || {};
+
+    forgedCharacterEl.hidden = false;
+    forgedCharacterEl.innerHTML = "";
+
+    const title = document.createElement("h3");
+    title.className = "forge__result-title";
+    title.textContent = concept?.race
+      ? `${concept.race} ${classes || "Adventurer"}`
+      : classes || "Forged Adventurer";
+
+    const row1 = document.createElement("p");
+    row1.className = "forge__result-row";
+    row1.textContent = `Classes: ${classes || "Unknown"} | Levels: ${
+      levels || "?"
+    }`;
+
+    const row2 = document.createElement("p");
+    row2.className = "forge__result-row";
+    row2.textContent = `HP: ${
+      mechanics?.hitPoints ?? "?"
+    } | AC: ${mechanics?.armorClass ?? "?"} | Speed: ${
+      mechanics?.speed ?? "?"
+    }`;
+
+    const row3 = document.createElement("p");
+    row3.className = "forge__result-row";
+    row3.textContent = `STR ${ability.str ?? "-"}, DEX ${
+      ability.dex ?? "-"
+    }, CON ${ability.con ?? "-"}, INT ${ability.int ?? "-"}, WIS ${
+      ability.wis ?? "-"
+    }, CHA ${ability.cha ?? "-"}`;
+
+    forgedCharacterEl.appendChild(title);
+    forgedCharacterEl.appendChild(row1);
+    forgedCharacterEl.appendChild(row2);
+    forgedCharacterEl.appendChild(row3);
+  }
+
   async function apiGet(path) {
     const url = `${BACKEND_BASE_URL}${path}`;
     try {
@@ -526,6 +585,61 @@
     showLoginBtn.addEventListener("click", () => {
       setAuthMessage("");
       showView("auth-login");
+    });
+  }
+
+  if (forgeCharacterBtn) {
+    forgeCharacterBtn.addEventListener("click", () => {
+      const currentUser = getCurrentUser();
+      if (!currentUser) {
+        setForgeStatus("You need to be logged in to forge a character.");
+        renderForgedCharacter(null);
+        return;
+      }
+
+      if (!transcriptEl || !transcriptEl.value.trim()) {
+        setForgeStatus(
+          "Add some transcript text first so ADA has something to forge from."
+        );
+        renderForgedCharacter(null);
+        return;
+      }
+
+      setForgeStatus("Forging character from transcript...");
+      renderForgedCharacter(null);
+
+      const narrativeText = transcriptEl.value.trim();
+
+      let portraitUrl = null;
+      try {
+        portraitUrl = localStorage.getItem(PORTRAIT_STORAGE_KEY);
+      } catch {
+        portraitUrl = null;
+      }
+
+      apiPost("/api/characters/forge", {
+        username: currentUser,
+        narrativeText,
+        portraitUrl,
+      }).then((result) => {
+        if (!result.ok) {
+          const msg = (result.data && result.data.error) ||
+            "Could not forge character. Please try again.";
+          setForgeStatus(msg);
+          renderForgedCharacter(null);
+          return;
+        }
+
+        const character = result.data && result.data.character;
+        if (!character) {
+          setForgeStatus("Forge succeeded but no character was returned.");
+          renderForgedCharacter(null);
+          return;
+        }
+
+        setForgeStatus("Character forged. You can refine this later.");
+        renderForgedCharacter(character);
+      });
     });
   }
 

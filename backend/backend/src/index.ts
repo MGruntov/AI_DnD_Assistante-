@@ -70,6 +70,55 @@ type Campaign = {
 	createdAt: string;
 };
 
+type CharacterClass = {
+	name: string;
+	level: number;
+};
+
+type Character = {
+	id: string;
+	owner: string;
+	name: string;
+	narrative: {
+		rawTranscript: string;
+		summary: string;
+		tags: string[];
+	};
+	concept: {
+		race: string;
+		background: string;
+		alignment: string;
+		classes: CharacterClass[];
+		classSummary: string; // e.g. "Ranger/Warlock"
+		levelSummary: string; // e.g. "1/5"
+	};
+	mechanics: {
+		abilityScores: { str: number; dex: number; con: number; int: number; wis: number; cha: number };
+		proficiencyBonus: number;
+		savingThrows: string[];
+		skills: string[];
+		hitPoints: number;
+		armorClass: number;
+		speed: number;
+		classFeatures: string[];
+		feats: string[];
+		equipment: string[];
+		spells: {
+			castingStat: string | null;
+			cantrips: string[];
+			leveledSpells: string[];
+		};
+	};
+	portraitUrl: string | null;
+	validation: {
+		isValid: boolean;
+		issues: string[];
+	};
+	campaignIds: string[];
+	createdAt: string;
+	updatedAt: string;
+};
+
 async function handleHealth(origin: string | null): Promise<Response> {
 	return jsonResponse({ status: 'ok' }, undefined, origin);
 }
@@ -233,6 +282,332 @@ async function handleListCampaigns(request: Request, env: Env, origin: string | 
 	return jsonResponse({ ok: true, campaigns }, undefined, origin);
 }
 
+const KNOWN_RACES = [
+	'Human',
+	'Elf',
+	'Dwarf',
+	'Halfling',
+	'Gnome',
+	'Tiefling',
+	'Half-Elf',
+	'Half-Orc',
+	'Dragonborn',
+];
+
+const KNOWN_CLASSES = [
+	'Barbarian',
+	'Bard',
+	'Cleric',
+	'Druid',
+	'Fighter',
+	'Monk',
+	'Paladin',
+	'Ranger',
+	'Rogue',
+	'Sorcerer',
+	'Warlock',
+	'Wizard',
+];
+
+function titleCase(word: string): string {
+	if (!word) return word;
+	return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
+}
+
+function inferRace(text: string): string {
+	const lower = text.toLowerCase();
+	for (const race of KNOWN_RACES) {
+		if (lower.includes(race.toLowerCase())) return race;
+	}
+	return 'Human';
+}
+
+function inferClasses(text: string): CharacterClass[] {
+	const lower = text.toLowerCase();
+	const found: string[] = [];
+	for (const cls of KNOWN_CLASSES) {
+		if (lower.includes(cls.toLowerCase())) {
+			found.push(cls);
+		}
+	}
+	if (found.length === 0) {
+		return [{ name: 'Fighter', level: 1 }];
+	}
+	// For now, assign level 1 to each mentioned class. Later we can be smarter.
+	return found.map((name) => ({ name, level: 1 }));
+}
+
+function buildClassAndLevelSummary(classes: CharacterClass[]): { classSummary: string; levelSummary: string } {
+	const classSummary = classes.map((c) => c.name).join('/');
+	const levelSummary = classes.map((c) => String(c.level)).join('/');
+	return { classSummary, levelSummary };
+}
+
+function defaultAbilityScoresFor(primaryClass: string): {
+	str: number;
+	dex: number;
+	con: number;
+	int: number;
+	wis: number;
+	cha: number;
+} {
+	// Simple standard array distribution tuned by primary class archetype
+	const cls = primaryClass.toLowerCase();
+	if (cls === 'fighter' || cls === 'barbarian' || cls === 'paladin') {
+		return { str: 15, dex: 13, con: 14, int: 8, wis: 10, cha: 12 };
+	}
+	if (cls === 'rogue' || cls === 'ranger' || cls === 'monk') {
+		return { str: 10, dex: 15, con: 14, int: 8, wis: 13, cha: 12 };
+	}
+	if (cls === 'cleric' || cls === 'druid') {
+		return { str: 10, dex: 12, con: 14, int: 8, wis: 15, cha: 13 };
+	}
+	// Full casters and faces
+	return { str: 8, dex: 12, con: 14, int: 10, wis: 12, cha: 15 };
+}
+
+function hitDieForClass(cls: string): number {
+	switch (cls.toLowerCase()) {
+		case 'barbarian':
+			return 12;
+		case 'fighter':
+		case 'paladin':
+		case 'ranger':
+			return 10;
+		case 'bard':
+		case 'cleric':
+		case 'druid':
+		case 'monk':
+		case 'rogue':
+		case 'warlock':
+			return 8;
+		default:
+			return 6;
+	}
+}
+
+function savingThrowsForClass(cls: string): string[] {
+	switch (cls.toLowerCase()) {
+		case 'barbarian':
+			return ['str', 'con'];
+		case 'bard':
+			return ['dex', 'cha'];
+		case 'cleric':
+			return ['wis', 'cha'];
+		case 'druid':
+			return ['int', 'wis'];
+		case 'fighter':
+			return ['str', 'con'];
+		case 'monk':
+			return ['str', 'dex'];
+		case 'paladin':
+			return ['wis', 'cha'];
+		case 'ranger':
+			return ['str', 'dex'];
+		case 'rogue':
+			return ['dex', 'int'];
+		case 'sorcerer':
+			return ['con', 'cha'];
+		case 'warlock':
+			return ['wis', 'cha'];
+		case 'wizard':
+			return ['int', 'wis'];
+		default:
+			return [];
+	}
+}
+
+function castingStatForClass(cls: string): string | null {
+	switch (cls.toLowerCase()) {
+		case 'bard':
+		case 'paladin':
+		case 'sorcerer':
+		case 'warlock':
+			return 'cha';
+		case 'cleric':
+		case 'druid':
+			return 'wis';
+		case 'wizard':
+			return 'int';
+		default:
+			return null;
+	}
+}
+
+function basicSkillsForClass(cls: string): string[] {
+	switch (cls.toLowerCase()) {
+		case 'fighter':
+			return ['Athletics', 'Perception'];
+		case 'rogue':
+			return ['Stealth', 'Acrobatics', 'Perception'];
+		case 'ranger':
+			return ['Survival', 'Perception', 'Stealth'];
+		case 'wizard':
+			return ['Arcana', 'History'];
+		case 'cleric':
+			return ['Religion', 'Insight'];
+		case 'bard':
+			return ['Performance', 'Persuasion', 'Deception'];
+		default:
+			return ['Perception'];
+	}
+}
+
+function forgeCharacterFromNarrative(owner: string, narrativeText: string, portraitUrl: string | null): Character {
+	const trimmed = narrativeText.trim();
+	const race = inferRace(trimmed);
+	const classes = inferClasses(trimmed);
+	const primaryClass = classes[0]?.name || 'Fighter';
+	const { classSummary, levelSummary } = buildClassAndLevelSummary(classes);
+	const abilityScores = defaultAbilityScoresFor(primaryClass);
+	const conMod = Math.floor((abilityScores.con - 10) / 2);
+	const hitDie = hitDieForClass(primaryClass);
+	const hitPoints = hitDie + conMod;
+	const dexMod = Math.floor((abilityScores.dex - 10) / 2);
+	const armorClass = 10 + dexMod;
+	const speed = 30;
+	const proficiencyBonus = 2; // Level 1 baseline; can be refined later based on total level
+	const savingThrows = savingThrowsForClass(primaryClass);
+	const skills = basicSkillsForClass(primaryClass);
+	const castingStat = castingStatForClass(primaryClass);
+
+	const now = new Date().toISOString();
+	const id = crypto.randomUUID();
+
+	const character: Character = {
+		id,
+		owner,
+		name: '',
+		narrative: {
+			rawTranscript: trimmed,
+			summary: '',
+			tags: [],
+		},
+		concept: {
+			race,
+			background: '',
+			alignment: '',
+			classes,
+			classSummary,
+			levelSummary,
+		},
+		mechanics: {
+			abilityScores,
+			proficiencyBonus,
+			savingThrows,
+			skills,
+			hitPoints,
+			armorClass,
+			speed,
+			classFeatures: [],
+			feats: [],
+			equipment: [],
+			spells: {
+				castingStat,
+				cantrips: [],
+				leveledSpells: [],
+			},
+		},
+		portraitUrl,
+		validation: {
+			isValid: true,
+			issues: [],
+		},
+		campaignIds: [],
+		createdAt: now,
+		updatedAt: now,
+	};
+
+	return character;
+}
+
+async function handleForgeCharacter(request: Request, env: Env, origin: string | null): Promise<Response> {
+	let body: any;
+	try {
+		body = await request.json();
+	} catch {
+		return errorResponse('Invalid JSON body', 400, origin);
+	}
+
+	const username = (body?.username ?? '').trim();
+	const narrativeText = (body?.narrativeText ?? '').trim();
+	const portraitUrl = typeof body?.portraitUrl === 'string' && body.portraitUrl.trim().length > 0
+		? body.portraitUrl.trim()
+		: null;
+
+	if (!username) {
+		return errorResponse('Username is required', 400, origin);
+	}
+
+	if (!narrativeText) {
+		return errorResponse('Narrative text is required', 400, origin);
+	}
+
+	// Ensure the user exists before forging a character
+	const userKey = `user:${username}`;
+	const userRecord = await env.ADA_DATA.get(userKey);
+	if (!userRecord) {
+		return errorResponse('Unknown user', 404, origin);
+	}
+
+	const character = forgeCharacterFromNarrative(username, narrativeText, portraitUrl);
+
+	await env.ADA_DATA.put(`character:${character.id}`, JSON.stringify(character));
+
+	// Index by user
+	const indexKey = `charactersByUser:${username}`;
+	const existing = await env.ADA_DATA.get(indexKey);
+	let ids: string[] = [];
+	if (existing) {
+		try {
+			ids = JSON.parse(existing) as string[];
+			if (!Array.isArray(ids)) ids = [];
+		} catch {
+			ids = [];
+		}
+	}
+	if (!ids.includes(character.id)) {
+		ids.push(character.id);
+		await env.ADA_DATA.put(indexKey, JSON.stringify(ids));
+	}
+
+	return jsonResponse({ ok: true, character }, { status: 201 }, origin);
+}
+
+async function handleListCharacters(request: Request, env: Env, origin: string | null): Promise<Response> {
+	const url = new URL(request.url);
+	const user = (url.searchParams.get('user') ?? '').trim();
+	if (!user) {
+		return errorResponse('Missing user parameter', 400, origin);
+	}
+
+	const indexKey = `charactersByUser:${user}`;
+	const existing = await env.ADA_DATA.get(indexKey);
+	let ids: string[] = [];
+	if (existing) {
+		try {
+			ids = JSON.parse(existing) as string[];
+			if (!Array.isArray(ids)) ids = [];
+		} catch {
+			ids = [];
+		}
+	}
+
+	const characters: Character[] = [];
+	for (const id of ids) {
+		const stored = await env.ADA_DATA.get(`character:${id}`);
+		if (!stored) continue;
+		try {
+			const parsed = JSON.parse(stored) as Character;
+			if (parsed && parsed.id) characters.push(parsed);
+		} catch {
+			// ignore malformed
+		}
+	}
+
+	return jsonResponse({ ok: true, characters }, undefined, origin);
+}
+
 export default {
 	async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
 		const url = new URL(request.url);
@@ -259,6 +634,14 @@ export default {
 
 		if (pathname === '/api/login' && method === 'POST') {
 			return handleLogin(request, env, origin);
+		}
+
+		if (pathname === '/api/characters/forge' && method === 'POST') {
+			return handleForgeCharacter(request, env, origin);
+		}
+
+		if (pathname === '/api/characters' && method === 'GET') {
+			return handleListCharacters(request, env, origin);
 		}
 
 		if (pathname === '/api/campaigns' && method === 'POST') {

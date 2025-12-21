@@ -265,6 +265,10 @@ body {
   min-height: 1.2em;
 }
 
+.forge__name {
+  margin-top: 8px;
+}
+
 .forge__result {
   margin-top: 8px;
   padding: 10px 12px;

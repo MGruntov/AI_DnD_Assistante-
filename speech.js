@@ -12,6 +12,7 @@
   const generatePortraitsBtn = document.getElementById("generatePortraitsBtn");
   const portraitStatusEl = document.getElementById("portraitStatus");
   const forgeCharacterBtn = document.getElementById("forgeCharacterBtn");
+  const forgeCharacterNameInput = document.getElementById("forgeCharacterName");
   const forgeStatusEl = document.getElementById("forgeStatus");
   const forgedCharacterEl = document.getElementById("forgedCharacter");
 
@@ -658,7 +659,8 @@
     }
 
     characters.forEach((ch) => {
-      const card = document.createElement("article");
+      const card = document.createElement("button");
+      card.type = "button";
       card.className = "party-card";
 
       const header = document.createElement("div");
@@ -695,6 +697,12 @@
         portraitWrapper.appendChild(img);
         card.appendChild(portraitWrapper);
       }
+
+      card.addEventListener("click", () => {
+        // Open this character's full sheet in the vault view
+        showView("vault");
+        renderVaultDetail(ch);
+      });
 
       campaignCharactersGrid.appendChild(card);
     });
@@ -1072,7 +1080,7 @@
     const abilityOrder = ["STR", "DEX", "CON", "INT", "WIS", "CHA"];
     abilityOrder.forEach((abbr) => {
       const key = abbr.toLowerCase();
-      const score = abilities[key]?.score ?? "—";
+      const score = abilities[key] ?? "—";
       const dt = document.createElement("dt");
       dt.textContent = abbr;
       const dd = document.createElement("dd");
@@ -1084,15 +1092,12 @@
     // Mechanics summary
     const m = character.mechanics || {};
     const lines = [];
-    if (m.hp?.max != null) lines.push(`HP ${m.hp.current ?? m.hp.max}/${m.hp.max}`);
+    if (m.hitPoints != null) lines.push(`HP ${m.hitPoints}`);
     if (m.armorClass != null) lines.push(`AC ${m.armorClass}`);
     if (m.speed != null) lines.push(`Speed ${m.speed} ft`);
     if (m.proficiencyBonus != null) lines.push(`Proficiency +${m.proficiencyBonus}`);
-    const saves = m.savingThrows || {};
-    const saveParts = Object.keys(saves)
-      .filter((k) => saves[k] != null)
-      .map((k) => `${k.toUpperCase()} ${saves[k] >= 0 ? "+" : ""}${saves[k]}`);
-    if (saveParts.length) lines.push(`Saves: ${saveParts.join(", ")}`);
+    const savesArr = Array.isArray(m.savingThrows) ? m.savingThrows : [];
+    if (savesArr.length) lines.push(`Saves: ${savesArr.map((s) => s.toUpperCase()).join(", ")}`);
     vaultDetailMechanics.innerHTML = lines.map((l) => `<div>${l}</div>`).join("");
 
     populateVaultCampaignSelect(character);
@@ -1153,6 +1158,9 @@
       renderForgedCharacter(null);
 
       const narrativeText = transcriptEl.value.trim();
+      const rawName = forgeCharacterNameInput && forgeCharacterNameInput.value
+        ? forgeCharacterNameInput.value.trim()
+        : "";
 
       let portraitUrl = null;
       try {
@@ -1164,6 +1172,7 @@
       apiPost("/api/characters/forge", {
         username: currentUser,
         narrativeText,
+        name: rawName || null,
         portraitUrl,
         campaignId: activeCampaignId,
       }).then((result) => {

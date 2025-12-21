@@ -831,7 +831,7 @@ function basicSkillsForClass(cls: string): string[] {
 	}
 }
 
-function forgeCharacterFromNarrative(owner: string, narrativeText: string, portraitUrl: string | null): Character {
+function forgeCharacterFromNarrative(owner: string, narrativeText: string, portraitUrl: string | null, explicitName?: string): Character {
 	const trimmed = narrativeText.trim();
 	const race = inferRace(trimmed);
 	const classes = inferClasses(trimmed);
@@ -855,7 +855,7 @@ function forgeCharacterFromNarrative(owner: string, narrativeText: string, portr
 	const character: Character = {
 		id,
 		owner,
-		name: '',
+		name: (explicitName ?? '').trim(),
 		narrative: {
 			rawTranscript: trimmed,
 			summary: '',
@@ -909,6 +909,7 @@ async function handleForgeCharacter(request: Request, env: Env, origin: string |
 
 	const username = (body?.username ?? '').trim();
 	const narrativeText = (body?.narrativeText ?? '').trim();
+	const explicitName = typeof body?.name === 'string' ? body.name : '';
 	const campaignIdRaw = typeof body?.campaignId === 'string' ? body.campaignId : '';
 	const campaignId = campaignIdRaw.trim() || '';
 	const portraitUrl = typeof body?.portraitUrl === 'string' && body.portraitUrl.trim().length > 0
@@ -988,7 +989,7 @@ async function handleForgeCharacter(request: Request, env: Env, origin: string |
 		}
 	}
 
-	const character = forgeCharacterFromNarrative(username, narrativeText, portraitUrl);
+	const character = forgeCharacterFromNarrative(username, narrativeText, portraitUrl, explicitName);
 
 	if (campaign) {
 		character.campaignIds = Array.isArray(character.campaignIds)

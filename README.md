@@ -1,5 +1,4 @@
 # Natural Language D&D Character Sheet Assistant 
-## Evgeny Mishlyakov - 337637698, Mikhail Gruntov - 34595031
 ### Problem & Motivation
  Creating a character for a tabletop role-playing game (TTRPG), such as Dungeons & Dragons 5th Edition (D&D 5e) [1], is a highly creative but mechanically complex process. Players often have a vivid narrative concept—a half-elf ranger abandoned in the woods, a charming rogue with a tragic past—but struggle to translate this into valid, rule-compliant, and optimized character sheet mechanics (e.g., ability scores, class features, spells, equipment). This mechanical "heavy lifting" can deter new players and disrupt creative flow for veterans, forcing them to switch between storytelling and rulebook look-ups.
 Our project, the AI D&D Assistant (ADA), addresses this by enabling users to describe their character concept in plain English and instantly generate a complete, valid character sheet, bridging the gap between narrative creativity and mechanical correctness.

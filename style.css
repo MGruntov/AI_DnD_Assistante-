@@ -565,6 +565,9 @@ body {
   overflow: hidden;
   border: 1px solid rgba(148, 163, 184, 0.7);
   background: radial-gradient(circle at top, rgba(168, 85, 247, 0.25), rgba(15, 23, 42, 1));
+  height: 140px;
+  background-size: cover;
+  background-position: center;
 }
 
 .vault-card__portrait img {
@@ -805,6 +808,8 @@ body {
   border-radius: 12px;
   overflow: hidden;
   border: 1px solid rgba(148, 163, 184, 0.7);
+  background-size: cover;
+  background-position: center;
   background: radial-gradient(circle at top, rgba(168, 85, 247, 0.25), rgba(15, 23, 42, 1));
 }
 
@@ -817,6 +822,19 @@ body {
 
 .vault-detail__title h2 {
   margin: 0 0 0.1rem;
+}
+
+.vault-prompt {
+  width: 100%;
+  margin-top: 0.25rem;
+  resize: vertical;
+  min-height: 3.5rem;
+  border-radius: var(--radius-md);
+  border: 1px solid rgba(148, 163, 184, 0.6);
+  background: rgba(15, 23, 42, 0.9);
+  color: var(--text);
+  padding: 6px 8px;
+  font-size: 0.85rem;
 }
 
 .vault-detail__body {

@@ -72,7 +72,7 @@
   const vaultDetailName = document.getElementById("vaultDetailName");
   const vaultDetailMeta = document.getElementById("vaultDetailMeta");
   const vaultDetailPortrait = document.getElementById("vaultDetailPortrait");
-  const vaultDetailConcept = document.getElementById("vaultDetailConcept");
+  const vaultDetailPrompt = document.getElementById("vaultDetailPrompt");
   const vaultDetailAbilities = document.getElementById("vaultDetailAbilities");
   const vaultDetailMechanics = document.getElementById("vaultDetailMechanics");
   const vaultCampaignSelect = document.getElementById("vaultCampaignSelect");
@@ -1096,8 +1096,15 @@
       : undefined;
     const roleLine = [race, mainClass, level ? `Level ${level}` : ""].filter(Boolean).join(" • ");
     vaultDetailMeta.textContent = roleLine || "Adventurer";
-    vaultDetailConcept.textContent = character.concept?.summary || "No concept summary yet.";
     vaultDetailPortrait.style.backgroundImage = character.portraitUrl ? `url('${character.portraitUrl}')` : "none";
+
+    if (vaultDetailPrompt) {
+      const rawPrompt =
+        character.narrative && character.narrative.rawTranscript
+          ? character.narrative.rawTranscript
+          : "";
+      vaultDetailPrompt.value = rawPrompt;
+    }
 
     // Abilities
     vaultDetailAbilities.innerHTML = "";

@@ -17,8 +17,9 @@
         <span id="currentUserLabel" class="user-label" hidden></span>
         <nav id="appNav" class="nav" hidden>
           <button type="button" class="nav__link" data-view="home">Home</button>
-            <button type="button" class="nav__link" data-view="campaigns">My Campaigns</button>
-            <button type="button" class="nav__link" data-view="profile">Profile</button>
+          <button type="button" class="nav__link" data-view="vault">My Characters</button>
+          <button type="button" class="nav__link" data-view="campaigns">My Campaigns</button>
+          <button type="button" class="nav__link" data-view="profile">Profile</button>
           <button type="button" class="nav__link nav__link--danger" id="logoutBtn">Logout</button>
         </nav>
       </div>
@@ -178,6 +179,57 @@
       <p class="profile__hint">
         Portrait and settings are stored locally for now and tied to this browser.
       </p>
+    </section>
+    <section id="vaultSection" class="view" hidden>
+      <div class="card">
+        <div id="vaultListView">
+          <h2>My Characters</h2>
+          <p class="text-muted">Your personal roster of up to five D&D 5e characters.</p>
+          <div id="vaultCharactersGrid" class="vault-grid" aria-live="polite"></div>
+          <p id="vaultMessage" class="text-muted"></p>
+        </div>
+
+        <div id="vaultDetailView" class="vault-detail" hidden>
+          <button type="button" id="vaultBackBtn" class="btn btn--secondary btn--small vault-detail__back">
+            &larr; Back to My Characters
+          </button>
+          <div class="vault-detail__header">
+            <div id="vaultDetailPortrait" class="vault-detail__portrait"></div>
+            <div class="vault-detail__title">
+              <h2 id="vaultDetailName">Character Sheet</h2>
+              <p id="vaultDetailMeta" class="text-muted"></p>
+              <p id="vaultDetailConcept" class="text-muted"></p>
+            </div>
+          </div>
+
+          <div class="vault-detail__body">
+            <div class="vault-detail__columns">
+              <section class="vault-detail__col">
+                <h3>Ability Scores</h3>
+                <dl id="vaultDetailAbilities" class="vault-abilities"></dl>
+              </section>
+              <section class="vault-detail__col">
+                <h3>Mechanics</h3>
+                <div id="vaultDetailMechanics" class="vault-mechanics"></div>
+              </section>
+            </div>
+
+            <section class="vault-link">
+              <h3>Link to Campaign</h3>
+              <p class="text-muted">
+                Choose a campaign to attach this character to. As a player you can only have one character per campaign;
+                as a Dungeon Master you can link any number of NPCs.
+              </p>
+              <div class="vault-link__controls">
+                <label for="vaultCampaignSelect" class="vault-link__label">Campaign</label>
+                <select id="vaultCampaignSelect" class="vault-link__select"></select>
+                <button type="button" id="vaultLinkBtn" class="btn btn--primary btn--small">Link character</button>
+              </div>
+              <p id="vaultLinkStatus" class="vault-link__status text-muted"></p>
+            </section>
+          </div>
+        </div>
+      </div>
     </section>
     <section id="campaignsSection" class="view" hidden>
       <div class="card">

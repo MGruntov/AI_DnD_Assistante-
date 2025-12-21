@@ -439,7 +439,7 @@ async function handlePostCampaignDetails(request: Request, env: Env, origin: str
 	}
 
 	const action = String(body?.action ?? '').trim();
-	const campaignId = String(body?.campaignId ?? '').trim();
+	const campaignId = String(body?.campaignId ?? body?.id ?? '').trim();
 	if (!action || !campaignId) {
 		return errorResponse('action and campaignId are required', 400, origin);
 	}
@@ -462,6 +462,18 @@ async function handlePostCampaignDetails(request: Request, env: Env, origin: str
 			return errorResponse('characterId is required for linkCharacter', 400, origin);
 		}
 
+		const username = String(body?.user ?? body?.username ?? '').trim();
+		if (!username) {
+			return errorResponse('username is required for linkCharacter', 400, origin);
+		}
+
+		const isParticipant =
+			campaign.dm === username ||
+			(Array.isArray(campaign.participants) && campaign.participants.includes(username));
+		if (!isParticipant) {
+			return errorResponse('You are not a participant in this campaign', 403, origin);
+		}
+
 		const storedCharacter = await env.ADA_DATA.get(`character:${characterId}`);
 		if (!storedCharacter) {
 			return errorResponse('Character not found', 404, origin);
@@ -472,6 +484,47 @@ async function handlePostCampaignDetails(request: Request, env: Env, origin: str
 			character = JSON.parse(storedCharacter) as Character;
 		} catch {
 			return errorResponse('Corrupted character record', 500, origin);
+		}
+
+		const owner = character.owner;
+		const isDm = campaign.dm === username;
+		const isOwner = owner === username;
+		if (!isDm && !isOwner) {
+			return errorResponse("Only the DM or the character's owner can link this character", 403, origin);
+		}
+
+		// Enforce: one character per player per campaign
+		const indexKey = `charactersByUser:${owner}`;
+		const existing = await env.ADA_DATA.get(indexKey);
+		let ids: string[] = [];
+		if (existing) {
+			try {
+				ids = JSON.parse(existing) as string[];
+				if (!Array.isArray(ids)) ids = [];
+			} catch {
+				ids = [];
+			}
+		}
+
+		for (const id of ids) {
+			if (id === characterId) continue; // ignore the character we are linking now
+			const storedOther = await env.ADA_DATA.get(`character:${id}`);
+			if (!storedOther) continue;
+			try {
+				const other = JSON.parse(storedOther) as Character;
+				if (
+					Array.isArray(other.campaignIds) &&
+					other.campaignIds.includes(campaignId)
+				) {
+					return errorResponse(
+						'That player already has a different character linked to this campaign',
+						400,
+						origin,
+					);
+				}
+			} catch {
+				// ignore malformed
+			}
 		}
 
 		if (!Array.isArray(campaign.linkedCharacterIds)) campaign.linkedCharacterIds = [];
@@ -877,25 +930,74 @@ async function handleForgeCharacter(request: Request, env: Env, origin: string |
 		return errorResponse('Unknown user', 404, origin);
 	}
 
+	// Enforce roster limit: max 5 characters per user
+	const rosterIndexKey = `charactersByUser:${username}`;
+	const existingRoster = await env.ADA_DATA.get(rosterIndexKey);
+	let existingIds: string[] = [];
+	if (existingRoster) {
+		try {
+			existingIds = JSON.parse(existingRoster) as string[];
+			if (!Array.isArray(existingIds)) existingIds = [];
+		} catch {
+			existingIds = [];
+		}
+	}
+	if (existingIds.length >= 5) {
+		return errorResponse(
+			'You have reached the maximum of 5 characters. Delete an existing character before forging a new one.',
+			400,
+			origin,
+		);
+	}
+
+	let campaign: Campaign | null = null;
+	if (campaignId) {
+		const storedCampaign = await env.ADA_DATA.get(`campaign:${campaignId}`);
+		if (!storedCampaign) {
+			return errorResponse('Campaign not found', 404, origin);
+		}
+		try {
+			campaign = JSON.parse(storedCampaign) as Campaign;
+		} catch {
+			return errorResponse('Corrupted campaign record', 500, origin);
+		}
+
+		const isParticipant =
+			campaign.dm === username ||
+			(Array.isArray(campaign.participants) && campaign.participants.includes(username));
+		if (!isParticipant) {
+			return errorResponse('You are not a participant in this campaign', 403, origin);
+		}
+
+		// Enforce: one character per player per campaign
+		for (const id of existingIds) {
+			const storedChar = await env.ADA_DATA.get(`character:${id}`);
+			if (!storedChar) continue;
+			try {
+				const ch = JSON.parse(storedChar) as Character;
+				if (Array.isArray(ch.campaignIds) && ch.campaignIds.includes(campaignId)) {
+					return errorResponse(
+						'You already have a character linked to this campaign.',
+						400,
+						origin,
+					);
+				}
+			} catch {
+				// ignore malformed
+			}
+		}
+	}
+
 	const character = forgeCharacterFromNarrative(username, narrativeText, portraitUrl);
 
-	if (campaignId) {
+	if (campaign) {
 		character.campaignIds = Array.isArray(character.campaignIds)
 			? [...new Set([...character.campaignIds, campaignId])]
 			: [campaignId];
-
-		const storedCampaign = await env.ADA_DATA.get(`campaign:${campaignId}`);
-		if (storedCampaign) {
-			try {
-				const campaign = JSON.parse(storedCampaign) as Campaign;
-				if (!Array.isArray(campaign.linkedCharacterIds)) campaign.linkedCharacterIds = [];
-				if (!campaign.linkedCharacterIds.includes(character.id)) {
-					campaign.linkedCharacterIds.push(character.id);
-					await env.ADA_DATA.put(`campaign:${campaignId}`, JSON.stringify(campaign));
-				}
-			} catch {
-				// ignore malformed campaign record
-			}
+		if (!Array.isArray(campaign.linkedCharacterIds)) campaign.linkedCharacterIds = [];
+		if (!campaign.linkedCharacterIds.includes(character.id)) {
+			campaign.linkedCharacterIds.push(character.id);
+			await env.ADA_DATA.put(`campaign:${campaignId}`, JSON.stringify(campaign));
 		}
 	}
 

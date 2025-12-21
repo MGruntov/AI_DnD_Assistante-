@@ -19,6 +19,7 @@
   const homeSection = document.getElementById("homeSection");
   const profileSection = document.getElementById("profileSection");
   const campaignsSection = document.getElementById("campaignsSection");
+  const vaultSection = document.getElementById("vaultSection");
   const loginView = document.getElementById("loginView");
   const registerView = document.getElementById("registerView");
   const loginForm = document.getElementById("loginForm");
@@ -61,6 +62,21 @@
   const campaignDialogueStatusEl = document.getElementById("campaignDialogueStatus");
   const campaignDialogueTranscriptEl = document.getElementById("campaignDialogueTranscript");
 
+  const vaultListView = document.getElementById("vaultListView");
+  const vaultDetailView = document.getElementById("vaultDetailView");
+  const vaultCharactersGrid = document.getElementById("vaultCharactersGrid");
+  const vaultMessage = document.getElementById("vaultMessage");
+  const vaultBackBtn = document.getElementById("vaultBackBtn");
+  const vaultDetailName = document.getElementById("vaultDetailName");
+  const vaultDetailMeta = document.getElementById("vaultDetailMeta");
+  const vaultDetailPortrait = document.getElementById("vaultDetailPortrait");
+  const vaultDetailConcept = document.getElementById("vaultDetailConcept");
+  const vaultDetailAbilities = document.getElementById("vaultDetailAbilities");
+  const vaultDetailMechanics = document.getElementById("vaultDetailMechanics");
+  const vaultCampaignSelect = document.getElementById("vaultCampaignSelect");
+  const vaultLinkBtn = document.getElementById("vaultLinkBtn");
+  const vaultLinkStatus = document.getElementById("vaultLinkStatus");
+
   const portraitImgs = [
     document.getElementById("portraitImg0"),
     document.getElementById("portraitImg1"),
@@ -79,6 +95,9 @@
 
   let activeCampaignId = null;
   let activeCampaign = null;
+  let activeCharacter = null;
+  let cachedVaultCharacters = [];
+  let cachedUserCampaigns = [];
 
   try {
     const storedCampaignId = localStorage.getItem(ACTIVE_CAMPAIGN_STORAGE_KEY);
@@ -207,9 +226,10 @@
   }
 
   function showView(view) {
-    // view: "auth-login" | "auth-register" | "home" | "profile" | "campaigns" | "campaign-detail"
+    // view: "auth-login" | "auth-register" | "home" | "profile" | "campaigns" | "campaign-detail" | "vault"
     const isAuthView = view === "auth-login" || view === "auth-register";
     const isCampaignView = view === "campaigns" || view === "campaign-detail";
+    const isVaultView = view === "vault";
 
     if (authSection) authSection.hidden = !isAuthView;
     if (loginView) loginView.hidden = view !== "auth-login";
@@ -217,6 +237,16 @@
     if (homeSection) homeSection.hidden = view !== "home";
     if (profileSection) profileSection.hidden = view !== "profile";
     if (campaignsSection) campaignsSection.hidden = !isCampaignView;
+    if (vaultSection) {
+      vaultSection.hidden = !isVaultView;
+      if (isVaultView) {
+        // reset to list view whenever entering the vault
+        vaultDetailView.hidden = true;
+        vaultListView.hidden = false;
+        loadVaultCharacters();
+        loadUserCampaignsForVault();
+      }
+    }
 
     if (campaignsListView && campaignDetailView) {
       if (view === "campaigns") {
@@ -906,6 +936,142 @@
       if (campaignsList) campaignsList.innerHTML = "";
       return;
     }
+    }
+
+    async function loadVaultCharacters() {
+      const user = getCurrentUser();
+      if (!user) return;
+      vaultMessage.textContent = "Loading your characters...";
+      vaultCharactersGrid.innerHTML = "";
+      try {
+        const result = await apiGet(`/api/characters?user=${encodeURIComponent(user)}`);
+        if (!result.ok) {
+          throw new Error((result.data && result.data.error) || "Failed to load characters");
+        }
+        const data = result.data || {};
+        const characters = Array.isArray(data.characters) ? data.characters : [];
+        cachedVaultCharacters = characters;
+        if (!characters.length) {
+          vaultMessage.textContent = "No characters yet. Forge one from the Home tab to get started.";
+          return;
+        }
+        vaultMessage.textContent = "";
+        characters.forEach((ch) => {
+          const card = document.createElement("button");
+          card.type = "button";
+          card.className = "vault-card";
+          card.innerHTML = `
+            <div class="vault-card__portrait" style="background-image: url('${(ch.portraitUrl || "").replace(/'/g, "&#39;")}')"></div>
+            <div class="vault-card__name">${ch.name || "Unnamed Adventurer"}</div>
+            <div class="vault-card__meta">${(ch.concept && ch.concept.summary) || "Mystery wanderer"}</div>
+          `;
+          card.addEventListener("click", () => openVaultDetail(ch.id));
+          vaultCharactersGrid.appendChild(card);
+        });
+      } catch (err) {
+        console.error("Failed to load characters", err);
+        vaultMessage.textContent = err.message || "Error loading characters.";
+      }
+    }
+
+    async function loadUserCampaignsForVault() {
+      const user = getCurrentUser();
+      if (!user) return;
+      try {
+        const result = await apiGet(`/api/campaigns?user=${encodeURIComponent(user)}`);
+        if (!result.ok) return;
+        const data = result.data || {};
+        cachedUserCampaigns = Array.isArray(data.campaigns) ? data.campaigns : [];
+      } catch (err) {
+        console.warn("Unable to load campaigns for vault", err);
+      }
+    }
+
+    function populateVaultCampaignSelect(character) {
+      vaultCampaignSelect.innerHTML = "";
+      const optPlaceholder = document.createElement("option");
+      optPlaceholder.value = "";
+      optPlaceholder.textContent = "Select a campaign";
+      vaultCampaignSelect.appendChild(optPlaceholder);
+
+      if (!cachedUserCampaigns.length) {
+        const opt = document.createElement("option");
+        opt.value = "";
+        opt.disabled = true;
+        opt.textContent = "No campaigns yet";
+        vaultCampaignSelect.appendChild(opt);
+        return;
+      }
+
+      cachedUserCampaigns.forEach((c) => {
+        const opt = document.createElement("option");
+        opt.value = c.id;
+        opt.textContent = `${c.name} (${c.role === "dm" || c.dm === currentUser?.username ? "DM" : "Player"})`;
+        vaultCampaignSelect.appendChild(opt);
+      });
+
+      if (character && Array.isArray(character.campaignIds) && character.campaignIds.length) {
+        const lastId = character.campaignIds[character.campaignIds.length - 1];
+        const match = Array.from(vaultCampaignSelect.options).find((o) => o.value === lastId);
+        if (match) vaultCampaignSelect.value = lastId;
+      }
+    }
+
+    function renderVaultDetail(character) {
+      activeCharacter = character;
+      vaultDetailName.textContent = character.name || "Unnamed Adventurer";
+      const race = character.concept?.race || "";
+      const mainClass = Array.isArray(character.concept?.classes) && character.concept.classes.length
+        ? character.concept.classes[0].name
+        : "";
+      const level = Array.isArray(character.concept?.classes) && character.concept.classes.length
+        ? character.concept.classes[0].level
+        : undefined;
+      const roleLine = [race, mainClass, level ? `Level ${level}` : ""].filter(Boolean).join(" • ");
+      vaultDetailMeta.textContent = roleLine || "Adventurer";
+      vaultDetailConcept.textContent = character.concept?.summary || "No concept summary yet.";
+      vaultDetailPortrait.style.backgroundImage = character.portraitUrl ? `url('${character.portraitUrl}')` : "none";
+
+      // Abilities
+      vaultDetailAbilities.innerHTML = "";
+      const abilities = character.mechanics?.abilityScores || {};
+      const abilityOrder = ["STR", "DEX", "CON", "INT", "WIS", "CHA"];
+      abilityOrder.forEach((abbr) => {
+        const key = abbr.toLowerCase();
+        const score = abilities[key]?.score ?? "—";
+        const dt = document.createElement("dt");
+        dt.textContent = abbr;
+        const dd = document.createElement("dd");
+        dd.textContent = String(score);
+        vaultDetailAbilities.appendChild(dt);
+        vaultDetailAbilities.appendChild(dd);
+      });
+
+      // Mechanics summary
+      const m = character.mechanics || {};
+      const lines = [];
+      if (m.hp?.max != null) lines.push(`HP ${m.hp.current ?? m.hp.max}/${m.hp.max}`);
+      if (m.armorClass != null) lines.push(`AC ${m.armorClass}`);
+      if (m.speed != null) lines.push(`Speed ${m.speed} ft`);
+      if (m.proficiencyBonus != null) lines.push(`Proficiency +${m.proficiencyBonus}`);
+      const saves = m.savingThrows || {};
+      const saveParts = Object.keys(saves)
+        .filter((k) => saves[k] != null)
+        .map((k) => `${k.toUpperCase()} ${saves[k] >= 0 ? "+" : ""}${saves[k]}`);
+      if (saveParts.length) lines.push(`Saves: ${saveParts.join(", ")}`);
+      vaultDetailMechanics.innerHTML = lines.map((l) => `<div>${l}</div>`).join("");
+
+      populateVaultCampaignSelect(character);
+
+      vaultListView.hidden = true;
+      vaultDetailView.hidden = false;
+    }
+
+    function openVaultDetail(characterId) {
+      const ch = cachedVaultCharacters.find((c) => c.id === characterId);
+      if (!ch) return;
+      renderVaultDetail(ch);
+    }
 
     if (campaignsMessage)
       campaignsMessage.textContent = "Loading campaigns...";
@@ -1097,6 +1263,49 @@
         }
         showView("campaigns");
         loadCampaigns("all");
+      } else if (view === "vault") {
+        showView("vault");
+      }
+    });
+  }
+
+  if (vaultBackBtn) {
+    vaultBackBtn.addEventListener("click", () => {
+      vaultDetailView.hidden = true;
+      vaultListView.hidden = false;
+    });
+  }
+
+  if (vaultLinkBtn) {
+    vaultLinkBtn.addEventListener("click", async () => {
+      const currentUser = getCurrentUser();
+      if (!currentUser || !activeCharacter) return;
+      const campaignId = vaultCampaignSelect.value;
+      if (!campaignId) {
+        vaultLinkStatus.textContent = "Please select a campaign first.";
+        return;
+      }
+      vaultLinkStatus.textContent = "Linking character to campaign...";
+      try {
+        const res = await fetch(`${BACKEND_BASE_URL}/api/campaigns/details`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            campaignId,
+            username: currentUser,
+            action: "linkCharacter",
+            characterId: activeCharacter.id,
+          }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || data.ok === false) {
+          throw new Error(data.error || data.message || "Failed to link character.");
+        }
+        vaultLinkStatus.textContent = "Character linked to campaign.";
+        await loadVaultCharacters();
+      } catch (err) {
+        console.error("Failed to link character", err);
+        vaultLinkStatus.textContent = err.message || "Error linking character.";
       }
     });
   }

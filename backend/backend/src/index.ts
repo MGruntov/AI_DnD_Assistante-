@@ -641,17 +641,21 @@ async function handleStartAICampaign(request: Request, env: Env, origin: string 
 		);
 		const parsed = parseAIDMResponse(openingRaw);
 		openingNarrative = parsed.narrative;
-
-		// Record this as the first DM entry in the session log.
-		const now = new Date().toISOString();
-		session.log.push({ role: 'dm', text: parsed.narrative, timestamp: now });
-		if (session.log.length > 12) {
-			session.log = session.log.slice(-12);
-		}
-		await env.ADA_DATA.put(`aiSession:${id}`, JSON.stringify(session));
 	} catch (err) {
 		console.error('AI-DM opening call failed', err);
+		// Fallback: synthesize a simple opening narration so the player always
+		// gets an intro even if the external AI service is unavailable.
+		const name = character.name || 'your character';
+		openingNarrative = `You tug your red cloak tighter against the whispering chill of the forest. Tonight, ${name} carries spirit-warding herbs along the lonely path to Grandmother's cottage. The trees lean close, shadows pooling between their roots, and far off you think you hear the low, hungry growl of something stalking the trail.`;
 	}
+
+	// Record this as the first DM entry in the session log.
+	const now = new Date().toISOString();
+	session.log.push({ role: 'dm', text: openingNarrative ?? '', timestamp: now });
+	if (session.log.length > 12) {
+		session.log = session.log.slice(-12);
+	}
+	await env.ADA_DATA.put(`aiSession:${id}`, JSON.stringify(session));
 
 	return jsonResponse({ ok: true, campaign, session, openingNarrative }, { status: 201 }, origin);
 }
@@ -767,17 +771,27 @@ async function handleAIDMTurn(request: Request, env: Env, origin: string | null)
 		session.log = session.log.slice(-12);
 	}
 
-	let rawResponse: string;
+	let parsedNarrative: string;
+	let parsedMechanics = {
+		checkDescription: null as string | null,
+		dc: null as number | null,
+		ability: null as string | null,
+		skill: null as string | null,
+		advantage: null as 'none' | 'advantage' | 'disadvantage' | null,
+	};
 	try {
-		rawResponse = await callAIDungeonMaster(adventure, session, character, playerInput);
+		const rawResponse = await callAIDungeonMaster(adventure, session, character, playerInput);
+		const parsed = parseAIDMResponse(rawResponse);
+		parsedNarrative = parsed.narrative;
+		parsedMechanics = parsed.mechanics;
 	} catch (err) {
 		console.error('AI-DM call failed', err);
-		await env.ADA_DATA.put(sessionKey, JSON.stringify(session));
-		return errorResponse('AI Dungeon Master is currently unavailable. Please try again in a moment.', 502, origin);
+		// Fallback: generate a simple, deterministic DM response so play can
+		// continue even if the external AI service is down.
+		parsedNarrative = `ADA pauses for a moment, then narrates in a calm voice: "${playerInput}" plays out in the Whispering Woods. Imagine how your character moves, reacts, and feels — we will continue from there.`;
 	}
 
-	const parsed = parseAIDMResponse(rawResponse);
-	session.log.push({ role: 'dm', text: parsed.narrative, timestamp: new Date().toISOString() });
+	session.log.push({ role: 'dm', text: parsedNarrative, timestamp: new Date().toISOString() });
 	if (session.log.length > 12) {
 		session.log = session.log.slice(-12);
 	}
@@ -787,8 +801,8 @@ async function handleAIDMTurn(request: Request, env: Env, origin: string | null)
 	return jsonResponse(
 		{
 			ok: true,
-			narrative: parsed.narrative,
-			mechanics: parsed.mechanics,
+			narrative: parsedNarrative,
+			mechanics: parsedMechanics,
 		},
 		{ status: 200 },
 		origin,
@@ -1163,6 +1177,146 @@ async function handlePostCampaignDetails(request: Request, env: Env, origin: str
 		await env.ADA_DATA.put(indexKey, JSON.stringify(ids));
 
 		return jsonResponse({ ok: true }, { status: 201 }, origin);
+	}
+
+	if (action === 'deleteCampaign') {
+		const username = String(body?.username ?? '').trim();
+		if (!username) {
+			return errorResponse('username is required for deleteCampaign', 400, origin);
+		}
+
+		const isParticipant =
+			campaign.dm === username ||
+			(Array.isArray(campaign.participants) && campaign.participants.includes(username));
+		if (!isParticipant) {
+			return errorResponse('You are not a participant in this campaign', 403, origin);
+		}
+
+		// Only allow deleting AI-driven solo campaigns from the client.
+		if (!campaign.dmIsAI && campaign.mode !== 'ai-solo') {
+			return errorResponse('Only AI-driven solo campaigns can be deleted from here', 400, origin);
+		}
+
+		// Remove campaign record
+		await env.ADA_DATA.delete(`campaign:${campaignId}`);
+		// Remove AI session, if any
+		await env.ADA_DATA.delete(`aiSession:${campaignId}`);
+
+		// Remove this campaign from participants' campaign indexes
+		const participants = Array.isArray(campaign.participants) ? campaign.participants : [];
+		for (const user of participants) {
+			const idxKey = `campaignsByUser:${user}`;
+			const existingIdx = await env.ADA_DATA.get(idxKey);
+			if (!existingIdx) continue;
+			try {
+				let ids = JSON.parse(existingIdx) as string[];
+				if (Array.isArray(ids)) {
+					ids = ids.filter((id) => id !== campaignId);
+					await env.ADA_DATA.put(idxKey, JSON.stringify(ids));
+				}
+			} catch {
+				// ignore index cleanup issues
+			}
+		}
+
+		// Unlink from any characters explicitly tied to this campaign
+		const linkedCharIds = Array.isArray(campaign.linkedCharacterIds)
+			? campaign.linkedCharacterIds
+			: [];
+		for (const charId of linkedCharIds) {
+			const storedChar = await env.ADA_DATA.get(`character:${charId}`);
+			if (!storedChar) continue;
+			try {
+				const ch = JSON.parse(storedChar) as Character;
+				if (Array.isArray(ch.campaignIds)) {
+					ch.campaignIds = ch.campaignIds.filter((cid) => cid !== campaignId);
+					await env.ADA_DATA.put(`character:${charId}`, JSON.stringify(ch));
+				}
+			} catch {
+				// ignore malformed characters
+			}
+		}
+
+		return jsonResponse({ ok: true }, { status: 200 }, origin);
+	}
+
+	if (action === 'leaveCampaign') {
+		const username = String(body?.username ?? '').trim();
+		if (!username) {
+			return errorResponse('username is required for leaveCampaign', 400, origin);
+		}
+
+		const isParticipant =
+			campaign.dm === username ||
+			(Array.isArray(campaign.participants) && campaign.participants.includes(username));
+		if (!isParticipant) {
+			return errorResponse('You are not a participant in this campaign', 403, origin);
+		}
+
+		// Only non-DM players can leave, and not from AI-solo campaigns.
+		if (campaign.dm === username) {
+			return errorResponse('The DM cannot leave the campaign using this action', 400, origin);
+		}
+		if (campaign.dmIsAI || campaign.mode === 'ai-solo') {
+			return errorResponse('Use deleteCampaign for AI-driven solo campaigns', 400, origin);
+		}
+
+		// Remove participant from campaign
+		if (Array.isArray(campaign.participants)) {
+			campaign.participants = campaign.participants.filter((p) => p !== username);
+		}
+
+		// Remove this campaign from the user's campaignsByUser index
+		const idxKey = `campaignsByUser:${username}`;
+		const existingIdx = await env.ADA_DATA.get(idxKey);
+		if (existingIdx) {
+			try {
+				let ids = JSON.parse(existingIdx) as string[];
+				if (Array.isArray(ids)) {
+					ids = ids.filter((id) => id !== campaignId);
+					await env.ADA_DATA.put(idxKey, JSON.stringify(ids));
+				}
+			} catch {
+				// ignore index cleanup
+			}
+		}
+
+		// Unlink any of this user's characters from the campaign
+		const charIndexKey = `charactersByUser:${username}`;
+		const charsIndex = await env.ADA_DATA.get(charIndexKey);
+		if (charsIndex) {
+			try {
+				const charIds = JSON.parse(charsIndex) as string[];
+				if (Array.isArray(charIds)) {
+					for (const charId of charIds) {
+						const storedChar = await env.ADA_DATA.get(`character:${charId}`);
+						if (!storedChar) continue;
+						try {
+							const ch = JSON.parse(storedChar) as Character;
+							let changed = false;
+							if (Array.isArray(ch.campaignIds) && ch.campaignIds.includes(campaignId)) {
+								ch.campaignIds = ch.campaignIds.filter((cid) => cid !== campaignId);
+								changed = true;
+							}
+							if (Array.isArray(campaign.linkedCharacterIds) && campaign.linkedCharacterIds.includes(charId)) {
+								campaign.linkedCharacterIds = campaign.linkedCharacterIds.filter((id) => id !== charId);
+								changed = true;
+							}
+							if (changed) {
+								await env.ADA_DATA.put(`character:${charId}`, JSON.stringify(ch));
+							}
+						} catch {
+							// ignore malformed character
+						}
+					}
+				}
+			} catch {
+				// ignore character index issues
+			}
+		}
+
+		await env.ADA_DATA.put(`campaign:${campaignId}`, JSON.stringify(campaign));
+		return jsonResponse({ ok: true, campaign }, { status: 200 }, origin);
 	}
 
 	return errorResponse('Unknown action for campaign details', 400, origin);

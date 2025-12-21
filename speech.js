@@ -47,6 +47,9 @@
   const campaignBackBtn = document.getElementById("campaignBackBtn");
   const campaignDetailTitle = document.getElementById("campaignDetailTitle");
   const campaignDetailMeta = document.getElementById("campaignDetailMeta");
+  const campaignDeleteBtn = document.getElementById("campaignDeleteBtn");
+  const campaignLeaveBtn = document.getElementById("campaignLeaveBtn");
+  const campaignActionStatusEl = document.getElementById("campaignActionStatus");
   const campaignTabButtons = Array.from(
     document.querySelectorAll(".campaign-tab-button")
   );
@@ -1153,6 +1156,26 @@
       if (aiDmInputEl) aiDmInputEl.disabled = !isAi;
       if (aiDmSendBtn) aiDmSendBtn.disabled = !isAi;
       if (aiDmMechanicsEl) aiDmMechanicsEl.textContent = "";
+
+      // Configure delete/leave buttons based on campaign type and user role
+      const isDm = campaign.dm === currentUser;
+      const isParticipant =
+        Array.isArray(campaign.participants) &&
+        campaign.participants.includes(currentUser);
+
+      if (campaignDeleteBtn) {
+        const canDelete = isAi && isParticipant;
+        campaignDeleteBtn.hidden = !canDelete;
+        campaignDeleteBtn.disabled = !canDelete;
+      }
+
+      if (campaignLeaveBtn) {
+        const canLeave = !isAi && isParticipant && !isDm;
+        campaignLeaveBtn.hidden = !canLeave;
+        campaignLeaveBtn.disabled = !canLeave;
+      }
+
+      if (campaignActionStatusEl) campaignActionStatusEl.textContent = "";
     }
 
     renderCampaignCharacters(characters);
@@ -1764,6 +1787,86 @@
       }
       showView("campaigns");
       loadCampaigns("all");
+    });
+  }
+
+  if (campaignDeleteBtn) {
+    campaignDeleteBtn.addEventListener("click", () => {
+      if (!activeCampaignId || !activeCampaign) return;
+      const currentUser = getCurrentUser();
+      if (!currentUser) return;
+      const confirmed = window.confirm(
+        "Delete this AI-driven solo campaign? This will remove it from your list. Characters remain intact.",
+      );
+      if (!confirmed) return;
+      if (campaignActionStatusEl)
+        campaignActionStatusEl.textContent = "Deleting campaign...";
+
+      apiPost("/api/campaigns/details", {
+        action: "deleteCampaign",
+        campaignId: activeCampaignId,
+        username: currentUser,
+      }).then((result) => {
+        if (!result.ok) {
+          const msg =
+            (result.data && (result.data.error || result.data.message)) ||
+            "Could not delete campaign.";
+          if (campaignActionStatusEl) campaignActionStatusEl.textContent = msg;
+          return;
+        }
+
+        if (campaignActionStatusEl)
+          campaignActionStatusEl.textContent = "Campaign deleted.";
+        activeCampaignId = null;
+        activeCampaign = null;
+        try {
+          localStorage.removeItem(ACTIVE_CAMPAIGN_STORAGE_KEY);
+        } catch {
+          // ignore
+        }
+        showView("campaigns");
+        loadCampaigns("all");
+      });
+    });
+  }
+
+  if (campaignLeaveBtn) {
+    campaignLeaveBtn.addEventListener("click", () => {
+      if (!activeCampaignId || !activeCampaign) return;
+      const currentUser = getCurrentUser();
+      if (!currentUser) return;
+      const confirmed = window.confirm(
+        "Leave this campaign? You will be removed as a participant and your linked characters will be unlinked.",
+      );
+      if (!confirmed) return;
+      if (campaignActionStatusEl)
+        campaignActionStatusEl.textContent = "Leaving campaign...";
+
+      apiPost("/api/campaigns/details", {
+        action: "leaveCampaign",
+        campaignId: activeCampaignId,
+        username: currentUser,
+      }).then((result) => {
+        if (!result.ok) {
+          const msg =
+            (result.data && (result.data.error || result.data.message)) ||
+            "Could not leave campaign.";
+          if (campaignActionStatusEl) campaignActionStatusEl.textContent = msg;
+          return;
+        }
+
+        if (campaignActionStatusEl)
+          campaignActionStatusEl.textContent = "You have left this campaign.";
+        activeCampaignId = null;
+        activeCampaign = null;
+        try {
+          localStorage.removeItem(ACTIVE_CAMPAIGN_STORAGE_KEY);
+        } catch {
+          // ignore
+        }
+        showView("campaigns");
+        loadCampaigns("all");
+      });
     });
   }
 

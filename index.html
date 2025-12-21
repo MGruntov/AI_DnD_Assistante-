@@ -302,6 +302,11 @@
           <button type="button" id="campaignBackBtn" class="btn btn--secondary btn--small campaign-detail__back">&larr; Back to My Campaigns</button>
           <h2 id="campaignDetailTitle">Campaign Dashboard</h2>
           <p id="campaignDetailMeta" class="text-muted"></p>
+          <div class="campaign-detail__actions">
+            <button type="button" id="campaignDeleteBtn" class="btn btn--danger btn--small" hidden>Delete campaign</button>
+            <button type="button" id="campaignLeaveBtn" class="btn btn--secondary btn--small" hidden>Leave campaign</button>
+            <span id="campaignActionStatus" class="status campaign-detail__status"></span>
+          </div>
 
           <nav class="campaign-tabs" aria-label="Campaign sections">
             <button type="button" class="campaign-tab-button" data-tab="characters">Characters</button>

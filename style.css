@@ -468,6 +468,16 @@ body {
   font-size: 0.8rem;
 }
 
+.btn.btn--danger {
+  background-color: #b91c1c;
+  border-color: #fecaca;
+}
+
+.btn.btn--danger:hover {
+  background-color: #ef4444;
+  border-color: #fee2e2;
+}
+
 .campaigns__new {
   margin-top: 1.5rem;
   padding-top: 1.25rem;
@@ -672,6 +682,19 @@ body {
 
 .campaign-detail__back {
   margin-bottom: 0.5rem;
+}
+
+.campaign-detail__actions {
+  margin-top: 0.25rem;
+  margin-bottom: 0.5rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.campaign-detail__status {
+  font-size: 0.8rem;
 }
 
 .campaign-tabs {

@@ -64,6 +64,13 @@
   const campaignDialogueStatusEl = document.getElementById("campaignDialogueStatus");
   const campaignDialogueTranscriptEl = document.getElementById("campaignDialogueTranscript");
 
+  const aiDmNoticeEl = document.getElementById("aiDmNotice");
+  const aiDmPanelEl = document.getElementById("aiDmPanel");
+  const aiDmInputEl = document.getElementById("aiDmInput");
+  const aiDmSendBtn = document.getElementById("aiDmSendBtn");
+  const aiDmRollBtn = document.getElementById("aiDmRollBtn");
+  const aiDmMechanicsEl = document.getElementById("aiDmMechanics");
+
   const adventuresList = document.getElementById("adventuresList");
   const adventuresMessage = document.getElementById("adventuresMessage");
 
@@ -107,6 +114,7 @@
   let cachedUserCampaigns = [];
   let cachedAdventures = [];
   let cachedAdventureCharacters = [];
+  let lastAiMechanics = null;
   let pendingForgedCharacter = null;
   let pendingNarrativeText = "";
   let pendingCharacterName = "";
@@ -830,6 +838,11 @@
     });
   }
 
+  function isAIDmCampaign(campaign) {
+    if (!campaign) return false;
+    return campaign.dmIsAI === true || campaign.mode === "ai-solo";
+  }
+
   function setCampaignTab(tabId) {
     if (!tabId) return;
 
@@ -849,6 +862,87 @@
       const tab = panel.getAttribute("data-tab");
       panel.hidden = tab !== tabId;
     });
+  }
+
+  function appendAiDmLog(role, text) {
+    if (!campaignDialogueTranscriptEl || !text) return;
+    const prefix = role === "dm" ? "ADA: " : "You: ";
+    const current = campaignDialogueTranscriptEl.value.trim();
+    const entry = `${prefix}${text.trim()}`;
+    campaignDialogueTranscriptEl.value = current
+      ? `${current}\n\n${entry}`
+      : entry;
+    campaignDialogueTranscriptEl.scrollTop =
+      campaignDialogueTranscriptEl.scrollHeight;
+  }
+
+  async function sendAiDmTurn() {
+    if (!activeCampaign || !isAIDmCampaign(activeCampaign)) {
+      return;
+    }
+    const username = getCurrentUser();
+    if (!username) {
+      if (aiDmMechanicsEl)
+        aiDmMechanicsEl.textContent = "Log in to talk to ADA as DM.";
+      return;
+    }
+    if (!aiDmInputEl || !aiDmSendBtn) return;
+    const text = aiDmInputEl.value.trim();
+    if (!text) return;
+
+    aiDmSendBtn.disabled = true;
+    if (aiDmMechanicsEl)
+      aiDmMechanicsEl.textContent = "Talking to ADA...";
+
+    appendAiDmLog("player", text);
+    aiDmInputEl.value = "";
+
+    try {
+      const result = await apiPost("/api/ai-dm/turn", {
+        username,
+        campaignId: activeCampaignId,
+        text,
+      });
+      if (!result.ok) {
+        const msg =
+          (result.data && (result.data.error || result.data.message)) ||
+          "ADA could not respond right now.";
+        if (aiDmMechanicsEl) aiDmMechanicsEl.textContent = msg;
+        return;
+      }
+
+      const payload = result.data || {};
+      const narrative = payload.narrative || payload.text || "";
+      const mechanics = payload.mechanics || null;
+      lastAiMechanics = mechanics;
+      if (narrative) {
+        appendAiDmLog("dm", narrative);
+      }
+      if (mechanics && aiDmMechanicsEl) {
+        const dc = mechanics.dc;
+        const ability = mechanics.ability;
+        const skill = mechanics.skill;
+        const advantage = mechanics.advantage;
+        const pieces = [];
+        if (dc != null) pieces.push(`DC ${dc}`);
+        if (ability) pieces.push(ability.toUpperCase());
+        if (skill) pieces.push(skill);
+        if (advantage === true) pieces.push("(advantage)");
+        if (advantage === false) pieces.push("(disadvantage)");
+        aiDmMechanicsEl.textContent =
+          pieces.length > 0
+            ? `Check requested: ${pieces.join(" ")}`
+            : "";
+      } else if (aiDmMechanicsEl) {
+        aiDmMechanicsEl.textContent = "";
+      }
+    } catch (e) {
+      console.error("[ADA] AI-DM turn failed", e);
+      if (aiDmMechanicsEl)
+        aiDmMechanicsEl.textContent = "Error talking to ADA.";
+    } finally {
+      if (aiDmSendBtn) aiDmSendBtn.disabled = false;
+    }
   }
 
   function renderCampaignCharacters(characters) {
@@ -1046,6 +1140,13 @@
         const created = new Date(campaign.createdAt || Date.now()).toLocaleString();
         campaignDetailMeta.textContent = `${role} · Created ${created}${othersLabel}`;
       }
+
+      const isAi = isAIDmCampaign(campaign);
+      if (aiDmNoticeEl) aiDmNoticeEl.hidden = !isAi;
+      if (aiDmPanelEl) aiDmPanelEl.hidden = !isAi;
+      if (aiDmInputEl) aiDmInputEl.disabled = !isAi;
+      if (aiDmSendBtn) aiDmSendBtn.disabled = !isAi;
+      if (aiDmMechanicsEl) aiDmMechanicsEl.textContent = "";
     }
 
     renderCampaignCharacters(characters);
@@ -1668,6 +1769,12 @@
     });
   });
 
+  if (aiDmSendBtn) {
+    aiDmSendBtn.addEventListener("click", () => {
+      sendAiDmTurn();
+    });
+  }
+
   if (campaignScriptGenerateBtn) {
     campaignScriptGenerateBtn.addEventListener("click", () => {
       if (!activeCampaignId) {
@@ -1724,6 +1831,24 @@
             "Encounter script added to your campaign.";
         if (campaignScriptPromptInput) campaignScriptPromptInput.value = "";
       });
+    });
+  }
+
+  if (aiDmSendBtn) {
+    aiDmSendBtn.addEventListener("click", () => {
+      sendAiDmTurn();
+    });
+  }
+
+  if (aiDmRollBtn) {
+    aiDmRollBtn.addEventListener("click", () => {
+      if (!activeCampaign || !isAIDmCampaign(activeCampaign)) return;
+      const roll = Math.floor(Math.random() * 20) + 1;
+      if (aiDmMechanicsEl) {
+        const base = aiDmMechanicsEl.textContent || "";
+        const note = `Roll: d20 = ${roll}`;
+        aiDmMechanicsEl.textContent = base ? `${base} — ${note}` : note;
+      }
     });
   }
 

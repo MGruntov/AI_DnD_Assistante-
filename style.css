@@ -857,6 +857,30 @@ body {
   margin-top: 0.25rem;
 }
 
+.ai-dm-panel {
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid rgba(148, 163, 184, 0.35);
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.ai-dm__input {
+  margin-top: 0.1rem;
+}
+
+.ai-dm__controls {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.ai-dm__mechanics {
+  font-size: 0.8rem;
+}
+
 .profile__hint {
   margin: 0;
   font-size: 0.82rem;

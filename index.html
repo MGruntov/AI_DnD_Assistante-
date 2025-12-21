@@ -354,6 +354,22 @@
                   rows="8"
                   placeholder="Live session dialogue will appear here..."
                 ></textarea>
+                <p id="aiDmNotice" class="text-muted" hidden>
+                  ADA is acting as the Dungeon Master for this campaign. Type what your character does next and send it to continue the story.
+                </p>
+                <div class="ai-dm-panel" id="aiDmPanel" hidden>
+                  <textarea
+                    id="aiDmInput"
+                    class="output__text ai-dm__input"
+                    rows="3"
+                    placeholder="What do you do next?"
+                  ></textarea>
+                  <div class="ai-dm__controls">
+                    <button type="button" id="aiDmSendBtn" class="btn btn--primary btn--small">Send to ADA-DM</button>
+                    <button type="button" id="aiDmRollBtn" class="btn btn--secondary btn--small">Roll d20</button>
+                    <span id="aiDmMechanics" class="ai-dm__mechanics text-muted"></span>
+                  </div>
+                </div>
               </div>
             </section>
           </div>

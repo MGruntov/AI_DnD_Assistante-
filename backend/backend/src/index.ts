@@ -215,6 +215,205 @@ const ADVENTURES: AdventureTemplate[] = [
 	},
 ];
 
+function buildCharacterSummary(character: Character): string {
+	const name = character.name || 'Unnamed adventurer';
+	const race = character.concept?.race || 'Unknown race';
+	const classSummary = character.concept?.classSummary || 'Adventurer';
+	const levelSummary = character.concept?.levelSummary || '1';
+	const abilities = character.mechanics?.abilityScores;
+	const abilityLine = abilities
+		? `STR ${abilities.str}, DEX ${abilities.dex}, CON ${abilities.con}, INT ${abilities.int}, WIS ${abilities.wis}, CHA ${abilities.cha}`
+		: '';
+	const hp = character.mechanics?.hitPoints;
+	const ac = character.mechanics?.armorClass;
+	const speed = character.mechanics?.speed;
+	const prof = character.mechanics?.proficiencyBonus;
+	const coreStats = [
+		`Level(s): ${levelSummary}`,
+		hp != null ? `HP ${hp}` : '',
+		ac != null ? `AC ${ac}` : '',
+		speed != null ? `Speed ${speed} ft` : '',
+		prof != null ? `Proficiency bonus +${prof}` : '',
+	]
+		.filter(Boolean)
+		.join(' · ');
+	const skills = Array.isArray(character.mechanics?.skills)
+		? character.mechanics.skills.join(', ')
+		: '';
+	return [
+		`${name} – ${race} ${classSummary} (Level summary: ${levelSummary})`,
+		abilityLine,
+		coreStats,
+		skills ? `Trained skills: ${skills}` : '',
+	]
+		.filter(Boolean)
+		.join('\n');
+}
+
+function buildSessionHistory(log: TurnEntry[]): string {
+	if (!Array.isArray(log) || !log.length) return '';
+	return log
+		.slice(-10)
+		.map((entry) => {
+			const who = entry.role === 'player' ? 'Player' : 'DM';
+			return `${who}: ${entry.text}`;
+		})
+		.join('\n');
+}
+
+function buildAIDMSystemPrompt(): string {
+	return [
+		'You are ADA, an AI Dungeon Master for D&D 5e.',
+		'You run tightly scoped, structured solo adventures for a single player.',
+		'Always respect D&D 5e tone and mechanics: low-level heroes are fragile, magic and powerful items are limited.',
+		'',
+		'Your output MUST follow this exact structure:',
+		'[NARRATIVE]',
+		'Rich second-person narration describing what happens next at the current scene.',
+		'Keep it to 1–3 short paragraphs.',
+		'[/NARRATIVE]',
+		'',
+		'[MECHANICS]',
+		'- check: a short description of any roll the player should make, or "none"',
+		'- dc: the DC for the check, or 0 if none',
+		'- ability: STR, DEX, CON, INT, WIS, or CHA, or "none" if no check',
+		'- skill: the skill used, or "none" if no check',
+		'- advantage: one of "none", "advantage", or "disadvantage"',
+		'[/MECHANICS]',
+		'',
+		'Do not include any other sections or markup. If no check is required, set check to "none" and dc to 0.',
+	].join('\n');
+}
+
+function buildAIDMUserPrompt(
+	adventure: AdventureTemplate,
+	session: AIDMSessionState,
+	character: Character,
+	playerInput: string,
+): string {
+	const checkpointId = adventure.checkpoints[session.checkpointIndex] || 'start';
+	const history = buildSessionHistory(session.log);
+	const characterSummary = buildCharacterSummary(character);
+	const victory = adventure.victoryConditions.join('\n- ');
+	const defeat = adventure.defeatConditions.join('\n- ');
+	return [
+		`Adventure: ${adventure.title} [${adventure.id}]`,
+		'',
+		`Primer: ${adventure.primer}`,
+		'',
+		`Current checkpoint: ${checkpointId}`,
+		'Checkpoints (in narrative order):',
+		adventure.checkpoints.map((c, idx) => `${idx === session.checkpointIndex ? '>>' : '  '} ${idx + 1}. ${c}`).join('\n'),
+		'',
+		'Victory conditions:',
+		`- ${victory}`,
+		'',
+		'Defeat conditions:',
+		`- ${defeat}`,
+		'',
+		'Player character:',
+		characterSummary,
+		'',
+		'Recent conversation log (most recent last):',
+		history || '(no previous turns – this is the opening scene)',
+		'',
+		`New player input: ${playerInput}`,
+		'',
+		'Based on this, narrate the next beat of the scene at the current checkpoint, then specify any mechanical check as per the output format.',
+	].join('\n');
+}
+
+async function callAIDungeonMaster(
+	adventure: AdventureTemplate,
+	session: AIDMSessionState,
+	character: Character,
+	playerInput: string,
+): Promise<string> {
+	const systemPrompt = buildAIDMSystemPrompt();
+	const userPrompt = buildAIDMUserPrompt(adventure, session, character, playerInput);
+	const payload = {
+		model: 'openai',
+		reasoning_effort: 'medium',
+		messages: [
+			{ role: 'system', content: systemPrompt },
+			{ role: 'user', content: userPrompt },
+		],
+		temperature: 0.9,
+		max_tokens: 600,
+	};
+
+	const res = await fetch('https://text.pollinations.ai/openai', {
+		method: 'POST',
+		headers: {
+			'content-type': 'application/json',
+		},
+		body: JSON.stringify(payload),
+	});
+
+	if (!res.ok) {
+		throw new Error(`AI-DM request failed with status ${res.status}`);
+	}
+
+	let data: any;
+	try {
+		data = await res.json();
+	} catch {
+		// Fallback to raw text if not JSON (e.g., simple text endpoint or error page)
+		return await res.text();
+	}
+
+	const content = data?.choices?.[0]?.message?.content;
+	if (typeof content === 'string' && content.trim().length > 0) {
+		return content;
+	}
+	throw new Error('AI-DM response missing content');
+}
+
+function parseAIDMResponse(raw: string): { narrative: string; mechanics: {
+	checkDescription: string | null;
+	dc: number | null;
+	ability: string | null;
+	skill: string | null;
+	advantage: 'none' | 'advantage' | 'disadvantage' | null;
+} } {
+	const text = String(raw || '');
+	const narrativeMatch = text.match(/\[NARRATIVE\]([\s\S]*?)\[\/NARRATIVE\]/i);
+	const mechanicsMatch = text.match(/\[MECHANICS\]([\s\S]*?)\[\/MECHANICS\]/i);
+	const narrative = narrativeMatch ? narrativeMatch[1].trim() : text.trim();
+	const mechanicsBlock = mechanicsMatch ? mechanicsMatch[1].trim() : '';
+
+	let checkDescription: string | null = null;
+	let dc: number | null = null;
+	let ability: string | null = null;
+	let skill: string | null = null;
+	let advantage: 'none' | 'advantage' | 'disadvantage' | null = null;
+
+	if (mechanicsBlock) {
+		checkDescription = mechanicsBlock;
+		const dcMatch = mechanicsBlock.match(/dc\s*[:\-]\s*(\d+)/i);
+		if (dcMatch) {
+			dc = Number.parseInt(dcMatch[1], 10);
+		}
+		const abilityMatch = mechanicsBlock.match(/ability\s*[:\-]\s*([A-Z]{3}|STR|DEX|CON|INT|WIS|CHA)/i);
+		if (abilityMatch) {
+			ability = abilityMatch[1].toUpperCase();
+		}
+		const skillMatch = mechanicsBlock.match(/skill\s*[:\-]\s*([^\n]+)/i);
+		if (skillMatch) {
+			skill = skillMatch[1].trim();
+		}
+		const advMatch = mechanicsBlock.match(/advantage\s*[:\-]\s*(none|advantage|disadvantage)/i);
+		if (advMatch) {
+			advantage = advMatch[1].toLowerCase() as 'none' | 'advantage' | 'disadvantage';
+		}
+	}
+
+	return {
+		narrative,
+		mechanics: { checkDescription, dc, ability, skill, advantage },
+	};
+}
+
 async function handleRegister(request: Request, env: Env, origin: string | null): Promise<Response> {
 	let body: any;
 	try {
@@ -456,6 +655,145 @@ async function handleStartAICampaign(request: Request, env: Env, origin: string 
 	await env.ADA_DATA.put(`aiSession:${id}`, JSON.stringify(session));
 
 	return jsonResponse({ ok: true, campaign, session }, { status: 201 }, origin);
+}
+
+async function handleAIDMTurn(request: Request, env: Env, origin: string | null): Promise<Response> {
+	let body: any;
+	try {
+		body = await request.json();
+	} catch {
+		return errorResponse('Invalid JSON body', 400, origin);
+	}
+
+	const username = String(body?.username ?? '').trim();
+	const campaignId = String(body?.campaignId ?? '').trim();
+	const playerInput = String(body?.text ?? body?.input ?? '').trim();
+
+	if (!username || !campaignId || !playerInput) {
+		return errorResponse('username, campaignId and text are required', 400, origin);
+	}
+
+	const storedCampaign = await env.ADA_DATA.get(`campaign:${campaignId}`);
+	if (!storedCampaign) {
+		return errorResponse('Campaign not found', 404, origin);
+	}
+
+	let campaign: Campaign;
+	try {
+		campaign = JSON.parse(storedCampaign) as Campaign;
+	} catch {
+		return errorResponse('Corrupted campaign record', 500, origin);
+	}
+
+	const isParticipant =
+		campaign.dm === username ||
+		(Array.isArray(campaign.participants) && campaign.participants.includes(username));
+	if (!isParticipant) {
+		return errorResponse('You are not a participant in this campaign', 403, origin);
+	}
+
+	if (!campaign.dmIsAI && campaign.mode !== 'ai-solo') {
+		return errorResponse('This campaign is not configured for AI-DM mode', 400, origin);
+	}
+
+	const adventureId = campaign.adventureId;
+	if (!adventureId) {
+		return errorResponse('AI-DM campaign is missing an adventureId', 500, origin);
+	}
+	const adventure = ADVENTURES.find((a) => a.id === adventureId);
+	if (!adventure) {
+		return errorResponse('Adventure configuration not found for this campaign', 500, origin);
+	}
+
+	// Load session state or initialize a default one
+	const sessionKey = `aiSession:${campaignId}`;
+	const storedSession = await env.ADA_DATA.get(sessionKey);
+	let session: AIDMSessionState;
+	if (storedSession) {
+		try {
+			session = JSON.parse(storedSession) as AIDMSessionState;
+		} catch {
+			// If corrupted, start a fresh session but keep campaign linkage
+			session = {
+				campaignId,
+				characterId: Array.isArray(campaign.linkedCharacterIds) && campaign.linkedCharacterIds.length
+					? campaign.linkedCharacterIds[0]
+					: '',
+				adventureId,
+				log: [],
+				summary: '',
+				checkpointIndex: 0,
+				status: 'active',
+			};
+		}
+	} else {
+		session = {
+			campaignId,
+			characterId: Array.isArray(campaign.linkedCharacterIds) && campaign.linkedCharacterIds.length
+				? campaign.linkedCharacterIds[0]
+				: '',
+			adventureId,
+			log: [],
+			summary: '',
+			checkpointIndex: 0,
+			status: 'active',
+		};
+	}
+
+	if (!session.characterId) {
+		return errorResponse('AI-DM session is missing a linked character', 500, origin);
+	}
+
+	const storedCharacter = await env.ADA_DATA.get(`character:${session.characterId}`);
+	if (!storedCharacter) {
+		return errorResponse('Linked character not found for AI-DM session', 500, origin);
+	}
+
+	let character: Character;
+	try {
+		character = JSON.parse(storedCharacter) as Character;
+	} catch {
+		return errorResponse('Corrupted character record for AI-DM session', 500, origin);
+	}
+
+	// Only the character owner or campaign DM may drive the AI-DM
+	if (character.owner !== username && campaign.dm !== username) {
+		return errorResponse('You are not allowed to control this AI-DM session', 403, origin);
+	}
+
+	const now = new Date().toISOString();
+	session.log.push({ role: 'player', text: playerInput, timestamp: now });
+	// Keep short-term memory bounded
+	if (session.log.length > 12) {
+		session.log = session.log.slice(-12);
+	}
+
+	let rawResponse: string;
+	try {
+		rawResponse = await callAIDungeonMaster(adventure, session, character, playerInput);
+	} catch (err) {
+		console.error('AI-DM call failed', err);
+		await env.ADA_DATA.put(sessionKey, JSON.stringify(session));
+		return errorResponse('AI Dungeon Master is currently unavailable. Please try again in a moment.', 502, origin);
+	}
+
+	const parsed = parseAIDMResponse(rawResponse);
+	session.log.push({ role: 'dm', text: parsed.narrative, timestamp: new Date().toISOString() });
+	if (session.log.length > 12) {
+		session.log = session.log.slice(-12);
+	}
+
+	await env.ADA_DATA.put(sessionKey, JSON.stringify(session));
+
+	return jsonResponse(
+		{
+			ok: true,
+			narrative: parsed.narrative,
+			mechanics: parsed.mechanics,
+		},
+		{ status: 200 },
+		origin,
+	);
 }
 
 async function handleListCampaigns(request: Request, env: Env, origin: string | null): Promise<Response> {
@@ -1352,6 +1690,10 @@ export default {
 
 		if (pathname === '/api/ai-campaigns/start' && method === 'POST') {
 			return handleStartAICampaign(request, env, origin);
+		}
+
+		if (pathname === '/api/ai-dm/turn' && method === 'POST') {
+			return handleAIDMTurn(request, env, origin);
 		}
 
 		if (pathname === '/api/campaigns' && method === 'POST') {

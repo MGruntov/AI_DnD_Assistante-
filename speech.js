@@ -1096,7 +1096,14 @@
       : undefined;
     const roleLine = [race, mainClass, level ? `Level ${level}` : ""].filter(Boolean).join(" • ");
     vaultDetailMeta.textContent = roleLine || "Adventurer";
-    vaultDetailPortrait.style.backgroundImage = character.portraitUrl ? `url('${character.portraitUrl}')` : "none";
+    // Render portrait as an <img> so we don't rely on background-image vs gradient precedence
+    vaultDetailPortrait.innerHTML = "";
+    if (character.portraitUrl) {
+      const img = document.createElement("img");
+      img.src = character.portraitUrl;
+      img.alt = `Portrait of ${character.name || "character"}`;
+      vaultDetailPortrait.appendChild(img);
+    }
 
     if (vaultDetailPrompt) {
       const rawPrompt =

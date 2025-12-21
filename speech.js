@@ -1174,7 +1174,6 @@
         narrativeText,
         name: rawName || null,
         portraitUrl,
-        campaignId: activeCampaignId,
       }).then((result) => {
         if (!result.ok) {
           const msg = (result.data && result.data.error) ||

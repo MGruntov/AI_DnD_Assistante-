@@ -915,6 +915,7 @@ async function handleForgeCharacter(request: Request, env: Env, origin: string |
 	const portraitUrl = typeof body?.portraitUrl === 'string' && body.portraitUrl.trim().length > 0
 		? body.portraitUrl.trim()
 		: null;
+	const dryRun = Boolean(body?.dryRun);
 
 	if (!username) {
 		return errorResponse('Username is required', 400, origin);
@@ -929,6 +930,12 @@ async function handleForgeCharacter(request: Request, env: Env, origin: string |
 	const userRecord = await env.ADA_DATA.get(userKey);
 	if (!userRecord) {
 		return errorResponse('Unknown user', 404, origin);
+	}
+
+	// For dryRun, just forge a draft character without storing anything.
+	if (dryRun) {
+		const draft = forgeCharacterFromNarrative(username, narrativeText, portraitUrl, explicitName);
+		return jsonResponse({ ok: true, character: draft }, { status: 200 }, origin);
 	}
 
 	// Enforce roster limit: max 5 characters per user
@@ -1024,6 +1031,76 @@ async function handleForgeCharacter(request: Request, env: Env, origin: string |
 	return jsonResponse({ ok: true, character }, { status: 201 }, origin);
 }
 
+async function handleDeleteCharacter(request: Request, env: Env, origin: string | null): Promise<Response> {
+	let body: any;
+	try {
+		body = await request.json();
+	} catch {
+		return errorResponse('Invalid JSON body', 400, origin);
+	}
+
+	const username = (body?.username ?? '').trim();
+	const characterId = (body?.characterId ?? '').trim();
+	if (!username || !characterId) {
+		return errorResponse('username and characterId are required', 400, origin);
+	}
+
+	const stored = await env.ADA_DATA.get(`character:${characterId}`);
+	if (!stored) {
+		return errorResponse('Character not found', 404, origin);
+	}
+
+	let character: Character;
+	try {
+		character = JSON.parse(stored) as Character;
+	} catch {
+		return errorResponse('Corrupted character record', 500, origin);
+	}
+
+	if (character.owner !== username) {
+		return errorResponse('You do not own this character', 403, origin);
+	}
+
+	// Remove from any linked campaigns
+	const campaignIds = Array.isArray(character.campaignIds) ? character.campaignIds : [];
+	for (const cid of campaignIds) {
+		const storedCampaign = await env.ADA_DATA.get(`campaign:${cid}`);
+		if (!storedCampaign) continue;
+		try {
+			const campaign = JSON.parse(storedCampaign) as Campaign;
+			if (Array.isArray(campaign.linkedCharacterIds)) {
+				const filtered = campaign.linkedCharacterIds.filter((id) => id !== characterId);
+				if (filtered.length !== campaign.linkedCharacterIds.length) {
+					campaign.linkedCharacterIds = filtered;
+					await env.ADA_DATA.put(`campaign:${cid}`, JSON.stringify(campaign));
+				}
+			}
+		} catch {
+			// ignore malformed
+		}
+	}
+
+	// Delete character record
+	await env.ADA_DATA.delete(`character:${characterId}`);
+
+	// Remove from charactersByUser index
+	const indexKey = `charactersByUser:${username}`;
+	const existing = await env.ADA_DATA.get(indexKey);
+	if (existing) {
+		try {
+			let ids = JSON.parse(existing) as string[];
+			if (Array.isArray(ids)) {
+				ids = ids.filter((id) => id !== characterId);
+				await env.ADA_DATA.put(indexKey, JSON.stringify(ids));
+			}
+		} catch {
+			// ignore index issues
+		}
+	}
+
+	return jsonResponse({ ok: true }, { status: 200 }, origin);
+}
+
 async function handleListCharacters(request: Request, env: Env, origin: string | null): Promise<Response> {
 	const url = new URL(request.url);
 	const user = (url.searchParams.get('user') ?? '').trim();
@@ -1088,6 +1165,10 @@ export default {
 
 		if (pathname === '/api/characters/forge' && method === 'POST') {
 			return handleForgeCharacter(request, env, origin);
+		}
+
+		if (pathname === '/api/characters/delete' && method === 'POST') {
+			return handleDeleteCharacter(request, env, origin);
 		}
 
 		if (pathname === '/api/characters' && method === 'GET') {

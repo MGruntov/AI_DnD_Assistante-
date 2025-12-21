@@ -115,6 +115,12 @@
         </p>
         <div id="forgeStatus" class="forge__status"></div>
         <div id="forgedCharacter" class="forge__result" hidden></div>
+        <button id="finishCharacterBtn" class="btn btn--primary forge__finish" disabled>
+          Finish character creation
+        </button>
+        <p class="forge__finish-hint text-muted">
+          This preview is not saved yet. Choose a portrait and click "Finish character creation" to add it to My Characters.
+        </p>
       </section>
 
       <section class="portraits">
@@ -235,6 +241,13 @@
                 <button type="button" id="vaultLinkBtn" class="btn btn--primary btn--small">Link character</button>
               </div>
               <p id="vaultLinkStatus" class="vault-link__status text-muted"></p>
+            </section>
+
+            <section class="vault-delete">
+              <h3>Danger zone</h3>
+              <p class="text-muted">Deleting a character removes it from your vault and any linked campaigns. This cannot be undone.</p>
+              <button type="button" id="vaultDeleteBtn" class="btn btn--secondary btn--small">Delete character</button>
+              <p id="vaultDeleteStatus" class="text-muted"></p>
             </section>
           </div>
         </div>

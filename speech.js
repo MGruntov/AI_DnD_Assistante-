@@ -13,6 +13,7 @@
   const portraitStatusEl = document.getElementById("portraitStatus");
   const forgeCharacterBtn = document.getElementById("forgeCharacterBtn");
   const forgeCharacterNameInput = document.getElementById("forgeCharacterName");
+  const finishCharacterBtn = document.getElementById("finishCharacterBtn");
   const forgeStatusEl = document.getElementById("forgeStatus");
   const forgedCharacterEl = document.getElementById("forgedCharacter");
 
@@ -77,6 +78,8 @@
   const vaultCampaignSelect = document.getElementById("vaultCampaignSelect");
   const vaultLinkBtn = document.getElementById("vaultLinkBtn");
   const vaultLinkStatus = document.getElementById("vaultLinkStatus");
+  const vaultDeleteBtn = document.getElementById("vaultDeleteBtn");
+  const vaultDeleteStatus = document.getElementById("vaultDeleteStatus");
 
   const portraitImgs = [
     document.getElementById("portraitImg0"),
@@ -99,6 +102,9 @@
   let activeCharacter = null;
   let cachedVaultCharacters = [];
   let cachedUserCampaigns = [];
+  let pendingForgedCharacter = null;
+  let pendingNarrativeText = "";
+  let pendingCharacterName = "";
 
   try {
     const storedCampaignId = localStorage.getItem(ACTIVE_CAMPAIGN_STORAGE_KEY);
@@ -154,6 +160,21 @@
   function setForgeStatus(text) {
     if (!forgeStatusEl) return;
     forgeStatusEl.textContent = text || "";
+  }
+
+  function hasSelectedPortrait() {
+    try {
+      const url = localStorage.getItem(PORTRAIT_STORAGE_KEY);
+      return !!url;
+    } catch {
+      return false;
+    }
+  }
+
+  function updateFinishCharacterButtonState() {
+    if (!finishCharacterBtn) return;
+    const enabled = !!pendingForgedCharacter && hasSelectedPortrait();
+    finishCharacterBtn.disabled = !enabled;
   }
 
   function setAuthMessage(message) {
@@ -346,6 +367,7 @@
         "Portrait saved for this character (stored locally on this device)."
       );
       refreshProfileFromStorage();
+      updateFinishCharacterButtonState();
     } catch (e) {
       console.warn("Could not persist portrait selection", e);
       setPortraitStatus("Portrait selected (could not save locally).");
@@ -1001,10 +1023,13 @@
         const card = document.createElement("button");
         card.type = "button";
         card.className = "vault-card";
+        const race = ch.concept?.race || "";
+        const cls = ch.concept?.classSummary || "Adventurer";
+        const meta = [race, cls].filter(Boolean).join(" ");
         card.innerHTML = `
           <div class="vault-card__portrait" style="background-image: url('${(ch.portraitUrl || "").replace(/'/g, "&#39;")}')"></div>
           <div class="vault-card__name">${ch.name || "Unnamed Adventurer"}</div>
-          <div class="vault-card__meta">${(ch.concept && ch.concept.summary) || "Mystery wanderer"}</div>
+          <div class="vault-card__meta">${meta || "Adventurer"}</div>
         `;
         card.addEventListener("click", () => openVaultDetail(ch.id));
         vaultCharactersGrid.appendChild(card);
@@ -1162,18 +1187,12 @@
         ? forgeCharacterNameInput.value.trim()
         : "";
 
-      let portraitUrl = null;
-      try {
-        portraitUrl = localStorage.getItem(PORTRAIT_STORAGE_KEY);
-      } catch {
-        portraitUrl = null;
-      }
-
       apiPost("/api/characters/forge", {
         username: currentUser,
         narrativeText,
         name: rawName || null,
-        portraitUrl,
+        portraitUrl: null,
+        dryRun: true,
       }).then((result) => {
         if (!result.ok) {
           const msg = (result.data && result.data.error) ||
@@ -1190,9 +1209,106 @@
           return;
         }
 
-        setForgeStatus("Character forged. You can refine this later.");
+        pendingForgedCharacter = character;
+        pendingNarrativeText = narrativeText;
+        pendingCharacterName = rawName || "";
+        setForgeStatus("Preview ready. Pick a portrait, then finish character creation to save.");
         renderForgedCharacter(character);
+        updateFinishCharacterButtonState();
       });
+    });
+  }
+
+  if (finishCharacterBtn) {
+    finishCharacterBtn.addEventListener("click", () => {
+      const currentUser = getCurrentUser();
+      if (!currentUser) {
+        setForgeStatus("You need to be logged in to finish character creation.");
+        return;
+      }
+      if (!pendingForgedCharacter || !pendingNarrativeText) {
+        setForgeStatus("Forge a character from your transcript first.");
+        return;
+      }
+      if (!hasSelectedPortrait()) {
+        setForgeStatus("Choose a portrait before finishing character creation.");
+        return;
+      }
+
+      let portraitUrl = null;
+      try {
+        portraitUrl = localStorage.getItem(PORTRAIT_STORAGE_KEY);
+      } catch {
+        portraitUrl = null;
+      }
+
+      setForgeStatus("Saving character to My Characters...");
+
+      apiPost("/api/characters/forge", {
+        username: currentUser,
+        narrativeText: pendingNarrativeText,
+        name: pendingCharacterName || null,
+        portraitUrl,
+        dryRun: false,
+      }).then((result) => {
+        if (!result.ok) {
+          const msg = (result.data && result.data.error) ||
+            "Could not save character. Please try again.";
+          setForgeStatus(msg);
+          return;
+        }
+
+        const character = result.data && result.data.character;
+        if (!character) {
+          setForgeStatus("Character saved, but response was missing details.");
+          return;
+        }
+
+        pendingForgedCharacter = null;
+        pendingNarrativeText = "";
+        pendingCharacterName = "";
+        if (forgeCharacterNameInput) forgeCharacterNameInput.value = "";
+        setForgeStatus("Character added to My Characters.");
+        renderForgedCharacter(character);
+        updateFinishCharacterButtonState();
+
+        // Jump to My Characters and open this new character's sheet
+        showView("vault");
+        renderVaultDetail(character);
+      });
+    });
+  }
+
+  if (vaultDeleteBtn) {
+    vaultDeleteBtn.addEventListener("click", () => {
+      const currentUser = getCurrentUser();
+      if (!currentUser || !activeCharacter) return;
+      const confirmed = window.confirm(
+        "Delete this character from your vault and all linked campaigns? This cannot be undone."
+      );
+      if (!confirmed) return;
+
+      vaultDeleteStatus.textContent = "Deleting character...";
+      fetch(`${BACKEND_BASE_URL}/api/characters/delete`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: currentUser, characterId: activeCharacter.id }),
+      })
+        .then((res) => res.json().then((data) => ({ res, data })).catch(() => ({ res, data: {} })))
+        .then(({ res, data }) => {
+          if (!res.ok || data.ok === false) {
+            throw new Error(data.error || data.message || "Failed to delete character.");
+          }
+          vaultDeleteStatus.textContent = "Character deleted.";
+          activeCharacter = null;
+          vaultDetailView.hidden = true;
+          vaultListView.hidden = false;
+          loadVaultCharacters();
+        })
+        .catch((err) => {
+          console.error("Failed to delete character", err);
+          vaultDeleteStatus.textContent = err.message || "Error deleting character.";
+        });
     });
   }
 

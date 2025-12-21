@@ -114,7 +114,9 @@
   const SpeechRecognition =
     window.SpeechRecognition || window.webkitSpeechRecognition;
 
+  let recognition = null;
   if (!SpeechRecognition) {
+    // Browser doesn't support speech; disable related controls but keep the rest of the app working.
     if (supportWarning) supportWarning.hidden = false;
     if (startBtn) startBtn.disabled = true;
     if (stopBtn) stopBtn.disabled = true;
@@ -123,13 +125,12 @@
     if (statusEl) statusEl.textContent = "Speech not supported";
     if (campaignDialogueStatusEl)
       campaignDialogueStatusEl.textContent = "Speech not supported";
-    return;
+  } else {
+    recognition = new SpeechRecognition();
+    recognition.lang = "en-US"; // For D&D, you usually want English; make configurable later.
+    recognition.interimResults = true;
+    recognition.continuous = true; // Keep listening until explicitly stopped.
   }
-
-  const recognition = new SpeechRecognition();
-  recognition.lang = "en-US"; // For D&D, you usually want English; make configurable later.
-  recognition.interimResults = true;
-  recognition.continuous = true; // Keep listening until explicitly stopped.
 
   let isListening = false;
   let lastFinal = "";
@@ -370,7 +371,8 @@
     });
   }
 
-  recognition.onresult = (event) => {
+  if (recognition) {
+    recognition.onresult = (event) => {
     let interim = "";
     let final = "";
 
@@ -395,15 +397,15 @@
       const combined = (lastFinal + " " + interim).trim();
       updateTranscript(combined, TranscriptMode.REPLACE);
     }
-  };
+    };
 
-  recognition.onerror = (event) => {
+    recognition.onerror = (event) => {
     console.error("Speech recognition error", event);
     setStatus("Error: " + (event.error || "unknown"));
     setListeningUI(false);
-  };
+    };
 
-  recognition.onend = () => {
+    recognition.onend = () => {
     // If we didn't explicitly stop, it might have dropped; reflect idle state.
     if (isListening) {
       // Attempt to restart for robustness.
@@ -417,10 +419,15 @@
       setListeningUI(false);
     }
   };
+  }
 
   if (startBtn) {
     startBtn.addEventListener("click", () => {
       if (isListening) return;
+      if (!recognition) {
+        setStatus("Speech recognition is not supported in this browser.");
+        return;
+      }
       try {
         activeTranscriptEl = transcriptEl;
         activeTranscriptStatusEl = statusEl;
@@ -444,7 +451,7 @@
       if (!isListening) return;
       isListening = false;
       try {
-        recognition.stop();
+        if (recognition) recognition.stop();
       } catch (e) {
         console.error("Failed to stop recognition", e);
       }
@@ -455,6 +462,12 @@
   if (campaignDialogueStartBtn) {
     campaignDialogueStartBtn.addEventListener("click", () => {
       if (isListening) return;
+      if (!recognition) {
+        if (campaignDialogueStatusEl)
+          campaignDialogueStatusEl.textContent =
+            "Speech recognition is not supported in this browser.";
+        return;
+      }
       if (!activeCampaignId) {
         if (campaignDialogueStatusEl)
           campaignDialogueStatusEl.textContent =
@@ -485,7 +498,7 @@
       if (!isListening) return;
       isListening = false;
       try {
-        recognition.stop();
+        if (recognition) recognition.stop();
       } catch (e) {
         console.error("Failed to stop recognition (dialogue)", e);
       }

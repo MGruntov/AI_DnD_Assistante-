@@ -133,7 +133,7 @@
   let activeCharacter = null;
   // Backend API base URL (Cloudflare Worker)
   // Automatically use localhost for development, production URL otherwise
-  const isDevelopment = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+  const isDevelopment = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' || window.location.hostname === '0.0.0.0';
   const BACKEND_BASE_URL = isDevelopment
     ? "http://localhost:8787"
     : "https://backend.ada-assistante.workers.dev";
@@ -152,9 +152,6 @@
   } catch {
     // ignore storage issues
   }
-
-  // Backend API base URL (Cloudflare Worker)
-  const BACKEND_BASE_URL = "https://backend.ada-assistante.workers.dev";
 
   const SpeechRecognition =
     window.SpeechRecognition || window.webkitSpeechRecognition;

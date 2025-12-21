@@ -1816,44 +1816,16 @@ interface RetrievalResult {
 	text: string;
 }
 
-// Hardcoded SRD data (sample entries - expand with your full toc_entries.json)
-const SRD_DATA: SRDEntry[] = [
-	{
-		title: 'Darkvision',
-		url: 'https://www.dndbeyond.com/sources/srd/races#Dwarf',
-		path: ['Character Creation', 'Races'],
-		full_path: ['Character Creation', 'Races', 'Dwarf'],
-		text: 'Accustomed to life underground, you have superior vision in dark and dim conditions. You can see in dim light within 60 feet of you as if it were bright light, and in darkness as if it were dim light. You can\'t discern color in darkness, only shades of gray.'
-	},
-	{
-		title: 'Dwarf',
-		url: 'https://www.dndbeyond.com/sources/srd/races#Dwarf',
-		path: ['Character Creation', 'Races'],
-		full_path: ['Character Creation', 'Races', 'Dwarf'],
-		text: 'Your dwarf character has an assortment of inborn abilities, part and parcel of dwarven nature. Ability Score Increase. Your Constitution score increases by 2. Age. Dwarves mature at the same rate as humans, but they\'re considered young until they reach the age of 50. On average, they live about 350 years.'
-	},
-	{
-		title: 'Elf',
-		url: 'https://www.dndbeyond.com/sources/srd/races#Elf',
-		path: ['Character Creation', 'Races'],
-		full_path: ['Character Creation', 'Races', 'Elf'],
-		text: 'Your elf character has a variety of natural abilities, the result of thousands of years of elven refinement. Ability Score Increase. Your Dexterity score increases by 2. Age. Although elves reach physical maturity at about the same age as humans, the elven understanding of adulthood goes beyond physical growth to encompass worldly experience.'
-	},
-	{
-		title: 'Ranger',
-		url: 'https://www.dndbeyond.com/sources/srd/classes#Ranger',
-		path: ['Character Creation', 'Classes'],
-		full_path: ['Character Creation', 'Classes', 'Ranger'],
-		text: 'Far from the bustle of cities and towns, past the hedges that mark the end of the farmlands, amid the dense-packed trees of the wilderness, folk live and die. Elves walk the forests of the world, both the sunlit woods and the shadowed paths they guard. The reclusive drow hide in caverns deep below the surface of the world. Halflings live in the rolling, twilight valleys.'
-	},
-	{
-		title: 'Ability Scores',
-		url: 'https://www.dndbeyond.com/sources/srd/step-by-step-characters#AbilityScores',
-		path: ['Character Creation'],
-		full_path: ['Character Creation', 'Ability Scores'],
-		text: 'Much of what your character does in the game depends on their six abilities: Strength, Dexterity, Constitution, Intelligence, Wisdom, and Charisma. Each ability has a score, a number that defines the magnitude of that ability.'
-	}
-];
+// Load SRD data from JSON file
+import tocEntries from './toc_entries.json';
+
+const SRD_DATA: SRDEntry[] = tocEntries.map((entry: any) => ({
+	title: entry.title || '',
+	url: entry.url || '',
+	path: Array.isArray(entry.path) ? entry.path : [],
+	full_path: Array.isArray(entry.full_path) ? entry.full_path : [],
+	text: entry.text || ''
+}));
 
 function tokenize(text: string): string[] {
 	return text.toLowerCase().replace(/[^\w\s]/g, ' ').split(/\s+/).filter(t => t.length > 0);

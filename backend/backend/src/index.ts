@@ -1797,6 +1797,147 @@ async function handleListCharacters(request: Request, env: Env, origin: string |
 	return jsonResponse({ ok: true, characters }, undefined, origin);
 }
 
+/**
+ * Simple BM25-inspired retriever for SRD data
+ */
+interface SRDEntry {
+	title: string;
+	url: string;
+	path: string[];
+	full_path: string[];
+	text: string;
+}
+
+interface RetrievalResult {
+	title: string;
+	path: string[];
+	url: string;
+	score: number;
+	text: string;
+}
+
+// Hardcoded SRD data (sample entries - expand with your full toc_entries.json)
+const SRD_DATA: SRDEntry[] = [
+	{
+		title: 'Darkvision',
+		url: 'https://www.dndbeyond.com/sources/srd/races#Dwarf',
+		path: ['Character Creation', 'Races'],
+		full_path: ['Character Creation', 'Races', 'Dwarf'],
+		text: 'Accustomed to life underground, you have superior vision in dark and dim conditions. You can see in dim light within 60 feet of you as if it were bright light, and in darkness as if it were dim light. You can\'t discern color in darkness, only shades of gray.'
+	},
+	{
+		title: 'Dwarf',
+		url: 'https://www.dndbeyond.com/sources/srd/races#Dwarf',
+		path: ['Character Creation', 'Races'],
+		full_path: ['Character Creation', 'Races', 'Dwarf'],
+		text: 'Your dwarf character has an assortment of inborn abilities, part and parcel of dwarven nature. Ability Score Increase. Your Constitution score increases by 2. Age. Dwarves mature at the same rate as humans, but they\'re considered young until they reach the age of 50. On average, they live about 350 years.'
+	},
+	{
+		title: 'Elf',
+		url: 'https://www.dndbeyond.com/sources/srd/races#Elf',
+		path: ['Character Creation', 'Races'],
+		full_path: ['Character Creation', 'Races', 'Elf'],
+		text: 'Your elf character has a variety of natural abilities, the result of thousands of years of elven refinement. Ability Score Increase. Your Dexterity score increases by 2. Age. Although elves reach physical maturity at about the same age as humans, the elven understanding of adulthood goes beyond physical growth to encompass worldly experience.'
+	},
+	{
+		title: 'Ranger',
+		url: 'https://www.dndbeyond.com/sources/srd/classes#Ranger',
+		path: ['Character Creation', 'Classes'],
+		full_path: ['Character Creation', 'Classes', 'Ranger'],
+		text: 'Far from the bustle of cities and towns, past the hedges that mark the end of the farmlands, amid the dense-packed trees of the wilderness, folk live and die. Elves walk the forests of the world, both the sunlit woods and the shadowed paths they guard. The reclusive drow hide in caverns deep below the surface of the world. Halflings live in the rolling, twilight valleys.'
+	},
+	{
+		title: 'Ability Scores',
+		url: 'https://www.dndbeyond.com/sources/srd/step-by-step-characters#AbilityScores',
+		path: ['Character Creation'],
+		full_path: ['Character Creation', 'Ability Scores'],
+		text: 'Much of what your character does in the game depends on their six abilities: Strength, Dexterity, Constitution, Intelligence, Wisdom, and Charisma. Each ability has a score, a number that defines the magnitude of that ability.'
+	}
+];
+
+function tokenize(text: string): string[] {
+	return text.toLowerCase().replace(/[^\w\s]/g, ' ').split(/\s+/).filter(t => t.length > 0);
+}
+
+function calculateBM25Score(
+	queryTokens: string[],
+	docTokens: string[],
+	allDocTokens: string[][],
+	k1: number = 1.5,
+	b: number = 0.75
+): number {
+	const docLength = docTokens.length;
+	const avgDocLength = allDocTokens.reduce((sum, tokens) => sum + tokens.length, 0) / allDocTokens.length;
+	
+	let score = 0;
+
+	for (const queryToken of queryTokens) {
+		const termFrequency = docTokens.filter(t => t === queryToken).length;
+		if (termFrequency === 0) continue;
+
+		// Calculate document frequency
+		const docFreq = allDocTokens.filter(tokens => tokens.includes(queryToken)).length;
+		const idf = Math.log((allDocTokens.length - docFreq + 0.5) / (docFreq + 0.5) + 1);
+
+		// Calculate BM25 component
+		const normLength = (1 - b) + (b * docLength / Math.max(avgDocLength, 1));
+		const bm25 = idf * ((k1 + 1) * termFrequency) / (termFrequency + k1 * normLength);
+		score += bm25;
+	}
+
+	return score;
+}
+
+function handleSRDQuery(request: Request, origin: string | null): Promise<Response> {
+	return request.json().then((body: any) => {
+		const query = (body.query ?? '').trim();
+		const k = Math.min(body.k ?? 5, 10);
+
+		if (!query) {
+			return errorResponse('Missing query parameter', 400, origin);
+		}
+
+		const queryTokens = tokenize(query);
+		if (queryTokens.length === 0) {
+			return jsonResponse({ results: [] }, undefined, origin);
+		}
+
+		// Tokenize all documents
+		const allTokens = SRD_DATA.map(entry => {
+			const text = `${entry.title} ${entry.text}`;
+			return tokenize(text);
+		});
+
+		// Score each document
+		const scores = allTokens.map((docTokens, idx) =>
+			calculateBM25Score(queryTokens, docTokens, allTokens)
+		);
+
+		// Get top k results
+		const topIndices = scores
+			.map((score, idx) => ({ score, idx }))
+			.filter(item => item.score > 0)
+			.sort((a, b) => b.score - a.score)
+			.slice(0, k)
+			.map(item => item.idx);
+
+		const results: RetrievalResult[] = topIndices.map(idx => {
+			const entry = SRD_DATA[idx];
+			return {
+				title: entry.title,
+				path: entry.full_path,
+				url: entry.url,
+				score: scores[idx],
+				text: entry.text
+			};
+		});
+
+		return jsonResponse({ results }, undefined, origin);
+	}).catch(() => {
+		return errorResponse('Invalid request body', 400, origin);
+	});
+}
+
 export default {
 	async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
 		const url = new URL(request.url);
@@ -1863,6 +2004,10 @@ export default {
 
 		if (pathname === '/api/campaigns/details' && method === 'POST') {
 			return handlePostCampaignDetails(request, env, origin);
+		}
+
+		if (pathname === '/api/srd/query' && method === 'POST') {
+			return handleSRDQuery(request, origin);
 		}
 
 		return errorResponse('Not Found', 404, origin);

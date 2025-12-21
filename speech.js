@@ -106,6 +106,24 @@
     document.querySelectorAll(".portrait-card__select-btn")
   );
 
+  // Rules Lookup Elements
+  const rulesLookupInput = document.getElementById("rulesLookupInput");
+  const rulesLookupBtn = document.getElementById("rulesLookupBtn");
+  const rulesLookupResults = document.getElementById("rulesLookupResults");
+  const rulesResultTitle = document.getElementById("rulesResultTitle");
+  const rulesResultText = document.getElementById("rulesResultText");
+  const rulesResultSource = document.getElementById("rulesResultSource");
+  const rulesLookupPrevBtn = document.getElementById("rulesLookupPrevBtn");
+  const rulesLookupNextBtn = document.getElementById("rulesLookupNextBtn");
+  const rulesLookupCounter = document.getElementById("rulesLookupCounter");
+  const rulesLookupMessage = document.getElementById("rulesLookupMessage");
+
+  // Rules Lookup State
+  let rulesLookupState = {
+    results: [],
+    currentIndex: 0,
+  };
+
   const PORTRAIT_STORAGE_KEY = "adaCurrentCharacterPortraitUrl";
   const CURRENT_USER_STORAGE_KEY = "adaCurrentUser";
   const ACTIVE_CAMPAIGN_STORAGE_KEY = "adaActiveCampaignId";
@@ -113,8 +131,12 @@
   let activeCampaignId = null;
   let activeCampaign = null;
   let activeCharacter = null;
-  let cachedVaultCharacters = [];
-  let cachedUserCampaigns = [];
+  // Backend API base URL (Cloudflare Worker)
+  // Automatically use localhost for development, production URL otherwise
+  const isDevelopment = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+  const BACKEND_BASE_URL = isDevelopment
+    ? "http://localhost:8787"
+    : "https://backend.ada-assistante.workers.dev";
   let cachedAdventures = [];
   let cachedAdventureCharacters = [];
   let lastAiMechanics = null;
@@ -2046,5 +2068,125 @@
       loadCampaigns("player");
       loadAdventuresAndCharacters();
     });
+  }
+
+  // Rules Lookup Event Listeners
+  if (rulesLookupBtn) {
+    rulesLookupBtn.addEventListener("click", performRulesLookup);
+  }
+
+  if (rulesLookupInput) {
+    rulesLookupInput.addEventListener("keypress", (event) => {
+      if (event.key === "Enter") {
+        performRulesLookup();
+      }
+    });
+  }
+
+  if (rulesLookupNextBtn) {
+    rulesLookupNextBtn.addEventListener("click", () => {
+      if (rulesLookupState.currentIndex < rulesLookupState.results.length - 1) {
+        rulesLookupState.currentIndex++;
+        displayRulesResult();
+      }
+    });
+  }
+
+  if (rulesLookupPrevBtn) {
+    rulesLookupPrevBtn.addEventListener("click", () => {
+      if (rulesLookupState.currentIndex > 0) {
+        rulesLookupState.currentIndex--;
+        displayRulesResult();
+      }
+    });
+  }
+
+  /**
+   * Perform rules lookup by querying the backend
+   */
+  function performRulesLookup() {
+    const query = rulesLookupInput.value.trim();
+
+    if (!query) {
+      if (rulesLookupMessage) {
+        rulesLookupMessage.textContent = "Please enter a search query.";
+      }
+      return;
+    }
+
+    if (rulesLookupMessage) {
+      rulesLookupMessage.textContent = "Searching...";
+    }
+
+    // Query the backend API
+    apiPost("/api/srd/query", { query, k: 5 }).then((result) => {
+      if (!result.ok) {
+        if (rulesLookupMessage) {
+          rulesLookupMessage.textContent =
+            "Could not search rules. Please try again.";
+        }
+        return;
+      }
+
+      const data = result.data;
+      rulesLookupState.results = data.results || [];
+      rulesLookupState.currentIndex = 0;
+
+      if (rulesLookupState.results.length === 0) {
+        if (rulesLookupMessage) {
+          rulesLookupMessage.textContent = "No results found for that query.";
+        }
+        rulesLookupResults.hidden = true;
+        return;
+      }
+
+      displayRulesResult();
+      if (rulesLookupMessage) {
+        rulesLookupMessage.textContent = "";
+      }
+    });
+  }
+
+  /**
+   * Display the current rules result
+   */
+  function displayRulesResult() {
+    const result = rulesLookupState.results[rulesLookupState.currentIndex];
+
+    if (!result) return;
+
+    // Update title
+    if (rulesResultTitle) {
+      rulesResultTitle.textContent = result.title || "Unknown";
+    }
+
+    // Update text
+    if (rulesResultText) {
+      rulesResultText.textContent = result.text || "No content available.";
+    }
+
+    // Update source
+    if (rulesResultSource) {
+      const path = Array.isArray(result.path) ? result.path.join(" > ") : "";
+      rulesResultSource.textContent = `Source: ${path || "D&D 5e SRD"}`;
+    }
+
+    // Update counter
+    if (rulesLookupCounter) {
+      rulesLookupCounter.textContent = `${rulesLookupState.currentIndex + 1} / ${rulesLookupState.results.length}`;
+    }
+
+    // Update navigation buttons
+    if (rulesLookupPrevBtn) {
+      rulesLookupPrevBtn.hidden = rulesLookupState.currentIndex === 0;
+    }
+    if (rulesLookupNextBtn) {
+      rulesLookupNextBtn.hidden =
+        rulesLookupState.currentIndex ===
+        rulesLookupState.results.length - 1;
+    }
+
+    // Show results container
+    rulesLookupResults.hidden = false;
   }
 })();

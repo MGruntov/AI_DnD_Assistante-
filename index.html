@@ -96,6 +96,35 @@
         </p>
       </section>
 
+      <section class="rules-lookup">
+        <div class="rules-lookup__header">
+          <h2>Rules Lookup</h2>
+          <p class="rules-lookup__subtitle">Search the D&D 5e SRD</p>
+        </div>
+        <div class="rules-lookup__search">
+          <input
+            type="text"
+            id="rulesLookupInput"
+            class="rules-lookup__input"
+            placeholder="e.g., 'darkvision', 'fireball spell', 'ranger abilities'..."
+          />
+          <button id="rulesLookupBtn" class="btn btn--primary">Search</button>
+        </div>
+        <div id="rulesLookupResults" class="rules-lookup__results" hidden>
+          <div class="rules-lookup__result-card">
+            <h3 id="rulesResultTitle" class="rules-lookup__result-title"></h3>
+            <div id="rulesResultText" class="rules-lookup__result-text"></div>
+            <p id="rulesResultSource" class="rules-lookup__result-source"></p>
+            <div class="rules-lookup__navigation">
+              <button id="rulesLookupPrevBtn" class="btn btn--secondary btn--small" hidden>← Previous</button>
+              <span id="rulesLookupCounter" class="rules-lookup__counter"></span>
+              <button id="rulesLookupNextBtn" class="btn btn--secondary btn--small" hidden>Next →</button>
+            </div>
+          </div>
+        </div>
+        <div id="rulesLookupMessage" class="rules-lookup__message text-muted"></div>
+      </section>
+
       <section class="forge">
         <div class="forge__header">
           <h2>Forge a Character</h2>

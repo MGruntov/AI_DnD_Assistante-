@@ -1019,7 +1019,8 @@
       cachedUserCampaigns.forEach((c) => {
         const opt = document.createElement("option");
         opt.value = c.id;
-        opt.textContent = `${c.name} (${c.role === "dm" || c.dm === currentUser?.username ? "DM" : "Player"})`;
+        const labelRole = c.dm === getCurrentUser() ? "DM" : "Player";
+        opt.textContent = `${c.name} (${labelRole})`;
         vaultCampaignSelect.appendChild(opt);
       });
 

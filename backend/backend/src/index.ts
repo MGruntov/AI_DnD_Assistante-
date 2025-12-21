@@ -329,44 +329,19 @@ async function callAIDungeonMaster(
 	character: Character,
 	playerInput: string,
 ): Promise<string> {
+	// Use Pollinations simple text endpoint for robustness.
+	// We inline both the system and user prompts into a single text prompt and
+	// rely on the model to follow the requested [NARRATIVE]/[MECHANICS] format.
 	const systemPrompt = buildAIDMSystemPrompt();
 	const userPrompt = buildAIDMUserPrompt(adventure, session, character, playerInput);
-	const payload = {
-		model: 'openai',
-		reasoning_effort: 'medium',
-		messages: [
-			{ role: 'system', content: systemPrompt },
-			{ role: 'user', content: userPrompt },
-		],
-		temperature: 0.9,
-		max_tokens: 600,
-	};
+	const combinedPrompt = `${systemPrompt}\n\n---\n\n${userPrompt}`;
 
-	const res = await fetch('https://text.pollinations.ai/openai', {
-		method: 'POST',
-		headers: {
-			'content-type': 'application/json',
-		},
-		body: JSON.stringify(payload),
-	});
-
+	const url = `https://text.pollinations.ai/${encodeURIComponent(combinedPrompt)}`;
+	const res = await fetch(url, { method: 'GET' });
 	if (!res.ok) {
 		throw new Error(`AI-DM request failed with status ${res.status}`);
 	}
-
-	let data: any;
-	try {
-		data = await res.json();
-	} catch {
-		// Fallback to raw text if not JSON (e.g., simple text endpoint or error page)
-		return await res.text();
-	}
-
-	const content = data?.choices?.[0]?.message?.content;
-	if (typeof content === 'string' && content.trim().length > 0) {
-		return content;
-	}
-	throw new Error('AI-DM response missing content');
+	return await res.text();
 }
 
 function parseAIDMResponse(raw: string): { narrative: string; mechanics: {
@@ -654,7 +629,31 @@ async function handleStartAICampaign(request: Request, env: Env, origin: string 
 
 	await env.ADA_DATA.put(`aiSession:${id}`, JSON.stringify(session));
 
-	return jsonResponse({ ok: true, campaign, session }, { status: 201 }, origin);
+	// Try to generate an opening narration from the AI-DM so the player
+	// is greeted with a scene description as soon as the campaign starts.
+	let openingNarrative: string | null = null;
+	try {
+		const openingRaw = await callAIDungeonMaster(
+			adventure,
+			session,
+			character,
+			'The player has just started this solo adventure. Introduce the setting, their mission, and the immediate scene in front of them. Address them in second person and keep it to the opening beat.',
+		);
+		const parsed = parseAIDMResponse(openingRaw);
+		openingNarrative = parsed.narrative;
+
+		// Record this as the first DM entry in the session log.
+		const now = new Date().toISOString();
+		session.log.push({ role: 'dm', text: parsed.narrative, timestamp: now });
+		if (session.log.length > 12) {
+			session.log = session.log.slice(-12);
+		}
+		await env.ADA_DATA.put(`aiSession:${id}`, JSON.stringify(session));
+	} catch (err) {
+		console.error('AI-DM opening call failed', err);
+	}
+
+	return jsonResponse({ ok: true, campaign, session, openingNarrative }, { status: 201 }, origin);
 }
 
 async function handleAIDMTurn(request: Request, env: Env, origin: string | null): Promise<Response> {

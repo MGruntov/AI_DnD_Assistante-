@@ -818,9 +818,15 @@
             return;
           }
           status.textContent = "Adventure started. Opening campaign...";
-          const campaign = result.data && result.data.campaign;
+          const data = result.data || {};
+          const campaign = data.campaign;
+          const opening = data.openingNarrative || (data.opening && data.opening.narrative);
           if (campaign) {
             openCampaignDashboard(campaign);
+            if (opening) {
+              appendAiDmLog("dm", opening);
+              setCampaignTab("dialogue");
+            }
           }
         });
       });

@@ -71,6 +71,10 @@ type Campaign = {
 	journalEntryIds?: string[];
 	scriptIds?: string[];
 	linkedCharacterIds?: string[];
+	// Optional AI-DM fields
+	mode?: 'ai-solo' | 'standard';
+	adventureId?: string;
+	dmIsAI?: boolean;
 };
 
 type CharacterClass = {
@@ -149,9 +153,67 @@ type DialogueLog = {
 	fullText: string;
 };
 
+type AdventureDifficulty = 'Easy' | 'Normal' | 'Hard';
+
+type AdventureTemplate = {
+	id: string;
+	title: string;
+	levelMin: number;
+	levelMax: number;
+	difficulty: AdventureDifficulty;
+	summary: string;
+	primer: string;
+	checkpoints: string[];
+	victoryConditions: string[];
+	defeatConditions: string[];
+};
+
+type TurnEntry = {
+	role: 'player' | 'dm';
+	text: string;
+	timestamp: string;
+};
+
+type AIDMSessionState = {
+	campaignId: string;
+	characterId: string;
+	adventureId: string;
+	log: TurnEntry[];
+	summary: string;
+	checkpointIndex: number;
+	status: 'active' | 'completed' | 'failed';
+};
+
 async function handleHealth(origin: string | null): Promise<Response> {
 	return jsonResponse({ status: 'ok' }, undefined, origin);
 }
+
+async function handleListAdventures(origin: string | null): Promise<Response> {
+	return jsonResponse({ ok: true, adventures: ADVENTURES }, undefined, origin);
+}
+
+const ADVENTURES: AdventureTemplate[] = [
+	{
+		id: 'RED_CLOAK',
+		title: 'The Red Cloak and the Shadow-Touched Wolf',
+		levelMin: 1,
+		levelMax: 2,
+		difficulty: 'Normal',
+		summary:
+			'A short, spooky solo adventure in the Whispering Woods where you must deliver spirit-warding herbs to your Grandmother while a corrupted wolf stalks the paths.',
+		primer:
+			'You are acting as an AI Dungeon Master for D&D 5e. You are running a contained adventure in the Whispering Woods. The player is a low-level messenger wearing a red cloak, tasked with carrying spirit-warding herbs to their Grandmother. The forest is haunted by a Shadow-Touched Wolf that corrupts spirits and hunts travelers. Keep the tone atmospheric and slightly eerie, but not grotesque.',
+		checkpoints: ['crossroads', 'snaring_vines', 'cottage'],
+		victoryConditions: [
+			'The player successfully reaches Grandmother\'s cottage and delivers the spirit-warding herbs.',
+			'The Shadow-Touched Wolf is neutralized, driven away, or otherwise no longer a threat.',
+		],
+		defeatConditions: [
+			'The player character is reduced to 0 hit points with no clear rescue available.',
+			'The herbs are irretrievably lost or destroyed before reaching Grandmother.',
+		],
+	},
+];
 
 async function handleRegister(request: Request, env: Env, origin: string | null): Promise<Response> {
 	let body: any;
@@ -285,6 +347,115 @@ async function handleCreateCampaign(request: Request, env: Env, origin: string |
 	}
 
 	return jsonResponse({ ok: true, campaign }, { status: 201 }, origin);
+}
+
+async function handleStartAICampaign(request: Request, env: Env, origin: string | null): Promise<Response> {
+	let body: any;
+	try {
+		body = await request.json();
+	} catch {
+		return errorResponse('Invalid JSON body', 400, origin);
+	}
+
+	const username = String(body?.username ?? '').trim();
+	const characterId = String(body?.characterId ?? '').trim();
+	const adventureId = String(body?.adventureId ?? '').trim();
+
+	if (!username || !characterId || !adventureId) {
+		return errorResponse('username, characterId and adventureId are required', 400, origin);
+	}
+
+	const adventure = ADVENTURES.find((a) => a.id === adventureId);
+	if (!adventure) {
+		return errorResponse('Unknown adventureId', 404, origin);
+	}
+
+	const storedCharacter = await env.ADA_DATA.get(`character:${characterId}`);
+	if (!storedCharacter) {
+		return errorResponse('Character not found', 404, origin);
+	}
+
+	let character: Character;
+	try {
+		character = JSON.parse(storedCharacter) as Character;
+	} catch {
+		return errorResponse('Corrupted character record', 500, origin);
+	}
+
+	if (character.owner !== username) {
+		return errorResponse('You do not own this character', 403, origin);
+	}
+
+	// Basic level gate: for now derive a crude total level from concept.levelSummary if present.
+	let totalLevel = 1;
+	const levelSummary = character.concept?.levelSummary;
+	if (typeof levelSummary === 'string' && levelSummary.trim().length > 0) {
+		const parts = levelSummary
+			.split('/')
+			.map((p) => Number.parseInt(p, 10))
+			.filter((n) => Number.isFinite(n) && n > 0);
+		if (parts.length) {
+			totalLevel = parts.reduce((acc, n) => acc + n, 0);
+		}
+	}
+
+	if (totalLevel < adventure.levelMin || totalLevel > adventure.levelMax) {
+		return errorResponse(
+			`Character level ${totalLevel} does not meet adventure requirements (${adventure.levelMin}-${adventure.levelMax}).`,
+			400,
+			origin,
+		);
+	}
+
+	const id = crypto.randomUUID();
+	const createdAt = new Date().toISOString();
+	const campaign: Campaign = {
+		id,
+		name: adventure.title,
+		dm: 'AI_ADA',
+		participants: [username],
+		createdAt,
+		journalEntryIds: [],
+		scriptIds: [],
+		linkedCharacterIds: [characterId],
+		mode: 'ai-solo',
+		adventureId: adventure.id,
+		dmIsAI: true,
+	};
+
+	await env.ADA_DATA.put(`campaign:${id}`, JSON.stringify(campaign));
+
+	// Index campaign for the player
+	const idxKey = `campaignsByUser:${username}`;
+	const existing = await env.ADA_DATA.get(idxKey);
+	let ids: string[] = [];
+	if (existing) {
+		try {
+			ids = JSON.parse(existing) as string[];
+			if (!Array.isArray(ids)) ids = [];
+		} catch {
+			ids = [];
+		}
+	}
+	if (!ids.includes(id)) {
+		ids.push(id);
+		await env.ADA_DATA.put(idxKey, JSON.stringify(ids));
+	}
+
+	// Initialize a barebones AI-DM session record; richer fields will be used by the AI-DM endpoints.
+	const session: AIDMSessionState = {
+		campaignId: id,
+		characterId,
+		adventureId: adventure.id,
+		log: [],
+		summary: '',
+		checkpointIndex: 0,
+		status: 'active',
+	};
+
+	await env.ADA_DATA.put(`aiSession:${id}`, JSON.stringify(session));
+
+	return jsonResponse({ ok: true, campaign, session }, { status: 201 }, origin);
 }
 
 async function handleListCampaigns(request: Request, env: Env, origin: string | null): Promise<Response> {
@@ -1163,6 +1334,10 @@ export default {
 			return handleLogin(request, env, origin);
 		}
 
+		if (pathname === '/api/adventures' && method === 'GET') {
+			return handleListAdventures(origin);
+		}
+
 		if (pathname === '/api/characters/forge' && method === 'POST') {
 			return handleForgeCharacter(request, env, origin);
 		}
@@ -1173,6 +1348,10 @@ export default {
 
 		if (pathname === '/api/characters' && method === 'GET') {
 			return handleListCharacters(request, env, origin);
+		}
+
+		if (pathname === '/api/ai-campaigns/start' && method === 'POST') {
+			return handleStartAICampaign(request, env, origin);
 		}
 
 		if (pathname === '/api/campaigns' && method === 'POST') {

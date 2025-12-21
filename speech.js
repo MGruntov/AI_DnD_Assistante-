@@ -64,6 +64,9 @@
   const campaignDialogueStatusEl = document.getElementById("campaignDialogueStatus");
   const campaignDialogueTranscriptEl = document.getElementById("campaignDialogueTranscript");
 
+  const adventuresList = document.getElementById("adventuresList");
+  const adventuresMessage = document.getElementById("adventuresMessage");
+
   const vaultListView = document.getElementById("vaultListView");
   const vaultDetailView = document.getElementById("vaultDetailView");
   const vaultCharactersGrid = document.getElementById("vaultCharactersGrid");
@@ -102,6 +105,8 @@
   let activeCharacter = null;
   let cachedVaultCharacters = [];
   let cachedUserCampaigns = [];
+  let cachedAdventures = [];
+  let cachedAdventureCharacters = [];
   let pendingForgedCharacter = null;
   let pendingNarrativeText = "";
   let pendingCharacterName = "";
@@ -644,6 +649,185 @@
       console.error("[ADA] API GET error", e);
       return { ok: false, status: 0, data: null };
     }
+  }
+
+  function computeCharacterTotalLevel(character) {
+    const levelSummary = character?.concept?.levelSummary;
+    if (typeof levelSummary !== "string" || !levelSummary.trim()) return 1;
+    const parts = levelSummary
+      .split("/")
+      .map((p) => Number.parseInt(p, 10))
+      .filter((n) => Number.isFinite(n) && n > 0);
+    if (!parts.length) return 1;
+    return parts.reduce((acc, n) => acc + n, 0);
+  }
+
+  async function loadAdventuresAndCharacters() {
+    const user = getCurrentUser();
+    if (!user) {
+      if (adventuresList) adventuresList.innerHTML = "";
+      if (adventuresMessage)
+        adventuresMessage.textContent = "Log in and create a character to try a solo ADA adventure.";
+      return;
+    }
+
+    if (adventuresMessage) adventuresMessage.textContent = "Loading adventures...";
+    if (adventuresList) adventuresList.innerHTML = "";
+
+    try {
+      const [advRes, charsRes] = await Promise.all([
+        apiGet("/api/adventures"),
+        apiGet(`/api/characters?user=${encodeURIComponent(user)}`),
+      ]);
+
+      if (!advRes.ok) {
+        const msg = (advRes.data && advRes.data.error) || "Could not load adventures.";
+        if (adventuresMessage) adventuresMessage.textContent = msg;
+        return;
+      }
+
+      const adventures = Array.isArray(advRes.data?.adventures)
+        ? advRes.data.adventures
+        : [];
+      const characters = Array.isArray(charsRes.data?.characters)
+        ? charsRes.data.characters
+        : [];
+
+      cachedAdventures = adventures;
+      cachedAdventureCharacters = characters;
+
+      renderAdventures(adventures, characters);
+    } catch (e) {
+      console.error("Failed to load adventures or characters", e);
+      if (adventuresMessage) adventuresMessage.textContent = "Error loading adventures.";
+    }
+  }
+
+  function renderAdventures(adventures, characters) {
+    if (!adventuresList) return;
+    adventuresList.innerHTML = "";
+
+    if (!Array.isArray(adventures) || adventures.length === 0) {
+      if (adventuresMessage)
+        adventuresMessage.textContent = "No public adventures are available yet.";
+      return;
+    }
+
+    if (adventuresMessage) adventuresMessage.textContent = "";
+
+    const userHasCharacters = Array.isArray(characters) && characters.length > 0;
+
+    adventures.forEach((adv) => {
+      const card = document.createElement("article");
+      card.className = "adventure-card";
+
+      const header = document.createElement("div");
+      header.className = "adventure-card__header";
+
+      const title = document.createElement("h3");
+      title.className = "adventure-card__title";
+      title.textContent = adv.title || "Adventure";
+
+      const badge = document.createElement("span");
+      badge.className = "adventure-card__badge";
+      const levelMin = adv.levelMin ?? 1;
+      const levelMax = adv.levelMax ?? levelMin;
+      badge.textContent = `Lv ${levelMin}-${levelMax} · ${adv.difficulty || "Normal"}`;
+
+      header.appendChild(title);
+      header.appendChild(badge);
+
+      const meta = document.createElement("p");
+      meta.className = "adventure-card__meta";
+      meta.textContent = "Solo · ADA as your Dungeon Master";
+
+      const summary = document.createElement("p");
+      summary.className = "adventure-card__summary";
+      summary.textContent = adv.summary || "";
+
+      const controls = document.createElement("div");
+      controls.className = "adventure-card__controls";
+
+      const select = document.createElement("select");
+      select.className = "adventure-card__select";
+
+      const placeholder = document.createElement("option");
+      placeholder.value = "";
+      placeholder.textContent = userHasCharacters
+        ? "Choose a character"
+        : "Create a character first";
+      placeholder.disabled = true;
+      placeholder.selected = true;
+      select.appendChild(placeholder);
+
+      let hasEligible = false;
+
+      if (userHasCharacters) {
+        characters.forEach((ch) => {
+          const lvl = computeCharacterTotalLevel(ch);
+          const meets = lvl >= (adv.levelMin ?? 1) && lvl <= (adv.levelMax ?? lvl);
+          const opt = document.createElement("option");
+          opt.value = ch.id;
+          opt.textContent = `${ch.name || "Unnamed"} (Lv ${lvl})`;
+          if (!meets) {
+            opt.disabled = true;
+            opt.textContent += " – level out of range";
+          } else {
+            hasEligible = true;
+          }
+          select.appendChild(opt);
+        });
+      }
+
+      const startBtn = document.createElement("button");
+      startBtn.type = "button";
+      startBtn.className = "btn btn--primary btn--small";
+      startBtn.textContent = "Start solo run";
+      startBtn.disabled = !userHasCharacters || !hasEligible;
+
+      const status = document.createElement("p");
+      status.className = "adventure-card__status";
+
+      startBtn.addEventListener("click", () => {
+        const selectedId = select.value;
+        if (!selectedId) {
+          status.textContent = hasEligible
+            ? "Choose a character first."
+            : "You don't have any characters in the required level range.";
+          return;
+        }
+        status.textContent = "Starting solo run...";
+        const currentUser = getCurrentUser();
+        apiPost("/api/ai-campaigns/start", {
+          username: currentUser,
+          characterId: selectedId,
+          adventureId: adv.id,
+        }).then((result) => {
+          if (!result.ok) {
+            const msg = (result.data && result.data.error) ||
+              "Could not start adventure.";
+            status.textContent = msg;
+            return;
+          }
+          status.textContent = "Adventure started. Opening campaign...";
+          const campaign = result.data && result.data.campaign;
+          if (campaign) {
+            openCampaignDashboard(campaign);
+          }
+        });
+      });
+
+      controls.appendChild(select);
+      controls.appendChild(startBtn);
+      controls.appendChild(status);
+
+      card.appendChild(header);
+      card.appendChild(meta);
+      card.appendChild(summary);
+      card.appendChild(controls);
+
+      adventuresList.appendChild(card);
+    });
   }
 
   function setCampaignTab(tabId) {
@@ -1414,6 +1598,7 @@
         }
         showView("campaigns");
         loadCampaigns("all");
+        loadAdventuresAndCharacters();
       } else if (view === "vault") {
         showView("vault");
       }
@@ -1611,14 +1796,21 @@
   }
 
   if (campaignFilterAllBtn) {
-    campaignFilterAllBtn.addEventListener("click", () => loadCampaigns("all"));
+    campaignFilterAllBtn.addEventListener("click", () => {
+      loadCampaigns("all");
+      loadAdventuresAndCharacters();
+    });
   }
   if (campaignFilterDmBtn) {
-    campaignFilterDmBtn.addEventListener("click", () => loadCampaigns("dm"));
+    campaignFilterDmBtn.addEventListener("click", () => {
+      loadCampaigns("dm");
+      loadAdventuresAndCharacters();
+    });
   }
   if (campaignFilterPlayerBtn) {
-    campaignFilterPlayerBtn.addEventListener("click", () =>
-      loadCampaigns("player")
-    );
+    campaignFilterPlayerBtn.addEventListener("click", () => {
+      loadCampaigns("player");
+      loadAdventuresAndCharacters();
+    });
   }
 })();

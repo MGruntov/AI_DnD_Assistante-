@@ -2,40 +2,36 @@ import { env, createExecutionContext, waitOnExecutionContext, SELF } from 'cloud
 import { describe, it, expect } from 'vitest';
 import worker from '../src';
 
-describe('Hello World user worker', () => {
-	describe('request for /message', () => {
-		it('/ responds with "Hello, World!" (unit style)', async () => {
-			const request = new Request<unknown, IncomingRequestCfProperties>('http://example.com/message');
-			// Create an empty context to pass to `worker.fetch()`.
+describe('ADA backend worker', () => {
+	describe('health endpoint', () => {
+		it('/api/health responds with ok (unit style)', async () => {
+			const request = new Request<unknown, IncomingRequestCfProperties>('http://example.com/api/health');
 			const ctx = createExecutionContext();
 			const response = await worker.fetch(request, env, ctx);
-			// Wait for all `Promise`s passed to `ctx.waitUntil()` to settle before running test assertions
 			await waitOnExecutionContext(ctx);
-			expect(await response.text()).toMatchInlineSnapshot(`"Hello, World!"`);
+			expect(response.status).toBe(200);
+			const json = await response.json();
+			expect(json).toEqual({ status: 'ok' });
 		});
 
-		it('responds with "Hello, World!" (integration style)', async () => {
-			const request = new Request('http://example.com/message');
+		it('/api/health responds with ok (integration style)', async () => {
+			const request = new Request('http://example.com/api/health');
 			const response = await SELF.fetch(request);
-			expect(await response.text()).toMatchInlineSnapshot(`"Hello, World!"`);
+			expect(response.status).toBe(200);
+			const json = await response.json();
+			expect(json).toEqual({ status: 'ok' });
 		});
 	});
 
-	describe('request for /random', () => {
-		it('/ responds with a random UUID (unit style)', async () => {
-			const request = new Request<unknown, IncomingRequestCfProperties>('http://example.com/random');
-			// Create an empty context to pass to `worker.fetch()`.
+	describe('unknown route handling', () => {
+		it('returns JSON 404 for unknown paths', async () => {
+			const request = new Request<unknown, IncomingRequestCfProperties>('http://example.com/does-not-exist');
 			const ctx = createExecutionContext();
 			const response = await worker.fetch(request, env, ctx);
-			// Wait for all `Promise`s passed to `ctx.waitUntil()` to settle before running test assertions
 			await waitOnExecutionContext(ctx);
-			expect(await response.text()).toMatch(/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}/);
-		});
-
-		it('responds with a random UUID (integration style)', async () => {
-			const request = new Request('http://example.com/random');
-			const response = await SELF.fetch(request);
-			expect(await response.text()).toMatch(/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}/);
+			expect(response.status).toBe(404);
+			const json = await response.json();
+			expect(json).toEqual({ error: 'Not Found' });
 		});
 	});
 });

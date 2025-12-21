@@ -68,6 +68,9 @@ type Campaign = {
 	dm: string;
 	participants: string[];
 	createdAt: string;
+	journalEntryIds?: string[];
+	scriptIds?: string[];
+	linkedCharacterIds?: string[];
 };
 
 type CharacterClass = {
@@ -117,6 +120,33 @@ type Character = {
 	campaignIds: string[];
 	createdAt: string;
 	updatedAt: string;
+};
+
+type JournalEntry = {
+	id: string;
+	campaignId: string;
+	author: string;
+	createdAt: string;
+	rawTranscript: string;
+	polishedText: string;
+};
+
+type ScriptNote = {
+	id: string;
+	campaignId: string;
+	author: string;
+	createdAt: string;
+	title: string;
+	body: string;
+};
+
+type DialogueLog = {
+	id: string;
+	campaignId: string;
+	author: string;
+	createdAt: string;
+	snippet: string;
+	fullText: string;
 };
 
 async function handleHealth(origin: string | null): Promise<Response> {
@@ -222,7 +252,16 @@ async function handleCreateCampaign(request: Request, env: Env, origin: string |
 
 	const id = crypto.randomUUID();
 	const createdAt = new Date().toISOString();
-	const campaign: Campaign = { id, name, dm, participants, createdAt };
+	const campaign: Campaign = {
+		id,
+		name,
+		dm,
+		participants,
+		createdAt,
+		journalEntryIds: [],
+		scriptIds: [],
+		linkedCharacterIds: [],
+	};
 
 	await env.ADA_DATA.put(`campaign:${id}`, JSON.stringify(campaign));
 
@@ -280,6 +319,292 @@ async function handleListCampaigns(request: Request, env: Env, origin: string | 
 	}
 
 	return jsonResponse({ ok: true, campaigns }, undefined, origin);
+}
+
+async function handleGetCampaignDetails(request: Request, env: Env, origin: string | null): Promise<Response> {
+	const url = new URL(request.url);
+	const id = (url.searchParams.get('id') ?? '').trim();
+	const user = (url.searchParams.get('user') ?? '').trim();
+
+	if (!id) {
+		return errorResponse('Missing id parameter', 400, origin);
+	}
+
+	const storedCampaign = await env.ADA_DATA.get(`campaign:${id}`);
+	if (!storedCampaign) {
+		return errorResponse('Campaign not found', 404, origin);
+	}
+
+	let campaign: Campaign;
+	try {
+		campaign = JSON.parse(storedCampaign) as Campaign;
+	} catch {
+		return errorResponse('Corrupted campaign record', 500, origin);
+	}
+
+	// Load journals linked from the campaign
+	const journals: JournalEntry[] = [];
+	const journalIds = Array.isArray(campaign.journalEntryIds) ? campaign.journalEntryIds : [];
+	for (const journalId of journalIds) {
+		const stored = await env.ADA_DATA.get(`journal:${journalId}`);
+		if (!stored) continue;
+		try {
+			const parsed = JSON.parse(stored) as JournalEntry;
+			if (parsed && parsed.id) journals.push(parsed);
+		} catch {
+			// ignore malformed
+		}
+	}
+
+	// Load scripts linked from the campaign
+	const scripts: ScriptNote[] = [];
+	const scriptIds = Array.isArray(campaign.scriptIds) ? campaign.scriptIds : [];
+	for (const scriptId of scriptIds) {
+		const stored = await env.ADA_DATA.get(`script:${scriptId}`);
+		if (!stored) continue;
+		try {
+			const parsed = JSON.parse(stored) as ScriptNote;
+			if (parsed && parsed.id) scripts.push(parsed);
+		} catch {
+			// ignore malformed
+		}
+	}
+
+	// Load characters for the requesting user that are linked to this campaign
+	const characters: Character[] = [];
+	if (user) {
+		const indexKey = `charactersByUser:${user}`;
+		const existing = await env.ADA_DATA.get(indexKey);
+		let ids: string[] = [];
+		if (existing) {
+			try {
+				ids = JSON.parse(existing) as string[];
+				if (!Array.isArray(ids)) ids = [];
+			} catch {
+				ids = [];
+			}
+		}
+
+		for (const charId of ids) {
+			const stored = await env.ADA_DATA.get(`character:${charId}`);
+			if (!stored) continue;
+			try {
+				const parsed = JSON.parse(stored) as Character;
+				const isLinkedByCharacter = Array.isArray(parsed.campaignIds) && parsed.campaignIds.includes(id);
+				const isLinkedByCampaign = Array.isArray(campaign.linkedCharacterIds) && campaign.linkedCharacterIds.includes(parsed.id);
+				if (parsed && parsed.id && (isLinkedByCharacter || isLinkedByCampaign)) {
+					characters.push(parsed);
+				}
+			} catch {
+				// ignore malformed
+			}
+		}
+	}
+
+	return jsonResponse({ ok: true, campaign, characters, journals, scripts }, undefined, origin);
+}
+
+function basicPolishJournal(raw: string): string {
+	const trimmed = raw.trim();
+	if (!trimmed) return '';
+	const first = trimmed.charAt(0).toUpperCase();
+	let rest = trimmed.slice(1);
+	if (!/[.!?]$/.test(rest)) {
+		rest = `${rest}.`;
+	}
+	return `${first}${rest}`;
+}
+
+function buildEncounterScriptBody(prompt: string, campaign: Campaign | null): string {
+	const safePrompt = prompt.trim();
+	const campaignName = campaign?.name ?? 'your campaign';
+	const intro = `Encounter Script for ${campaignName}`;
+	const separator = '\n\n';
+	const scene = `Scene setup: ${safePrompt}`;
+	const beats = [
+		'- Describe the environment with 1–2 vivid sensory details (sound, smell, or lighting).',
+		'- Introduce a complication tied to the party\'s recent actions or reputation.',
+		'- Present 2–3 choices the party can take, each with different stakes.',
+		'- Foreshadow a future threat, secret, or NPC agenda.',
+	].join('\n');
+	return `${intro}${separator}${scene}${separator}${beats}`;
+}
+
+async function handlePostCampaignDetails(request: Request, env: Env, origin: string | null): Promise<Response> {
+	let body: any;
+	try {
+		body = await request.json();
+	} catch {
+		return errorResponse('Invalid JSON body', 400, origin);
+	}
+
+	const action = String(body?.action ?? '').trim();
+	const campaignId = String(body?.campaignId ?? '').trim();
+	if (!action || !campaignId) {
+		return errorResponse('action and campaignId are required', 400, origin);
+	}
+
+	const storedCampaign = await env.ADA_DATA.get(`campaign:${campaignId}`);
+	if (!storedCampaign) {
+		return errorResponse('Campaign not found', 404, origin);
+	}
+
+	let campaign: Campaign;
+	try {
+		campaign = JSON.parse(storedCampaign) as Campaign;
+	} catch {
+		return errorResponse('Corrupted campaign record', 500, origin);
+	}
+
+	if (action === 'linkCharacter') {
+		const characterId = String(body?.characterId ?? '').trim();
+		if (!characterId) {
+			return errorResponse('characterId is required for linkCharacter', 400, origin);
+		}
+
+		const storedCharacter = await env.ADA_DATA.get(`character:${characterId}`);
+		if (!storedCharacter) {
+			return errorResponse('Character not found', 404, origin);
+		}
+
+		let character: Character;
+		try {
+			character = JSON.parse(storedCharacter) as Character;
+		} catch {
+			return errorResponse('Corrupted character record', 500, origin);
+		}
+
+		if (!Array.isArray(campaign.linkedCharacterIds)) campaign.linkedCharacterIds = [];
+		if (!campaign.linkedCharacterIds.includes(characterId)) {
+			campaign.linkedCharacterIds.push(characterId);
+		}
+
+		if (!Array.isArray(character.campaignIds)) character.campaignIds = [];
+		if (!character.campaignIds.includes(campaignId)) {
+			character.campaignIds.push(campaignId);
+		}
+
+		await env.ADA_DATA.put(`campaign:${campaignId}`, JSON.stringify(campaign));
+		await env.ADA_DATA.put(`character:${characterId}`, JSON.stringify(character));
+
+		// No need to send characters list right now; front-end can refresh later if needed.
+		return jsonResponse({ ok: true, campaign }, { status: 200 }, origin);
+	}
+
+	if (action === 'addJournal') {
+		const author = String(body?.author ?? '').trim();
+		const rawTranscript = String(body?.rawTranscript ?? '').trim();
+		let polishedText = String(body?.polishedText ?? '').trim();
+		if (!author || !rawTranscript) {
+			return errorResponse('author and rawTranscript are required for addJournal', 400, origin);
+		}
+		if (!polishedText) {
+			polishedText = basicPolishJournal(rawTranscript);
+		}
+
+		const id = crypto.randomUUID();
+		const createdAt = new Date().toISOString();
+		const entry: JournalEntry = {
+			id,
+			campaignId,
+			author,
+			createdAt,
+			rawTranscript,
+			polishedText,
+		};
+
+		await env.ADA_DATA.put(`journal:${id}`, JSON.stringify(entry));
+		if (!Array.isArray(campaign.journalEntryIds)) campaign.journalEntryIds = [];
+		if (!campaign.journalEntryIds.includes(id)) campaign.journalEntryIds.push(id);
+		await env.ADA_DATA.put(`campaign:${campaignId}`, JSON.stringify(campaign));
+
+		return jsonResponse({ ok: true, campaign, journal: entry }, { status: 201 }, origin);
+	}
+
+	if (action === 'addScript') {
+		const author = String(body?.author ?? '').trim();
+		const prompt = String(body?.prompt ?? '').trim();
+		let title = String(body?.title ?? '').trim();
+		if (!author || !prompt) {
+			return errorResponse('author and prompt are required for addScript', 400, origin);
+		}
+		if (!title) {
+			title = 'Generated Encounter Script';
+		}
+
+		const bodyText = buildEncounterScriptBody(prompt, campaign);
+		const id = crypto.randomUUID();
+		const createdAt = new Date().toISOString();
+		const script: ScriptNote = {
+			id,
+			campaignId,
+			author,
+			createdAt,
+			title,
+			body: bodyText,
+		};
+
+		await env.ADA_DATA.put(`script:${id}`, JSON.stringify(script));
+		if (!Array.isArray(campaign.scriptIds)) campaign.scriptIds = [];
+		if (!campaign.scriptIds.includes(id)) campaign.scriptIds.push(id);
+		await env.ADA_DATA.put(`campaign:${campaignId}`, JSON.stringify(campaign));
+
+		// Return all scripts for convenience
+		const scripts: ScriptNote[] = [];
+		for (const scriptId of campaign.scriptIds) {
+			const storedScript = await env.ADA_DATA.get(`script:${scriptId}`);
+			if (!storedScript) continue;
+			try {
+				const parsed = JSON.parse(storedScript) as ScriptNote;
+				if (parsed && parsed.id) scripts.push(parsed);
+			} catch {
+				// ignore
+			}
+		}
+
+		return jsonResponse({ ok: true, campaign, script, scripts }, { status: 201 }, origin);
+	}
+
+	if (action === 'logTranscript') {
+		const username = String(body?.username ?? '').trim();
+		const snippet = String(body?.snippet ?? '').trim();
+		const fullTextRaw = String(body?.fullText ?? '').trim();
+		const fullText = fullTextRaw || snippet;
+		if (!username || (!snippet && !fullText)) {
+			return errorResponse('username and transcript text are required for logTranscript', 400, origin);
+		}
+
+		const id = crypto.randomUUID();
+		const createdAt = new Date().toISOString();
+		const log: DialogueLog = {
+			id,
+			campaignId,
+			author: username,
+			createdAt,
+			snippet,
+			fullText,
+		};
+
+		await env.ADA_DATA.put(`dialogue:${id}`, JSON.stringify(log));
+
+		const indexKey = `dialogueByCampaign:${campaignId}`;
+		const existing = await env.ADA_DATA.get(indexKey);
+		let ids: string[] = [];
+		if (existing) {
+			try {
+				ids = JSON.parse(existing) as string[];
+				if (!Array.isArray(ids)) ids = [];
+			} catch {
+				ids = [];
+			}
+		}
+		ids.push(id);
+		await env.ADA_DATA.put(indexKey, JSON.stringify(ids));
+
+		return jsonResponse({ ok: true }, { status: 201 }, origin);
+	}
+
+	return errorResponse('Unknown action for campaign details', 400, origin);
 }
 
 const KNOWN_RACES = [
@@ -531,6 +856,8 @@ async function handleForgeCharacter(request: Request, env: Env, origin: string |
 
 	const username = (body?.username ?? '').trim();
 	const narrativeText = (body?.narrativeText ?? '').trim();
+	const campaignIdRaw = typeof body?.campaignId === 'string' ? body.campaignId : '';
+	const campaignId = campaignIdRaw.trim() || '';
 	const portraitUrl = typeof body?.portraitUrl === 'string' && body.portraitUrl.trim().length > 0
 		? body.portraitUrl.trim()
 		: null;
@@ -551,6 +878,26 @@ async function handleForgeCharacter(request: Request, env: Env, origin: string |
 	}
 
 	const character = forgeCharacterFromNarrative(username, narrativeText, portraitUrl);
+
+	if (campaignId) {
+		character.campaignIds = Array.isArray(character.campaignIds)
+			? [...new Set([...character.campaignIds, campaignId])]
+			: [campaignId];
+
+		const storedCampaign = await env.ADA_DATA.get(`campaign:${campaignId}`);
+		if (storedCampaign) {
+			try {
+				const campaign = JSON.parse(storedCampaign) as Campaign;
+				if (!Array.isArray(campaign.linkedCharacterIds)) campaign.linkedCharacterIds = [];
+				if (!campaign.linkedCharacterIds.includes(character.id)) {
+					campaign.linkedCharacterIds.push(character.id);
+					await env.ADA_DATA.put(`campaign:${campaignId}`, JSON.stringify(campaign));
+				}
+			} catch {
+				// ignore malformed campaign record
+			}
+		}
+	}
 
 	await env.ADA_DATA.put(`character:${character.id}`, JSON.stringify(character));
 
@@ -650,6 +997,14 @@ export default {
 
 		if (pathname === '/api/campaigns' && method === 'GET') {
 			return handleListCampaigns(request, env, origin);
+		}
+
+		if (pathname === '/api/campaigns/details' && method === 'GET') {
+			return handleGetCampaignDetails(request, env, origin);
+		}
+
+		if (pathname === '/api/campaigns/details' && method === 'POST') {
+			return handlePostCampaignDetails(request, env, origin);
 		}
 
 		return errorResponse('Not Found', 404, origin);

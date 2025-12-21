@@ -181,35 +181,98 @@
     </section>
     <section id="campaignsSection" class="view" hidden>
       <div class="card">
-        <h2>My Campaigns</h2>
-        <p class="text-muted">Create campaigns, see where you're the Dungeon Master, and where you're a player.</p>
+        <div id="campaignsListView">
+          <h2>My Campaigns</h2>
+          <p class="text-muted">Create campaigns, see where you're the Dungeon Master, and where you're a player.</p>
 
-        <div class="campaigns__controls">
-          <div class="campaigns__filters">
-            <button id="campaignFilterAll" class="btn btn--secondary btn--small" data-filter="all">All</button>
-            <button id="campaignFilterDm" class="btn btn--secondary btn--small" data-filter="dm">As DM</button>
-            <button id="campaignFilterPlayer" class="btn btn--secondary btn--small" data-filter="player">As Player</button>
+          <div class="campaigns__controls">
+            <div class="campaigns__filters">
+              <button id="campaignFilterAll" class="btn btn--secondary btn--small" data-filter="all">All</button>
+              <button id="campaignFilterDm" class="btn btn--secondary btn--small" data-filter="dm">As DM</button>
+              <button id="campaignFilterPlayer" class="btn btn--secondary btn--small" data-filter="player">As Player</button>
+            </div>
+          </div>
+
+          <div class="campaigns__new">
+            <h3>Create a New Campaign</h3>
+            <form id="createCampaignForm" class="campaigns__form">
+              <div class="field">
+                <label for="campaignName">Campaign name</label>
+                <input type="text" id="campaignName" name="campaignName" placeholder="Curse of the Moonlit Isles" required />
+              </div>
+              <div class="field">
+                <label for="campaignParticipants">Participants (comma-separated usernames, include yourself if desired)</label>
+                <input type="text" id="campaignParticipants" name="campaignParticipants" placeholder="alice, bob, charlie" />
+                <p class="field__hint">You'll be set as the Dungeon Master for campaigns you create.</p>
+              </div>
+              <button type="submit" class="btn btn--primary">Create campaign</button>
+            </form>
+          </div>
+
+          <div class="campaigns__list" id="campaignsList" aria-live="polite"></div>
+          <p id="campaignsMessage" class="text-muted"></p>
+        </div>
+
+        <div id="campaignDetailView" class="campaign-detail" hidden>
+          <button type="button" id="campaignBackBtn" class="btn btn--secondary btn--small campaign-detail__back">&larr; Back to My Campaigns</button>
+          <h2 id="campaignDetailTitle">Campaign Dashboard</h2>
+          <p id="campaignDetailMeta" class="text-muted"></p>
+
+          <nav class="campaign-tabs" aria-label="Campaign sections">
+            <button type="button" class="campaign-tab-button" data-tab="characters">Characters</button>
+            <button type="button" class="campaign-tab-button" data-tab="journals">Journals</button>
+            <button type="button" class="campaign-tab-button" data-tab="script">Script</button>
+            <button type="button" class="campaign-tab-button" data-tab="dialogue">Dialogue</button>
+          </nav>
+
+          <div class="campaign-tab-panels">
+            <section id="campaignTabCharacters" class="campaign-tab-panel" data-tab="characters">
+              <p class="text-muted">Party characters linked to this campaign.</p>
+              <div id="campaignCharactersGrid" class="party-grid"></div>
+            </section>
+
+            <section id="campaignTabJournals" class="campaign-tab-panel" data-tab="journals" hidden>
+              <p class="text-muted">Polished narrative entries based on your session transcripts.</p>
+              <div id="campaignJournalsList" class="journal-list"></div>
+            </section>
+
+            <section id="campaignTabScript" class="campaign-tab-panel" data-tab="script" hidden>
+              <div class="script-panel">
+                <p class="text-muted">Store prepared descriptions, encounter notes, or AI-generated flavor text for this campaign.</p>
+                <textarea
+                  id="campaignScriptPrompt"
+                  class="output__text script-panel__prompt"
+                  rows="4"
+                  placeholder="Describe the party's current location or status, and what kind of encounter you want to generate..."
+                ></textarea>
+                <div class="script-panel__actions">
+                  <button type="button" id="campaignScriptGenerateBtn" class="btn btn--primary btn--small">
+                    Generate encounter script
+                  </button>
+                  <span id="campaignScriptStatus" class="status script-panel__status">Idle</span>
+                </div>
+                <div id="campaignScriptsList" class="script-list"></div>
+              </div>
+            </section>
+
+            <section id="campaignTabDialogue" class="campaign-tab-panel" data-tab="dialogue" hidden>
+              <div class="dialogue-panel">
+                <p class="text-muted">Use live voice capture during your session. Transcripts here are tagged to this campaign for future journals and mechanics.</p>
+                <div class="controls dialogue-panel__controls">
+                  <button id="campaignDialogueStartBtn" class="btn btn--primary">Start Session Capture</button>
+                  <button id="campaignDialogueStopBtn" class="btn" disabled>Stop</button>
+                  <span id="campaignDialogueStatus" class="status">Idle</span>
+                </div>
+                <textarea
+                  id="campaignDialogueTranscript"
+                  class="output__text dialogue-panel__transcript"
+                  rows="8"
+                  placeholder="Live session dialogue will appear here..."
+                ></textarea>
+              </div>
+            </section>
           </div>
         </div>
-
-        <div class="campaigns__new">
-          <h3>Create a New Campaign</h3>
-          <form id="createCampaignForm" class="campaigns__form">
-            <div class="field">
-              <label for="campaignName">Campaign name</label>
-              <input type="text" id="campaignName" name="campaignName" placeholder="Curse of the Moonlit Isles" required />
-            </div>
-            <div class="field">
-              <label for="campaignParticipants">Participants (comma-separated usernames, include yourself if desired)</label>
-              <input type="text" id="campaignParticipants" name="campaignParticipants" placeholder="alice, bob, charlie" />
-              <p class="field__hint">You'll be set as the Dungeon Master for campaigns you create.</p>
-            </div>
-            <button type="submit" class="btn btn--primary">Create campaign</button>
-          </form>
-        </div>
-
-        <div class="campaigns__list" id="campaignsList" aria-live="polite"></div>
-        <p id="campaignsMessage" class="text-muted"></p>
       </div>
     </section>
   </main>

@@ -39,6 +39,27 @@
   const campaignFilterAllBtn = document.getElementById("campaignFilterAll");
   const campaignFilterDmBtn = document.getElementById("campaignFilterDm");
   const campaignFilterPlayerBtn = document.getElementById("campaignFilterPlayer");
+  const campaignsListView = document.getElementById("campaignsListView");
+  const campaignDetailView = document.getElementById("campaignDetailView");
+  const campaignBackBtn = document.getElementById("campaignBackBtn");
+  const campaignDetailTitle = document.getElementById("campaignDetailTitle");
+  const campaignDetailMeta = document.getElementById("campaignDetailMeta");
+  const campaignTabButtons = Array.from(
+    document.querySelectorAll(".campaign-tab-button")
+  );
+  const campaignTabPanels = Array.from(
+    document.querySelectorAll(".campaign-tab-panel")
+  );
+  const campaignCharactersGrid = document.getElementById("campaignCharactersGrid");
+  const campaignJournalsList = document.getElementById("campaignJournalsList");
+  const campaignScriptsList = document.getElementById("campaignScriptsList");
+  const campaignScriptPromptInput = document.getElementById("campaignScriptPrompt");
+  const campaignScriptGenerateBtn = document.getElementById("campaignScriptGenerateBtn");
+  const campaignScriptStatusEl = document.getElementById("campaignScriptStatus");
+  const campaignDialogueStartBtn = document.getElementById("campaignDialogueStartBtn");
+  const campaignDialogueStopBtn = document.getElementById("campaignDialogueStopBtn");
+  const campaignDialogueStatusEl = document.getElementById("campaignDialogueStatus");
+  const campaignDialogueTranscriptEl = document.getElementById("campaignDialogueTranscript");
 
   const portraitImgs = [
     document.getElementById("portraitImg0"),
@@ -54,6 +75,19 @@
 
   const PORTRAIT_STORAGE_KEY = "adaCurrentCharacterPortraitUrl";
   const CURRENT_USER_STORAGE_KEY = "adaCurrentUser";
+  const ACTIVE_CAMPAIGN_STORAGE_KEY = "adaActiveCampaignId";
+
+  let activeCampaignId = null;
+  let activeCampaign = null;
+
+  try {
+    const storedCampaignId = localStorage.getItem(ACTIVE_CAMPAIGN_STORAGE_KEY);
+    if (storedCampaignId) {
+      activeCampaignId = storedCampaignId;
+    }
+  } catch {
+    // ignore storage issues
+  }
 
   // Backend API base URL (Cloudflare Worker)
   const BACKEND_BASE_URL = "https://backend.ada-assistante.workers.dev";
@@ -65,7 +99,11 @@
     if (supportWarning) supportWarning.hidden = false;
     if (startBtn) startBtn.disabled = true;
     if (stopBtn) stopBtn.disabled = true;
+    if (campaignDialogueStartBtn) campaignDialogueStartBtn.disabled = true;
+    if (campaignDialogueStopBtn) campaignDialogueStopBtn.disabled = true;
     if (statusEl) statusEl.textContent = "Speech not supported";
+    if (campaignDialogueStatusEl)
+      campaignDialogueStatusEl.textContent = "Speech not supported";
     return;
   }
 
@@ -77,10 +115,14 @@
   let isListening = false;
   let lastFinal = "";
   let mode = TranscriptMode.APPEND;
+  let activeTranscriptEl = transcriptEl;
+  let activeTranscriptStatusEl = statusEl;
+  let activeTranscriptContext = "home"; // "home" | "dialogue"
 
   function setStatus(text) {
-    if (!statusEl) return;
-    statusEl.textContent = text;
+    const el = activeTranscriptStatusEl || statusEl;
+    if (!el) return;
+    el.textContent = text;
   }
 
   function setPortraitStatus(text) {
@@ -102,18 +144,21 @@
     isListening = listening;
     if (startBtn) startBtn.disabled = listening;
     if (stopBtn) stopBtn.disabled = !listening;
+    if (campaignDialogueStartBtn) campaignDialogueStartBtn.disabled = listening;
+    if (campaignDialogueStopBtn) campaignDialogueStopBtn.disabled = !listening;
     setStatus(listening ? "Listening..." : "Idle");
   }
 
   function updateTranscript(text, updateMode) {
-    if (!transcriptEl) return;
+    const target = activeTranscriptEl || transcriptEl;
+    if (!target) return;
     if (updateMode === TranscriptMode.REPLACE) {
-      transcriptEl.value = text;
+      target.value = text;
     } else {
-      const prefix = transcriptEl.value.trim();
-      transcriptEl.value = prefix ? prefix + " " + text : text;
+      const prefix = target.value.trim();
+      target.value = prefix ? prefix + " " + text : text;
     }
-    transcriptEl.scrollTop = transcriptEl.scrollHeight;
+    target.scrollTop = target.scrollHeight;
   }
 
   async function apiPost(path, payload) {
@@ -162,15 +207,26 @@
   }
 
   function showView(view) {
-    // view: "auth-login" | "auth-register" | "home" | "profile" | "campaigns"
+    // view: "auth-login" | "auth-register" | "home" | "profile" | "campaigns" | "campaign-detail"
     const isAuthView = view === "auth-login" || view === "auth-register";
+    const isCampaignView = view === "campaigns" || view === "campaign-detail";
 
     if (authSection) authSection.hidden = !isAuthView;
     if (loginView) loginView.hidden = view !== "auth-login";
     if (registerView) registerView.hidden = view !== "auth-register";
     if (homeSection) homeSection.hidden = view !== "home";
     if (profileSection) profileSection.hidden = view !== "profile";
-    if (campaignsSection) campaignsSection.hidden = view !== "campaigns";
+    if (campaignsSection) campaignsSection.hidden = !isCampaignView;
+
+    if (campaignsListView && campaignDetailView) {
+      if (view === "campaigns") {
+        campaignsListView.hidden = false;
+        campaignDetailView.hidden = true;
+      } else if (view === "campaign-detail") {
+        campaignsListView.hidden = true;
+        campaignDetailView.hidden = false;
+      }
+    }
 
     // While on login/register screens, always hide nav and user label
     if (isAuthView) {
@@ -264,6 +320,26 @@
     }
   }
 
+  function logDialogueSnippet(snippet, fullText) {
+    if (!activeCampaignId) return;
+    const currentUser = getCurrentUser();
+    if (!currentUser) return;
+
+    const trimmedSnippet = (snippet || "").trim();
+    const trimmedFull = (fullText || "").trim();
+    if (!trimmedSnippet && !trimmedFull) return;
+
+    apiPost("/api/campaigns/details", {
+      action: "logTranscript",
+      campaignId: activeCampaignId,
+      username: currentUser,
+      snippet: trimmedSnippet,
+      fullText: trimmedFull || trimmedSnippet,
+    }).catch((e) => {
+      console.warn("[ADA] Failed to log transcript snippet", e);
+    });
+  }
+
   recognition.onresult = (event) => {
     let interim = "";
     let final = "";
@@ -280,7 +356,11 @@
 
     if (final) {
       lastFinal += final;
-      updateTranscript(lastFinal.trim(), TranscriptMode.REPLACE);
+      const combinedFinal = lastFinal.trim();
+      updateTranscript(combinedFinal, TranscriptMode.REPLACE);
+      if (activeTranscriptContext === "dialogue") {
+        logDialogueSnippet(final.trim(), combinedFinal);
+      }
     } else if (interim) {
       const combined = (lastFinal + " " + interim).trim();
       updateTranscript(combined, TranscriptMode.REPLACE);
@@ -312,7 +392,14 @@
     startBtn.addEventListener("click", () => {
       if (isListening) return;
       try {
-        lastFinal = transcriptEl ? transcriptEl.value.trim() + " " : "";
+        activeTranscriptEl = transcriptEl;
+        activeTranscriptStatusEl = statusEl;
+        activeTranscriptContext = "home";
+        const existing =
+          activeTranscriptEl && activeTranscriptEl.value
+            ? activeTranscriptEl.value.trim() + " "
+            : "";
+        lastFinal = existing;
         recognition.start();
         setListeningUI(true);
       } catch (e) {
@@ -330,6 +417,47 @@
         recognition.stop();
       } catch (e) {
         console.error("Failed to stop recognition", e);
+      }
+      setListeningUI(false);
+    });
+  }
+
+  if (campaignDialogueStartBtn) {
+    campaignDialogueStartBtn.addEventListener("click", () => {
+      if (isListening) return;
+      if (!activeCampaignId) {
+        if (campaignDialogueStatusEl)
+          campaignDialogueStatusEl.textContent =
+            "Select a campaign first, then open its Dialogue tab.";
+        return;
+      }
+
+      try {
+        activeTranscriptEl = campaignDialogueTranscriptEl || transcriptEl;
+        activeTranscriptStatusEl = campaignDialogueStatusEl || statusEl;
+        activeTranscriptContext = "dialogue";
+        const existing =
+          activeTranscriptEl && activeTranscriptEl.value
+            ? activeTranscriptEl.value.trim() + " "
+            : "";
+        lastFinal = existing;
+        recognition.start();
+        setListeningUI(true);
+      } catch (e) {
+        console.error("Failed to start recognition for dialogue", e);
+        setStatus("Failed to start listening");
+      }
+    });
+  }
+
+  if (campaignDialogueStopBtn) {
+    campaignDialogueStopBtn.addEventListener("click", () => {
+      if (!isListening) return;
+      isListening = false;
+      try {
+        recognition.stop();
+      } catch (e) {
+        console.error("Failed to stop recognition (dialogue)", e);
       }
       setListeningUI(false);
     });
@@ -452,6 +580,238 @@
     }
   }
 
+  function setCampaignTab(tabId) {
+    if (!tabId) return;
+
+    campaignTabButtons.forEach((btn) => {
+      const tab = btn.getAttribute("data-tab");
+      const isActive = tab === tabId;
+      if (isActive) {
+        btn.classList.add("campaign-tab-button--active");
+        btn.setAttribute("aria-current", "page");
+      } else {
+        btn.classList.remove("campaign-tab-button--active");
+        btn.removeAttribute("aria-current");
+      }
+    });
+
+    campaignTabPanels.forEach((panel) => {
+      const tab = panel.getAttribute("data-tab");
+      panel.hidden = tab !== tabId;
+    });
+  }
+
+  function renderCampaignCharacters(characters) {
+    if (!campaignCharactersGrid) return;
+    campaignCharactersGrid.innerHTML = "";
+
+    if (!Array.isArray(characters) || characters.length === 0) {
+      const empty = document.createElement("p");
+      empty.className = "text-muted";
+      empty.textContent =
+        "No characters are linked to this campaign yet. Forge a character and link it from your tools.";
+      campaignCharactersGrid.appendChild(empty);
+      return;
+    }
+
+    characters.forEach((ch) => {
+      const card = document.createElement("article");
+      card.className = "party-card";
+
+      const header = document.createElement("div");
+      header.className = "party-card__header";
+
+      const nameEl = document.createElement("h3");
+      nameEl.className = "party-card__name";
+      const name = ch.name && String(ch.name).trim();
+      nameEl.textContent = name || "Unnamed adventurer";
+
+      const tag = document.createElement("span");
+      tag.className = "party-card__tag";
+      const race = ch.concept?.race || "?";
+      const cls = ch.concept?.classSummary || "Adventurer";
+      tag.textContent = `${race} ${cls}`;
+
+      header.appendChild(nameEl);
+      header.appendChild(tag);
+
+      const meta = document.createElement("p");
+      meta.className = "party-card__meta";
+      const levelSummary = ch.concept?.levelSummary || "1";
+      meta.textContent = `Level(s): ${levelSummary}`;
+
+      card.appendChild(header);
+      card.appendChild(meta);
+
+      if (ch.portraitUrl) {
+        const portraitWrapper = document.createElement("div");
+        portraitWrapper.className = "party-card__portrait";
+        const img = document.createElement("img");
+        img.src = ch.portraitUrl;
+        img.alt = `Portrait of ${name || "campaign character"}`;
+        portraitWrapper.appendChild(img);
+        card.appendChild(portraitWrapper);
+      }
+
+      campaignCharactersGrid.appendChild(card);
+    });
+  }
+
+  function renderCampaignJournals(journals) {
+    if (!campaignJournalsList) return;
+    campaignJournalsList.innerHTML = "";
+
+    if (!Array.isArray(journals) || journals.length === 0) {
+      const empty = document.createElement("p");
+      empty.className = "text-muted";
+      empty.textContent =
+        "No journal entries yet. Generate them later from your recorded dialogue.";
+      campaignJournalsList.appendChild(empty);
+      return;
+    }
+
+    const sorted = journals.slice().sort((a, b) => {
+      const ad = Date.parse(a.createdAt || "");
+      const bd = Date.parse(b.createdAt || "");
+      return (bd || 0) - (ad || 0);
+    });
+
+    sorted.forEach((entry) => {
+      const article = document.createElement("article");
+      article.className = "journal-entry";
+
+      const meta = document.createElement("div");
+      meta.className = "journal-entry__meta";
+      const author = entry.author || "Narrator";
+      const createdAt = new Date(entry.createdAt || Date.now()).toLocaleString();
+      meta.textContent = `${author} · ${createdAt}`;
+
+      const body = document.createElement("div");
+      body.textContent = entry.polishedText || entry.rawTranscript || "";
+
+      article.appendChild(meta);
+      article.appendChild(body);
+
+      campaignJournalsList.appendChild(article);
+    });
+  }
+
+  function renderCampaignScripts(scripts) {
+    if (!campaignScriptsList) return;
+    campaignScriptsList.innerHTML = "";
+
+    if (!Array.isArray(scripts) || scripts.length === 0) {
+      const empty = document.createElement("p");
+      empty.className = "text-muted";
+      empty.textContent =
+        "No scripts saved yet. Use the prompt above to generate an encounter script.";
+      campaignScriptsList.appendChild(empty);
+      return;
+    }
+
+    const sorted = scripts.slice().sort((a, b) => {
+      const ad = Date.parse(a.createdAt || "");
+      const bd = Date.parse(b.createdAt || "");
+      return (bd || 0) - (ad || 0);
+    });
+
+    sorted.forEach((script) => {
+      const card = document.createElement("article");
+      card.className = "script-card";
+
+      const title = document.createElement("h3");
+      title.className = "script-card__title";
+      title.textContent = script.title || "Encounter Script";
+
+      const meta = document.createElement("div");
+      meta.className = "script-card__meta";
+      const author = script.author || "DM";
+      const createdAt = new Date(script.createdAt || Date.now()).toLocaleString();
+      meta.textContent = `${author} · ${createdAt}`;
+
+      const body = document.createElement("div");
+      body.className = "script-card__body";
+      body.textContent = script.body || "";
+
+      card.appendChild(title);
+      card.appendChild(meta);
+      card.appendChild(body);
+
+      campaignScriptsList.appendChild(card);
+    });
+  }
+
+  async function loadCampaignDetail(campaignId) {
+    const currentUser = getCurrentUser();
+    if (!currentUser) {
+      if (campaignsMessage)
+        campaignsMessage.textContent =
+          "You need to be logged in to see campaign details.";
+      return;
+    }
+
+    if (campaignScriptStatusEl) campaignScriptStatusEl.textContent = "Idle";
+    if (campaignCharactersGrid) campaignCharactersGrid.innerHTML = "";
+    if (campaignJournalsList) campaignJournalsList.innerHTML = "";
+    if (campaignScriptsList) campaignScriptsList.innerHTML = "";
+
+    const result = await apiGet(
+      `/api/campaigns/details?id=${encodeURIComponent(
+        campaignId
+      )}&user=${encodeURIComponent(currentUser)}`
+    );
+
+    if (!result.ok) {
+      if (campaignsMessage)
+        campaignsMessage.textContent =
+          "Could not load campaign details. Please try again later.";
+      return;
+    }
+
+    const data = result.data || {};
+    const campaign = data.campaign;
+    const characters = Array.isArray(data.characters) ? data.characters : [];
+    const journals = Array.isArray(data.journals) ? data.journals : [];
+    const scripts = Array.isArray(data.scripts) ? data.scripts : [];
+
+    if (campaign) {
+      activeCampaign = campaign;
+      if (campaignDetailTitle)
+        campaignDetailTitle.textContent = campaign.name || "Campaign Dashboard";
+
+      if (campaignDetailMeta) {
+        const role = campaign.dm === currentUser ? "Dungeon Master" : "Player";
+        const others = (Array.isArray(campaign.participants)
+          ? campaign.participants
+          : []
+        ).filter((p) => p !== currentUser);
+        const othersLabel = others.length ? ` · With ${others.join(", ")}` : "";
+        const created = new Date(campaign.createdAt || Date.now()).toLocaleString();
+        campaignDetailMeta.textContent = `${role} · Created ${created}${othersLabel}`;
+      }
+    }
+
+    renderCampaignCharacters(characters);
+    renderCampaignJournals(journals);
+    renderCampaignScripts(scripts);
+  }
+
+  function openCampaignDashboard(campaign) {
+    if (!campaign) return;
+    activeCampaignId = campaign.id;
+    activeCampaign = campaign;
+
+    try {
+      localStorage.setItem(ACTIVE_CAMPAIGN_STORAGE_KEY, String(campaign.id));
+    } catch (e) {
+      console.warn("[ADA] Failed to persist active campaign id", e);
+    }
+
+    setCampaignTab("characters");
+    showView("campaign-detail");
+    loadCampaignDetail(campaign.id);
+  }
+
   function renderCampaigns(campaigns, filter, currentUser) {
     if (!campaignsList) return;
     campaignsList.innerHTML = "";
@@ -527,6 +887,11 @@
       card.appendChild(header);
       card.appendChild(meta);
       card.appendChild(participants);
+
+      card.dataset.campaignId = c.id;
+      card.addEventListener("click", () => {
+        openCampaignDashboard(c);
+      });
 
       campaignsList.appendChild(card);
     });
@@ -621,6 +986,7 @@
         username: currentUser,
         narrativeText,
         portraitUrl,
+        campaignId: activeCampaignId,
       }).then((result) => {
         if (!result.ok) {
           const msg = (result.data && result.data.error) ||
@@ -722,9 +1088,97 @@
       } else if (view === "profile") {
         showView("profile");
       } else if (view === "campaigns") {
+        activeCampaignId = null;
+        activeCampaign = null;
+        try {
+          localStorage.removeItem(ACTIVE_CAMPAIGN_STORAGE_KEY);
+        } catch {
+          // ignore
+        }
         showView("campaigns");
         loadCampaigns("all");
       }
+    });
+  }
+
+  if (campaignBackBtn) {
+    campaignBackBtn.addEventListener("click", () => {
+      activeCampaignId = null;
+      activeCampaign = null;
+      try {
+        localStorage.removeItem(ACTIVE_CAMPAIGN_STORAGE_KEY);
+      } catch {
+        // ignore
+      }
+      showView("campaigns");
+      loadCampaigns("all");
+    });
+  }
+
+  campaignTabButtons.forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const tab = btn.getAttribute("data-tab");
+      if (!tab) return;
+      setCampaignTab(tab);
+    });
+  });
+
+  if (campaignScriptGenerateBtn) {
+    campaignScriptGenerateBtn.addEventListener("click", () => {
+      if (!activeCampaignId) {
+        if (campaignScriptStatusEl)
+          campaignScriptStatusEl.textContent =
+            "Open a campaign dashboard first to generate a script.";
+        return;
+      }
+
+      const currentUser = getCurrentUser();
+      if (!currentUser) {
+        if (campaignScriptStatusEl)
+          campaignScriptStatusEl.textContent =
+            "You need to be logged in to generate scripts.";
+        return;
+      }
+
+      const prompt = campaignScriptPromptInput
+        ? campaignScriptPromptInput.value.trim()
+        : "";
+      if (!prompt) {
+        if (campaignScriptStatusEl)
+          campaignScriptStatusEl.textContent =
+            "Describe the situation or encounter you want first.";
+        return;
+      }
+
+      if (campaignScriptStatusEl)
+        campaignScriptStatusEl.textContent =
+          "Generating an encounter script...";
+
+      apiPost("/api/campaigns/details", {
+        action: "addScript",
+        campaignId: activeCampaignId,
+        author: currentUser,
+        prompt,
+      }).then((result) => {
+        if (!result.ok) {
+          const msg = (result.data && result.data.error) ||
+            "Could not generate script. Please try again.";
+          if (campaignScriptStatusEl) campaignScriptStatusEl.textContent = msg;
+          return;
+        }
+
+        const data = result.data || {};
+        const scripts = Array.isArray(data.scripts)
+          ? data.scripts
+          : data.script
+          ? [data.script]
+          : [];
+        renderCampaignScripts(scripts);
+        if (campaignScriptStatusEl)
+          campaignScriptStatusEl.textContent =
+            "Encounter script added to your campaign.";
+        if (campaignScriptPromptInput) campaignScriptPromptInput.value = "";
+      });
     });
   }
 

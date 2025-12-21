@@ -949,143 +949,6 @@
       if (campaignsList) campaignsList.innerHTML = "";
       return;
     }
-    }
-
-    async function loadVaultCharacters() {
-      const user = getCurrentUser();
-      if (!user) return;
-      vaultMessage.textContent = "Loading your characters...";
-      vaultCharactersGrid.innerHTML = "";
-      try {
-        const result = await apiGet(`/api/characters?user=${encodeURIComponent(user)}`);
-        if (!result.ok) {
-          throw new Error((result.data && result.data.error) || "Failed to load characters");
-        }
-        const data = result.data || {};
-        const characters = Array.isArray(data.characters) ? data.characters : [];
-        cachedVaultCharacters = characters;
-        if (!characters.length) {
-          vaultMessage.textContent = "No characters yet. Forge one from the Home tab to get started.";
-          return;
-        }
-        vaultMessage.textContent = "";
-        characters.forEach((ch) => {
-          const card = document.createElement("button");
-          card.type = "button";
-          card.className = "vault-card";
-          card.innerHTML = `
-            <div class="vault-card__portrait" style="background-image: url('${(ch.portraitUrl || "").replace(/'/g, "&#39;")}')"></div>
-            <div class="vault-card__name">${ch.name || "Unnamed Adventurer"}</div>
-            <div class="vault-card__meta">${(ch.concept && ch.concept.summary) || "Mystery wanderer"}</div>
-          `;
-          card.addEventListener("click", () => openVaultDetail(ch.id));
-          vaultCharactersGrid.appendChild(card);
-        });
-      } catch (err) {
-        console.error("Failed to load characters", err);
-        vaultMessage.textContent = err.message || "Error loading characters.";
-      }
-    }
-
-    async function loadUserCampaignsForVault() {
-      const user = getCurrentUser();
-      if (!user) return;
-      try {
-        const result = await apiGet(`/api/campaigns?user=${encodeURIComponent(user)}`);
-        if (!result.ok) return;
-        const data = result.data || {};
-        cachedUserCampaigns = Array.isArray(data.campaigns) ? data.campaigns : [];
-      } catch (err) {
-        console.warn("Unable to load campaigns for vault", err);
-      }
-    }
-
-    function populateVaultCampaignSelect(character) {
-      vaultCampaignSelect.innerHTML = "";
-      const optPlaceholder = document.createElement("option");
-      optPlaceholder.value = "";
-      optPlaceholder.textContent = "Select a campaign";
-      vaultCampaignSelect.appendChild(optPlaceholder);
-
-      if (!cachedUserCampaigns.length) {
-        const opt = document.createElement("option");
-        opt.value = "";
-        opt.disabled = true;
-        opt.textContent = "No campaigns yet";
-        vaultCampaignSelect.appendChild(opt);
-        return;
-      }
-
-      cachedUserCampaigns.forEach((c) => {
-        const opt = document.createElement("option");
-        opt.value = c.id;
-        const labelRole = c.dm === getCurrentUser() ? "DM" : "Player";
-        opt.textContent = `${c.name} (${labelRole})`;
-        vaultCampaignSelect.appendChild(opt);
-      });
-
-      if (character && Array.isArray(character.campaignIds) && character.campaignIds.length) {
-        const lastId = character.campaignIds[character.campaignIds.length - 1];
-        const match = Array.from(vaultCampaignSelect.options).find((o) => o.value === lastId);
-        if (match) vaultCampaignSelect.value = lastId;
-      }
-    }
-
-    function renderVaultDetail(character) {
-      activeCharacter = character;
-      vaultDetailName.textContent = character.name || "Unnamed Adventurer";
-      const race = character.concept?.race || "";
-      const mainClass = Array.isArray(character.concept?.classes) && character.concept.classes.length
-        ? character.concept.classes[0].name
-        : "";
-      const level = Array.isArray(character.concept?.classes) && character.concept.classes.length
-        ? character.concept.classes[0].level
-        : undefined;
-      const roleLine = [race, mainClass, level ? `Level ${level}` : ""].filter(Boolean).join(" • ");
-      vaultDetailMeta.textContent = roleLine || "Adventurer";
-      vaultDetailConcept.textContent = character.concept?.summary || "No concept summary yet.";
-      vaultDetailPortrait.style.backgroundImage = character.portraitUrl ? `url('${character.portraitUrl}')` : "none";
-
-      // Abilities
-      vaultDetailAbilities.innerHTML = "";
-      const abilities = character.mechanics?.abilityScores || {};
-      const abilityOrder = ["STR", "DEX", "CON", "INT", "WIS", "CHA"];
-      abilityOrder.forEach((abbr) => {
-        const key = abbr.toLowerCase();
-        const score = abilities[key]?.score ?? "—";
-        const dt = document.createElement("dt");
-        dt.textContent = abbr;
-        const dd = document.createElement("dd");
-        dd.textContent = String(score);
-        vaultDetailAbilities.appendChild(dt);
-        vaultDetailAbilities.appendChild(dd);
-      });
-
-      // Mechanics summary
-      const m = character.mechanics || {};
-      const lines = [];
-      if (m.hp?.max != null) lines.push(`HP ${m.hp.current ?? m.hp.max}/${m.hp.max}`);
-      if (m.armorClass != null) lines.push(`AC ${m.armorClass}`);
-      if (m.speed != null) lines.push(`Speed ${m.speed} ft`);
-      if (m.proficiencyBonus != null) lines.push(`Proficiency +${m.proficiencyBonus}`);
-      const saves = m.savingThrows || {};
-      const saveParts = Object.keys(saves)
-        .filter((k) => saves[k] != null)
-        .map((k) => `${k.toUpperCase()} ${saves[k] >= 0 ? "+" : ""}${saves[k]}`);
-      if (saveParts.length) lines.push(`Saves: ${saveParts.join(", ")}`);
-      vaultDetailMechanics.innerHTML = lines.map((l) => `<div>${l}</div>`).join("");
-
-      populateVaultCampaignSelect(character);
-
-      vaultListView.hidden = true;
-      vaultDetailView.hidden = false;
-    }
-
-    function openVaultDetail(characterId) {
-      const ch = cachedVaultCharacters.find((c) => c.id === characterId);
-      if (!ch) return;
-      renderVaultDetail(ch);
-    }
 
     if (campaignsMessage)
       campaignsMessage.textContent = "Loading campaigns...";
@@ -1106,6 +969,142 @@
         ? result.data.campaigns
         : [];
     renderCampaigns(campaigns, filter, currentUser);
+  }
+
+  async function loadVaultCharacters() {
+    const user = getCurrentUser();
+    if (!user) return;
+    vaultMessage.textContent = "Loading your characters...";
+    vaultCharactersGrid.innerHTML = "";
+    try {
+      const result = await apiGet(`/api/characters?user=${encodeURIComponent(user)}`);
+      if (!result.ok) {
+        throw new Error((result.data && result.data.error) || "Failed to load characters");
+      }
+      const data = result.data || {};
+      const characters = Array.isArray(data.characters) ? data.characters : [];
+      cachedVaultCharacters = characters;
+      if (!characters.length) {
+        vaultMessage.textContent = "No characters yet. Forge one from the Home tab to get started.";
+        return;
+      }
+      vaultMessage.textContent = "";
+      characters.forEach((ch) => {
+        const card = document.createElement("button");
+        card.type = "button";
+        card.className = "vault-card";
+        card.innerHTML = `
+          <div class="vault-card__portrait" style="background-image: url('${(ch.portraitUrl || "").replace(/'/g, "&#39;")}')"></div>
+          <div class="vault-card__name">${ch.name || "Unnamed Adventurer"}</div>
+          <div class="vault-card__meta">${(ch.concept && ch.concept.summary) || "Mystery wanderer"}</div>
+        `;
+        card.addEventListener("click", () => openVaultDetail(ch.id));
+        vaultCharactersGrid.appendChild(card);
+      });
+    } catch (err) {
+      console.error("Failed to load characters", err);
+      vaultMessage.textContent = err.message || "Error loading characters.";
+    }
+  }
+
+  async function loadUserCampaignsForVault() {
+    const user = getCurrentUser();
+    if (!user) return;
+    try {
+      const result = await apiGet(`/api/campaigns?user=${encodeURIComponent(user)}`);
+      if (!result.ok) return;
+      const data = result.data || {};
+      cachedUserCampaigns = Array.isArray(data.campaigns) ? data.campaigns : [];
+    } catch (err) {
+      console.warn("Unable to load campaigns for vault", err);
+    }
+  }
+
+  function populateVaultCampaignSelect(character) {
+    vaultCampaignSelect.innerHTML = "";
+    const optPlaceholder = document.createElement("option");
+    optPlaceholder.value = "";
+    optPlaceholder.textContent = "Select a campaign";
+    vaultCampaignSelect.appendChild(optPlaceholder);
+
+    if (!cachedUserCampaigns.length) {
+      const opt = document.createElement("option");
+      opt.value = "";
+      opt.disabled = true;
+      opt.textContent = "No campaigns yet";
+      vaultCampaignSelect.appendChild(opt);
+      return;
+    }
+
+    cachedUserCampaigns.forEach((c) => {
+      const opt = document.createElement("option");
+      opt.value = c.id;
+      const labelRole = c.dm === getCurrentUser() ? "DM" : "Player";
+      opt.textContent = `${c.name} (${labelRole})`;
+      vaultCampaignSelect.appendChild(opt);
+    });
+
+    if (character && Array.isArray(character.campaignIds) && character.campaignIds.length) {
+      const lastId = character.campaignIds[character.campaignIds.length - 1];
+      const match = Array.from(vaultCampaignSelect.options).find((o) => o.value === lastId);
+      if (match) vaultCampaignSelect.value = lastId;
+    }
+  }
+
+  function renderVaultDetail(character) {
+    activeCharacter = character;
+    vaultDetailName.textContent = character.name || "Unnamed Adventurer";
+    const race = character.concept?.race || "";
+    const mainClass = Array.isArray(character.concept?.classes) && character.concept.classes.length
+      ? character.concept.classes[0].name
+      : "";
+    const level = Array.isArray(character.concept?.classes) && character.concept.classes.length
+      ? character.concept.classes[0].level
+      : undefined;
+    const roleLine = [race, mainClass, level ? `Level ${level}` : ""].filter(Boolean).join(" • ");
+    vaultDetailMeta.textContent = roleLine || "Adventurer";
+    vaultDetailConcept.textContent = character.concept?.summary || "No concept summary yet.";
+    vaultDetailPortrait.style.backgroundImage = character.portraitUrl ? `url('${character.portraitUrl}')` : "none";
+
+    // Abilities
+    vaultDetailAbilities.innerHTML = "";
+    const abilities = character.mechanics?.abilityScores || {};
+    const abilityOrder = ["STR", "DEX", "CON", "INT", "WIS", "CHA"];
+    abilityOrder.forEach((abbr) => {
+      const key = abbr.toLowerCase();
+      const score = abilities[key]?.score ?? "—";
+      const dt = document.createElement("dt");
+      dt.textContent = abbr;
+      const dd = document.createElement("dd");
+      dd.textContent = String(score);
+      vaultDetailAbilities.appendChild(dt);
+      vaultDetailAbilities.appendChild(dd);
+    });
+
+    // Mechanics summary
+    const m = character.mechanics || {};
+    const lines = [];
+    if (m.hp?.max != null) lines.push(`HP ${m.hp.current ?? m.hp.max}/${m.hp.max}`);
+    if (m.armorClass != null) lines.push(`AC ${m.armorClass}`);
+    if (m.speed != null) lines.push(`Speed ${m.speed} ft`);
+    if (m.proficiencyBonus != null) lines.push(`Proficiency +${m.proficiencyBonus}`);
+    const saves = m.savingThrows || {};
+    const saveParts = Object.keys(saves)
+      .filter((k) => saves[k] != null)
+      .map((k) => `${k.toUpperCase()} ${saves[k] >= 0 ? "+" : ""}${saves[k]}`);
+    if (saveParts.length) lines.push(`Saves: ${saveParts.join(", ")}`);
+    vaultDetailMechanics.innerHTML = lines.map((l) => `<div>${l}</div>`).join("");
+
+    populateVaultCampaignSelect(character);
+
+    vaultListView.hidden = true;
+    vaultDetailView.hidden = false;
+  }
+
+  function openVaultDetail(characterId) {
+    const ch = cachedVaultCharacters.find((c) => c.id === characterId);
+    if (!ch) return;
+    renderVaultDetail(ch);
   }
 
   // Auth wiring

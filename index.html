@@ -256,6 +256,13 @@
               <section class="vault-detail__col">
                 <h3>Mechanics</h3>
                 <div id="vaultDetailMechanics" class="vault-mechanics"></div>
+                <div id="vaultDetailResources" class="vault-resources"></div>
+                <div class="vault-resources__actions">
+                  <button type="button" id="vaultLevelUpBtn" class="btn btn--primary btn--small" hidden>
+                    Level up
+                  </button>
+                  <span id="vaultLevelUpStatus" class="status"></span>
+                </div>
               </section>
             </div>
 
@@ -334,6 +341,7 @@
           <div class="campaign-detail__actions">
             <button type="button" id="campaignDeleteBtn" class="btn btn--danger btn--small" hidden>Delete campaign</button>
             <button type="button" id="campaignLeaveBtn" class="btn btn--secondary btn--small" hidden>Leave campaign</button>
+            <button type="button" id="campaignCompleteBtn" class="btn btn--primary btn--small" hidden>Complete campaign</button>
             <span id="campaignActionStatus" class="status campaign-detail__status"></span>
           </div>
 
@@ -352,6 +360,12 @@
 
             <section id="campaignTabJournals" class="campaign-tab-panel" data-tab="journals" hidden>
               <p class="text-muted">Polished narrative entries based on your session transcripts.</p>
+              <div class="script-panel__actions" style="margin: 0 0 0.75rem 0;">
+                <button type="button" id="campaignCreateJournalsBtn" class="btn btn--primary btn--small">
+                  Create journals (each character)
+                </button>
+                <span id="campaignJournalsStatus" class="status">Idle</span>
+              </div>
               <div id="campaignJournalsList" class="journal-list"></div>
             </section>
 

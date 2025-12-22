@@ -49,6 +49,7 @@
   const campaignDetailMeta = document.getElementById("campaignDetailMeta");
   const campaignDeleteBtn = document.getElementById("campaignDeleteBtn");
   const campaignLeaveBtn = document.getElementById("campaignLeaveBtn");
+  const campaignCompleteBtn = document.getElementById("campaignCompleteBtn");
   const campaignActionStatusEl = document.getElementById("campaignActionStatus");
   const campaignTabButtons = Array.from(
     document.querySelectorAll(".campaign-tab-button")
@@ -59,6 +60,8 @@
   const campaignCharactersGrid = document.getElementById("campaignCharactersGrid");
   const campaignJournalsList = document.getElementById("campaignJournalsList");
   const campaignScriptsList = document.getElementById("campaignScriptsList");
+  const campaignCreateJournalsBtn = document.getElementById("campaignCreateJournalsBtn");
+  const campaignJournalsStatusEl = document.getElementById("campaignJournalsStatus");
   const campaignScriptPromptInput = document.getElementById("campaignScriptPrompt");
   const campaignScriptGenerateBtn = document.getElementById("campaignScriptGenerateBtn");
   const campaignScriptStatusEl = document.getElementById("campaignScriptStatus");
@@ -88,6 +91,9 @@
   const vaultDetailPrompt = document.getElementById("vaultDetailPrompt");
   const vaultDetailAbilities = document.getElementById("vaultDetailAbilities");
   const vaultDetailMechanics = document.getElementById("vaultDetailMechanics");
+  const vaultDetailResources = document.getElementById("vaultDetailResources");
+  const vaultLevelUpBtn = document.getElementById("vaultLevelUpBtn");
+  const vaultLevelUpStatus = document.getElementById("vaultLevelUpStatus");
   const vaultCampaignSelect = document.getElementById("vaultCampaignSelect");
   const vaultLinkBtn = document.getElementById("vaultLinkBtn");
   const vaultLinkStatus = document.getElementById("vaultLinkStatus");
@@ -1246,6 +1252,13 @@
         campaignLeaveBtn.disabled = !canLeave;
       }
 
+      if (campaignCompleteBtn) {
+        const alreadyCompleted = campaign.status === "completed";
+        const canComplete = !isAi && isDm && isParticipant && !alreadyCompleted;
+        campaignCompleteBtn.hidden = !canComplete;
+        campaignCompleteBtn.disabled = !canComplete;
+      }
+
       if (campaignActionStatusEl) campaignActionStatusEl.textContent = "";
 
       if (campaignDialogueTranscriptEl) {
@@ -1539,10 +1552,131 @@
     if (savesArr.length) lines.push(`Saves: ${savesArr.map((s) => s.toUpperCase()).join(", ")}`);
     vaultDetailMechanics.innerHTML = lines.map((l) => `<div>${l}</div>`).join("");
 
+    // Progression + resources (system-managed; not directly editable)
+    const XP_THRESHOLD_BY_LEVEL = {
+      1: 0,
+      2: 300,
+      3: 900,
+      4: 2700,
+      5: 6500,
+      6: 14000,
+      7: 23000,
+      8: 34000,
+      9: 48000,
+      10: 64000,
+      11: 85000,
+      12: 100000,
+      13: 120000,
+      14: 140000,
+      15: 165000,
+      16: 195000,
+      17: 225000,
+      18: 265000,
+      19: 305000,
+      20: 355000,
+    };
+
+    const prog = character.progression || null;
+    const levelFromProg = prog && typeof prog.level === "number" ? prog.level : null;
+    const levelFromConcept =
+      Array.isArray(character.concept?.classes) && character.concept.classes.length
+        ? Number(character.concept.classes[0].level)
+        : 1;
+    const levelEffective = levelFromProg || (Number.isFinite(levelFromConcept) ? levelFromConcept : 1);
+
+    const xp = prog && typeof prog.xp === "number" ? prog.xp : 0;
+    const xpToNext = prog && typeof prog.xpToNextLevel === "number" ? prog.xpToNextLevel : null;
+    const xpBase = XP_THRESHOLD_BY_LEVEL[levelEffective] || 0;
+    const xpCeil = xpToNext != null ? xpToNext : (XP_THRESHOLD_BY_LEVEL[20] || 355000);
+    const xpInto = Math.max(0, xp - xpBase);
+    const xpSpan = Math.max(1, xpCeil - xpBase);
+    const xpIntoClamped = Math.max(0, Math.min(xpSpan, xpInto));
+
+    const hpMax = prog && prog.hp && typeof prog.hp.max === "number" ? prog.hp.max : (m.hitPoints != null ? m.hitPoints : 0);
+    const hpCur = prog && prog.hp && typeof prog.hp.current === "number" ? prog.hp.current : hpMax;
+    const manaMax = prog && prog.manaSlots && typeof prog.manaSlots.max === "number" ? prog.manaSlots.max : 0;
+    const manaCur = prog && prog.manaSlots && typeof prog.manaSlots.current === "number" ? prog.manaSlots.current : manaMax;
+
+    if (vaultDetailResources) {
+      const rows = [];
+      rows.push(
+        `<div class="vault-resource__row">
+          <div class="vault-resource__label">HP</div>
+          <div class="vault-resource__value">
+            <div>${hpCur} / ${hpMax}</div>
+            <progress value="${Math.max(0, Math.min(hpMax, hpCur))}" max="${Math.max(1, hpMax)}"></progress>
+          </div>
+        </div>`
+      );
+
+      if (manaMax > 0) {
+        rows.push(
+          `<div class="vault-resource__row">
+            <div class="vault-resource__label">Mana slots</div>
+            <div class="vault-resource__value">
+              <div>${manaCur} / ${manaMax}</div>
+              <progress value="${Math.max(0, Math.min(manaMax, manaCur))}" max="${Math.max(1, manaMax)}"></progress>
+            </div>
+          </div>`
+        );
+      }
+
+      rows.push(
+        `<div class="vault-resource__row">
+          <div class="vault-resource__label">XP</div>
+          <div class="vault-resource__value">
+            <div>Level ${levelEffective} · ${xp} XP</div>
+            <progress value="${xpIntoClamped}" max="${xpSpan}"></progress>
+          </div>
+        </div>`
+      );
+
+      vaultDetailResources.innerHTML = rows.join("");
+    }
+
+    if (vaultLevelUpBtn) {
+      const canLevelUp = !!(prog && prog.canLevelUp);
+      vaultLevelUpBtn.hidden = !canLevelUp;
+      vaultLevelUpBtn.disabled = !canLevelUp;
+    }
+    if (vaultLevelUpStatus) vaultLevelUpStatus.textContent = "";
+
     populateVaultCampaignSelect(character);
 
     vaultListView.hidden = true;
     vaultDetailView.hidden = false;
+  }
+
+  if (vaultLevelUpBtn) {
+    vaultLevelUpBtn.addEventListener("click", async () => {
+      const currentUser = getCurrentUser();
+      if (!currentUser || !activeCharacter) return;
+      if (vaultLevelUpStatus) vaultLevelUpStatus.textContent = "Leveling up...";
+      try {
+        const res = await fetch(`${BACKEND_BASE_URL}/api/characters/level-up`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ username: currentUser, characterId: activeCharacter.id }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || data.ok === false) {
+          throw new Error(data.error || data.message || "Failed to level up.");
+        }
+
+        const updated = data.character;
+        if (updated && updated.id) {
+          // Update cache and rerender immediately.
+          cachedVaultCharacters = cachedVaultCharacters.map((c) =>
+            c.id === updated.id ? updated : c
+          );
+          renderVaultDetail(updated);
+        }
+        if (vaultLevelUpStatus) vaultLevelUpStatus.textContent = "Level up complete.";
+      } catch (err) {
+        console.error("Failed to level up", err);
+        if (vaultLevelUpStatus) vaultLevelUpStatus.textContent = err.message || "Error leveling up.";
+      }
+    });
   }
 
   function openVaultDetail(characterId) {
@@ -1916,6 +2050,46 @@
     });
   }
 
+  if (campaignCompleteBtn) {
+    campaignCompleteBtn.addEventListener("click", () => {
+      if (!activeCampaignId || !activeCampaign) return;
+      const currentUser = getCurrentUser();
+      if (!currentUser) return;
+      const confirmed = window.confirm(
+        "Mark this campaign as completed? This will award XP to all linked characters.",
+      );
+      if (!confirmed) return;
+
+      if (campaignActionStatusEl)
+        campaignActionStatusEl.textContent = "Completing campaign and awarding XP...";
+
+      apiPost("/api/campaigns/details", {
+        action: "completeCampaign",
+        campaignId: activeCampaignId,
+        username: currentUser,
+      }).then((result) => {
+        if (!result.ok) {
+          const msg =
+            (result.data && (result.data.error || result.data.message)) ||
+            "Could not complete campaign.";
+          if (campaignActionStatusEl) campaignActionStatusEl.textContent = msg;
+          return;
+        }
+
+        const xp = result.data && typeof result.data.xpAwarded === "number"
+          ? result.data.xpAwarded
+          : null;
+        if (campaignActionStatusEl)
+          campaignActionStatusEl.textContent = xp != null
+            ? `Campaign completed. Awarded ${xp} XP.`
+            : "Campaign completed.";
+
+        // Refresh dashboard to update buttons + show any new state
+        loadCampaignDetail(activeCampaignId);
+      });
+    });
+  }
+
   if (campaignLeaveBtn) {
     campaignLeaveBtn.addEventListener("click", () => {
       if (!activeCampaignId || !activeCampaign) return;
@@ -2033,6 +2207,47 @@
           campaignScriptStatusEl.textContent =
             "Encounter script added to your campaign.";
         if (campaignScriptPromptInput) campaignScriptPromptInput.value = "";
+      });
+    });
+  }
+
+  if (campaignCreateJournalsBtn) {
+    campaignCreateJournalsBtn.addEventListener("click", () => {
+      if (!activeCampaignId || !activeCampaign) return;
+      const currentUser = getCurrentUser();
+      if (!currentUser) {
+        if (campaignJournalsStatusEl)
+          campaignJournalsStatusEl.textContent = "You need to be logged in to create journals.";
+        return;
+      }
+
+      if (campaignJournalsStatusEl)
+        campaignJournalsStatusEl.textContent = "Creating journals for each character...";
+
+      apiPost("/api/campaigns/details", {
+        action: "createPartyJournals",
+        campaignId: activeCampaignId,
+        username: currentUser,
+      }).then((result) => {
+        if (!result.ok) {
+          const msg =
+            (result.data && (result.data.error || result.data.message)) ||
+            "Could not create journals.";
+          if (campaignJournalsStatusEl) campaignJournalsStatusEl.textContent = msg;
+          return;
+        }
+
+        const data = result.data || {};
+        const journals = Array.isArray(data.journals)
+          ? data.journals
+          : data.journal
+          ? [data.journal]
+          : [];
+
+        renderCampaignJournals(journals);
+        if (campaignJournalsStatusEl)
+          campaignJournalsStatusEl.textContent =
+            journals.length ? "Journals created." : "No journals were created.";
       });
     });
   }

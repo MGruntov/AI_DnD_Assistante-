@@ -1107,6 +1107,47 @@ body {
   margin: 0.1rem 0;
 }
 
+.vault-resources {
+  margin-top: 0.6rem;
+  padding-top: 0.6rem;
+  border-top: 1px solid rgba(148, 163, 184, 0.25);
+  display: grid;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+  color: #d1d5db;
+}
+
+.vault-resource__row {
+  display: grid;
+  grid-template-columns: 110px 1fr;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.vault-resource__label {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.vault-resource__value {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.vault-resource__value progress {
+  width: 100%;
+  height: 10px;
+}
+
+.vault-resources__actions {
+  margin-top: 0.45rem;
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
 .vault-link {
   margin-top: 0.5rem;
   padding-top: 0.5rem;

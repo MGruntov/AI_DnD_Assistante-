@@ -287,6 +287,9 @@ type Campaign = {
 	scriptIds?: string[];
 	linkedCharacterIds?: string[];
 	conversationTranscript?: string;
+	status?: 'active' | 'completed';
+	completedAt?: string;
+	xpAwardedToCharacterIds?: string[];
 	// Optional AI-DM fields
 	mode?: 'ai-solo' | 'standard';
 	adventureId?: string;
@@ -332,6 +335,16 @@ type Character = {
 			leveledSpells: string[];
 		};
 	};
+	// Progression is system-managed (never directly edited by the user).
+	progression?: {
+		level: number;
+		xp: number;
+		xpToNextLevel: number | null;
+		canLevelUp: boolean;
+		hp: { current: number; max: number };
+		manaSlots: { current: number; max: number };
+		updatedAt: string;
+	};
 	portraitUrl: string | null;
 	validation: {
 		isValid: boolean;
@@ -341,6 +354,135 @@ type Character = {
 	createdAt: string;
 	updatedAt: string;
 };
+
+const MAX_CHARACTER_LEVEL = 20;
+
+// D&D 5e XP thresholds (cumulative). Key is the level number.
+const XP_THRESHOLD_BY_LEVEL: Record<number, number> = {
+	1: 0,
+	2: 300,
+	3: 900,
+	4: 2700,
+	5: 6500,
+	6: 14000,
+	7: 23000,
+	8: 34000,
+	9: 48000,
+	10: 64000,
+	11: 85000,
+	12: 100000,
+	13: 120000,
+	14: 140000,
+	15: 165000,
+	16: 195000,
+	17: 225000,
+	18: 265000,
+	19: 305000,
+	20: 355000,
+};
+
+function clampLevel(level: number): number {
+	if (!Number.isFinite(level)) return 1;
+	return Math.max(1, Math.min(MAX_CHARACTER_LEVEL, Math.floor(level)));
+}
+
+function xpThresholdForLevel(level: number): number {
+	const lvl = clampLevel(level);
+	return XP_THRESHOLD_BY_LEVEL[lvl] ?? 0;
+}
+
+function xpThresholdForNextLevel(level: number): number | null {
+	const lvl = clampLevel(level);
+	if (lvl >= MAX_CHARACTER_LEVEL) return null;
+	return XP_THRESHOLD_BY_LEVEL[lvl + 1] ?? null;
+}
+
+function computeProficiencyBonusForLevel(totalLevel: number): number {
+	const lvl = clampLevel(totalLevel);
+	return 2 + Math.floor((lvl - 1) / 4);
+}
+
+function getTotalCharacterLevel(character: Character): number {
+	const classes = Array.isArray(character.concept?.classes) ? character.concept.classes : [];
+	const sum = classes.reduce((acc, c) => acc + (Number.isFinite(c?.level) ? Number(c.level) : 0), 0);
+	return clampLevel(sum || 1);
+}
+
+function computeManaSlotsMax(character: Character, totalLevel: number): number {
+	const castingStat = character.mechanics?.spells?.castingStat;
+	if (!castingStat) return 0;
+	const lvl = clampLevel(totalLevel);
+	// Simplified "mana slots" pool (not the full slot table): grows steadily.
+	return Math.min(24, Math.max(2, lvl * 2));
+}
+
+function ensureCharacterProgression(character: Character): Character {
+	const now = new Date().toISOString();
+	const totalLevel = getTotalCharacterLevel(character);
+	const xp = Number.isFinite(character.progression?.xp) ? Number(character.progression?.xp) : 0;
+	const hpMax = Number.isFinite(character.mechanics?.hitPoints) ? Number(character.mechanics.hitPoints) : 1;
+	const manaMax = computeManaSlotsMax(character, totalLevel);
+	const xpToNext = xpThresholdForNextLevel(totalLevel);
+	const canLevelUp = xpToNext != null ? xp >= xpToNext : false;
+
+	return {
+		...character,
+		progression: {
+			level: totalLevel,
+			xp,
+			xpToNextLevel: xpToNext,
+			canLevelUp,
+			hp: {
+				current: Number.isFinite(character.progression?.hp?.current)
+					? Math.max(0, Number(character.progression!.hp.current))
+					: hpMax,
+				max: hpMax,
+			},
+			manaSlots: {
+				current: Number.isFinite(character.progression?.manaSlots?.current)
+					? Math.max(0, Math.min(manaMax, Number(character.progression!.manaSlots.current)))
+					: manaMax,
+				max: manaMax,
+			},
+			updatedAt: now,
+		},
+	};
+}
+
+function xpAwardForCampaign(campaign: Campaign): number {
+	if (campaign.adventureId) {
+		const adv = ADVENTURES.find((a) => a.id === campaign.adventureId);
+		if (adv?.difficulty === 'Easy') return 250;
+		if (adv?.difficulty === 'Hard') return 600;
+		return 400;
+	}
+	return 300;
+}
+
+async function awardXpToCharacter(env: Env, characterId: string, xpAmount: number): Promise<Character | null> {
+	const stored = await env.ADA_DATA.get(`character:${characterId}`);
+	if (!stored) return null;
+	let character: Character;
+	try {
+		character = JSON.parse(stored) as Character;
+	} catch {
+		return null;
+	}
+	character = ensureCharacterProgression(character);
+	const currentXp = Number.isFinite(character.progression?.xp) ? Number(character.progression!.xp) : 0;
+	const updated: Character = {
+		...character,
+		progression: {
+			...character.progression!,
+			xp: Math.max(0, currentXp + Math.max(0, xpAmount)),
+			updatedAt: new Date().toISOString(),
+		},
+		updatedAt: new Date().toISOString(),
+	};
+	const normalized = ensureCharacterProgression(updated);
+	await env.ADA_DATA.put(`character:${characterId}`, JSON.stringify(normalized));
+	return normalized;
+}
 
 type JournalEntry = {
 	id: string;
@@ -621,13 +763,15 @@ async function handleAIDMResolveCheck(request: Request, env: Env, origin: string
 		advantage: null as 'none' | 'advantage' | 'disadvantage' | null,
 		progress: null as 'stay' | 'advance' | 'complete' | 'fail' | null,
 	};
+	let completionJustOccurred = false;
 	try {
 		const rawResponse = await callAIDungeonMaster(env, adventure, session, character, playerResultText);
 		const parsed = parseAIDMResponse(rawResponse);
 		dmNarrative = parsed.narrative;
 		dmMechanics = parsed.mechanics;
 		// Apply DM-directed progress after narration.
-		applyProgressDirective(session, adventure, parsed.mechanics.progress);
+		const progressResult = applyProgressDirective(session, adventure, parsed.mechanics.progress);
+		completionJustOccurred = progressResult.statusBefore !== 'completed' && session.status === 'completed';
 		// Store next pending check only if it's a real check.
 		const nextCheck = parsed.mechanics.checkDescription;
 		const nextDc = typeof parsed.mechanics.dc === 'number' ? parsed.mechanics.dc : 0;
@@ -649,6 +793,15 @@ async function handleAIDMResolveCheck(request: Request, env: Env, origin: string
 			? 'You steady your breath and push onward, the momentary tension easing as the path opens ahead.'
 			: 'A misstep sends a jolt of panic through you—something shifts in the brush, and the woods feel suddenly closer.';
 		session.pendingCheck = null;
+	}
+
+	if (completionJustOccurred) {
+		try {
+			const xpAmount = xpAwardForCampaign(campaign);
+			await awardXpToCharacter(env, session.characterId, xpAmount);
+		} catch (err) {
+			console.error('Failed to award XP on completion (resolve-check)', err);
+		}
 	}
 
 	session.log.push({ role: 'dm', text: dmNarrative, timestamp: new Date().toISOString() });
@@ -1605,7 +1758,7 @@ async function handleAIDMTurn(request: Request, env: Env, origin: string | null)
 		parsedNarrative = parsed.narrative;
 		parsedMechanics = parsed.mechanics;
 		// Apply DM-directed progress (checkpoint advances/completion/failure).
-		applyProgressDirective(session, adventure, parsed.mechanics.progress);
+		const progressResult = applyProgressDirective(session, adventure, parsed.mechanics.progress);
 		// Remember the latest requested check so it can be resolved separately.
 		const nextCheck = parsed.mechanics.checkDescription;
 		const nextDc = typeof parsed.mechanics.dc === 'number' ? parsed.mechanics.dc : 0;
@@ -1620,6 +1773,16 @@ async function handleAIDMTurn(request: Request, env: Env, origin: string | null)
 			};
 		} else {
 			session.pendingCheck = null;
+		}
+
+		// Award XP only on the transition into completed.
+		if (progressResult.statusBefore !== 'completed' && session.status === 'completed') {
+			const xpAmount = xpAwardForCampaign(campaign);
+			try {
+				await awardXpToCharacter(env, session.characterId, xpAmount);
+			} catch (err) {
+				console.error('Failed to award XP on completion', err);
+			}
 		}
 	} catch (err) {
 		console.error('AI-DM call failed', err);
@@ -1758,7 +1921,7 @@ async function handleGetCampaignDetails(request: Request, env: Env, origin: stri
 				const isLinkedByCharacter = Array.isArray(parsed.campaignIds) && parsed.campaignIds.includes(id);
 				const isLinkedByCampaign = Array.isArray(campaign.linkedCharacterIds) && campaign.linkedCharacterIds.includes(parsed.id);
 				if (parsed && parsed.id && (isLinkedByCharacter || isLinkedByCampaign)) {
-					characters.push(parsed);
+					characters.push(ensureCharacterProgression(parsed));
 				}
 			} catch {
 				// ignore malformed
@@ -1778,6 +1941,96 @@ function basicPolishJournal(raw: string): string {
 		rest = `${rest}.`;
 	}
 	return `${first}${rest}`;
+}
+
+async function generateCharacterJournalText(
+	env: Env,
+	params: {
+		campaignName: string;
+		characterName: string;
+		characterConcept: string;
+		rawTranscript: string;
+	},
+): Promise<string> {
+	const transcript = params.rawTranscript.trim();
+	if (!transcript) return '';
+
+	// If no AI key is available (local dev, misconfig, etc.), fall back to a simple
+	// first-person summary so the feature still works.
+	const apiKey = typeof env.GEMINI_API_KEY === 'string' ? env.GEMINI_API_KEY.trim() : '';
+	if (!apiKey) {
+		const seed = basicPolishJournal(transcript);
+		return `I keep turning this over in my mind. ${seed}`;
+	}
+
+	const resolved = await resolveGeminiModelName(apiKey);
+	const url =
+		`https://generativelanguage.googleapis.com/${encodeURIComponent(GEMINI_API_VERSION)}/${resolved.modelName}:generateContent` +
+		`?key=${encodeURIComponent(apiKey)}`;
+
+	const systemPrompt = [
+		'You are a D&D character writing a private journal entry.',
+		'Write in first person (I/me/my). Stay in character and keep it immersive.',
+		'Never mention being an AI/model/system.',
+		'Keep it to 2–5 short paragraphs. No headings, no bullet points.',
+		'Focus on emotions, sensory details, and what the character decided to do.',
+		'It must feel like the character personally experienced these events.',
+	].join('\n');
+
+	const userPrompt = [
+		`Campaign: ${params.campaignName}`,
+		`Character: ${params.characterName}`,
+		params.characterConcept ? `Character concept: ${params.characterConcept}` : '',
+		'',
+		'Here is the session transcript. Turn it into a private journal entry from this character\'s perspective:',
+		transcript,
+	].filter(Boolean).join('\n');
+
+	const body = JSON.stringify({
+		systemInstruction: {
+			parts: [{ text: systemPrompt }],
+		},
+		contents: [
+			{
+				role: 'user',
+				parts: [{ text: userPrompt }],
+			},
+		],
+		generationConfig: {
+			temperature: 0.7,
+			maxOutputTokens: 500,
+			// Journals shouldn't spend tokens "thinking".
+			thinkingConfig: { thinkingBudget: 0 },
+		},
+	});
+
+	const res = await fetch(url, {
+		method: 'POST',
+		headers: { 'content-type': 'application/json; charset=utf-8' },
+		body,
+	});
+
+	if (!res.ok) {
+		let detail = '';
+		try {
+			detail = (await res.text()).slice(0, 300);
+		} catch {
+			// ignore
+		}
+		throw new Error(`Gemini journal request failed with status ${res.status}${detail ? `: ${detail}` : ''}`);
+	}
+
+	let data: any;
+	try {
+		data = await res.json();
+	} catch {
+		throw new Error('Failed to parse Gemini journal response JSON');
+	}
+
+	const parts: string[] =
+		data?.candidates?.[0]?.content?.parts?.map((p: any) => (p && typeof p.text === 'string' ? p.text : '')) || [];
+	const text = parts.join('').trim();
+	return text || '';
 }
 
 function buildEncounterScriptBody(prompt: string, campaign: Campaign | null): string {
@@ -1939,6 +2192,110 @@ async function handlePostCampaignDetails(request: Request, env: Env, origin: str
 		return jsonResponse({ ok: true, campaign, journal: entry }, { status: 201 }, origin);
 	}
 
+	if (action === 'createPartyJournals') {
+		const username = String(body?.username ?? body?.user ?? '').trim();
+		if (!username) {
+			return errorResponse('username is required for createPartyJournals', 400, origin);
+		}
+
+		const isParticipant =
+			campaign.dm === username ||
+			(Array.isArray(campaign.participants) && campaign.participants.includes(username));
+		if (!isParticipant) {
+			return errorResponse('You are not a participant in this campaign', 403, origin);
+		}
+
+		const rawTranscript = typeof campaign.conversationTranscript === 'string'
+			? campaign.conversationTranscript.trim()
+			: '';
+		if (!rawTranscript) {
+			return errorResponse('No campaign transcript found. Record dialogue first, then create journals.', 400, origin);
+		}
+
+		const linkedIds = Array.isArray(campaign.linkedCharacterIds) ? campaign.linkedCharacterIds : [];
+		if (!linkedIds.length) {
+			return errorResponse('No characters are linked to this campaign yet.', 400, origin);
+		}
+
+		const created: JournalEntry[] = [];
+		for (const characterId of linkedIds) {
+			const storedCharacter = await env.ADA_DATA.get(`character:${characterId}`);
+			if (!storedCharacter) continue;
+			let character: Character | null = null;
+			try {
+				character = JSON.parse(storedCharacter) as Character;
+			} catch {
+				character = null;
+			}
+			if (!character) continue;
+
+			const characterName = character.name && String(character.name).trim()
+				? String(character.name).trim()
+				: 'Unknown adventurer';
+			const characterConcept = [
+				character.concept?.race ? `Race: ${character.concept.race}` : '',
+				character.concept?.classSummary ? `Class: ${character.concept.classSummary}` : '',
+				character.concept?.background ? `Background: ${character.concept.background}` : '',
+			].filter(Boolean).join(' | ');
+
+			let polishedText = '';
+			try {
+				polishedText = await generateCharacterJournalText(env, {
+					campaignName: campaign.name || 'Campaign',
+					characterName,
+					characterConcept,
+					rawTranscript,
+				});
+			} catch (err) {
+				console.error('createPartyJournals: AI journal generation failed', err);
+				polishedText = `I can still hear the echoes of it all. ${basicPolishJournal(rawTranscript)}`;
+			}
+
+			// Ensure a non-empty entry.
+			if (!polishedText || !polishedText.trim()) {
+				polishedText = `I can still hear the echoes of it all. ${basicPolishJournal(rawTranscript)}`;
+			}
+
+			const id = crypto.randomUUID();
+			const createdAt = new Date().toISOString();
+			const entry: JournalEntry = {
+				id,
+				campaignId,
+				author: characterName,
+				createdAt,
+				rawTranscript,
+				polishedText,
+			};
+
+			await env.ADA_DATA.put(`journal:${id}`, JSON.stringify(entry));
+			if (!Array.isArray(campaign.journalEntryIds)) campaign.journalEntryIds = [];
+			if (!campaign.journalEntryIds.includes(id)) campaign.journalEntryIds.push(id);
+			created.push(entry);
+		}
+
+		await env.ADA_DATA.put(`campaign:${campaignId}`, JSON.stringify(campaign));
+
+		// Return all journals for convenience
+		const journals: JournalEntry[] = [];
+		const journalIds = Array.isArray(campaign.journalEntryIds) ? campaign.journalEntryIds : [];
+		for (const journalId of journalIds) {
+			const stored = await env.ADA_DATA.get(`journal:${journalId}`);
+			if (!stored) continue;
+			try {
+				const parsed = JSON.parse(stored) as JournalEntry;
+				if (parsed && parsed.id) journals.push(parsed);
+			} catch {
+				// ignore
+			}
+		}
+
+		return jsonResponse(
+			{ ok: true, campaign, createdCount: created.length, created, journals },
+			{ status: 201 },
+			origin,
+		);
+	}
+
 	if (action === 'addScript') {
 		const author = String(body?.author ?? '').trim();
 		const prompt = String(body?.prompt ?? '').trim();
@@ -2040,6 +2397,51 @@ async function handlePostCampaignDetails(request: Request, env: Env, origin: str
 		campaign.conversationTranscript = transcript;
 		await env.ADA_DATA.put(`campaign:${campaignId}`, JSON.stringify(campaign));
 		return jsonResponse({ ok: true }, { status: 200 }, origin);
+	}
+
+	if (action === 'completeCampaign') {
+		const username = String(body?.username ?? '').trim();
+		if (!username) {
+			return errorResponse('username is required for completeCampaign', 400, origin);
+		}
+		// Only the DM can mark a (non-AI) campaign as completed.
+		if (campaign.dm !== username) {
+			return errorResponse('Only the DM can complete this campaign', 403, origin);
+		}
+		if (campaign.dmIsAI || campaign.mode === 'ai-solo') {
+			return errorResponse('AI-driven solo campaigns complete automatically', 400, origin);
+		}
+
+		if (campaign.status === 'completed') {
+			return errorResponse('Campaign is already completed', 400, origin);
+		}
+
+		const linkedIds = Array.isArray(campaign.linkedCharacterIds) ? campaign.linkedCharacterIds : [];
+		if (!linkedIds.length) {
+			return errorResponse('No linked characters to award XP to', 400, origin);
+		}
+
+		const xpAmount = xpAwardForCampaign(campaign);
+		const awardedTo: string[] = [];
+		for (const charId of linkedIds) {
+			try {
+				const updated = await awardXpToCharacter(env, charId, xpAmount);
+				if (updated) awardedTo.push(charId);
+			} catch (err) {
+				console.error('Failed to award XP during completeCampaign', err);
+			}
+		}
+
+		campaign.status = 'completed';
+		campaign.completedAt = new Date().toISOString();
+		campaign.xpAwardedToCharacterIds = awardedTo;
+		await env.ADA_DATA.put(`campaign:${campaignId}`, JSON.stringify(campaign));
+
+		return jsonResponse(
+			{ ok: true, campaign, xpAwarded: xpAmount, awardedTo },
+			{ status: 200 },
+			origin,
+		);
 	}
 
 	if (action === 'deleteCampaign') {
@@ -2421,7 +2823,7 @@ function forgeCharacterFromNarrative(owner: string, narrativeText: string, portr
 		updatedAt: now,
 	};
 
-	return character;
+	return ensureCharacterProgression(character);
 }
 
 async function handleForgeCharacter(request: Request, env: Env, origin: string | null): Promise<Response> {
@@ -2651,13 +3053,89 @@ async function handleListCharacters(request: Request, env: Env, origin: string |
 		if (!stored) continue;
 		try {
 			const parsed = JSON.parse(stored) as Character;
-			if (parsed && parsed.id) characters.push(parsed);
+			if (parsed && parsed.id) characters.push(ensureCharacterProgression(parsed));
 		} catch {
 			// ignore malformed
 		}
 	}
 
 	return jsonResponse({ ok: true, characters }, undefined, origin);
+}
+
+async function handleCharacterLevelUp(request: Request, env: Env, origin: string | null): Promise<Response> {
+	let body: any;
+	try {
+		body = await request.json();
+	} catch {
+		return errorResponse('Invalid JSON body', 400, origin);
+	}
+
+	const username = String(body?.username ?? '').trim();
+	const characterId = String(body?.characterId ?? '').trim();
+	if (!username || !characterId) {
+		return errorResponse('username and characterId are required', 400, origin);
+	}
+
+	const stored = await env.ADA_DATA.get(`character:${characterId}`);
+	if (!stored) {
+		return errorResponse('Character not found', 404, origin);
+	}
+
+	let character: Character;
+	try {
+		character = JSON.parse(stored) as Character;
+	} catch {
+		return errorResponse('Corrupted character record', 500, origin);
+	}
+
+	if (character.owner !== username) {
+		return errorResponse('You do not own this character', 403, origin);
+	}
+
+	character = ensureCharacterProgression(character);
+	if (!character.progression?.canLevelUp) {
+		return errorResponse('Not enough XP to level up yet', 400, origin);
+	}
+	if (character.progression.level >= MAX_CHARACTER_LEVEL) {
+		return errorResponse('Character is already at max level', 400, origin);
+	}
+
+	// Level up by increasing the first class level (simple single-class flow for now).
+	if (!Array.isArray(character.concept?.classes) || !character.concept.classes.length) {
+		character.concept.classes = [{ name: 'Fighter', level: 1 }];
+	}
+	character.concept.classes[0].level = (Number.isFinite(character.concept.classes[0].level)
+		? Number(character.concept.classes[0].level)
+		: 1) + 1;
+
+	const primaryClass = character.concept.classes[0].name || 'Fighter';
+	const totalLevel = getTotalCharacterLevel(character);
+	character.mechanics.proficiencyBonus = computeProficiencyBonusForLevel(totalLevel);
+
+	// Increase max HP: average hit die per level + CON modifier (minimum +1 per level).
+	const conScore = Number.isFinite(character.mechanics?.abilityScores?.con)
+		? Number(character.mechanics.abilityScores.con)
+		: 10;
+	const conMod = abilityModifier(conScore);
+	const hitDie = hitDieForClass(primaryClass);
+	const avgPerLevel = Math.floor(hitDie / 2) + 1;
+	const hpGain = Math.max(1, avgPerLevel + conMod);
+	character.mechanics.hitPoints = Math.max(1, Number(character.mechanics.hitPoints || 1) + hpGain);
+
+	// Recompute class summaries.
+	const rebuilt = buildClassAndLevelSummary(character.concept.classes);
+	character.concept.classSummary = rebuilt.classSummary;
+	character.concept.levelSummary = rebuilt.levelSummary;
+
+	// Normalize progression resources and refill HP/mana on level-up.
+	character = ensureCharacterProgression(character);
+	character.progression!.hp.current = character.progression!.hp.max;
+	character.progression!.manaSlots.current = character.progression!.manaSlots.max;
+	character.updatedAt = new Date().toISOString();
+	character.progression!.updatedAt = new Date().toISOString();
+
+	await env.ADA_DATA.put(`character:${characterId}`, JSON.stringify(character));
+	return jsonResponse({ ok: true, character }, { status: 200 }, origin);
 }
 
 /**
@@ -2819,6 +3297,10 @@ export default {
 
 		if (pathname === '/api/characters/delete' && method === 'POST') {
 			return handleDeleteCharacter(request, env, origin);
+		}
+
+		if (pathname === '/api/characters/level-up' && method === 'POST') {
+			return handleCharacterLevelUp(request, env, origin);
 		}
 
 		if (pathname === '/api/characters' && method === 'GET') {

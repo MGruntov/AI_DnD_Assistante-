@@ -14,6 +14,9 @@
 type Env = {
 	ADA_DATA: KVNamespace;
 	GEMINI_API_KEY: string;
+	// Non-secret toggle for returning debug fields in API responses.
+	// Set via Wrangler vars (not secrets), e.g. ADA_DEBUG="1".
+	ADA_DEBUG?: string;
 };
 
 // Gemini (Google Generative Language API) uses v1beta endpoints for generateContent and model listing.
@@ -36,6 +39,23 @@ let geminiResolvedModelCache:
 		expiresAt: number;
 	}
 	| null = null;
+
+function isDebugEnabled(env: Env): boolean {
+	const v = String(env.ADA_DEBUG ?? '').trim().toLowerCase();
+	return v === '1' || v === 'true' || v === 'yes' || v === 'on';
+}
+
+function getGeminiDebugSnapshot(): {
+	apiVersion: string;
+	model: string | null;
+	cacheExpiresAt: number | null;
+} {
+	return {
+		apiVersion: GEMINI_API_VERSION,
+		model: geminiResolvedModelCache?.modelName ?? null,
+		cacheExpiresAt: geminiResolvedModelCache?.expiresAt ?? null,
+	};
+}
 
 function normalizeGeminiModelName(name: string): string {
 	const trimmed = String(name || '').trim();
@@ -387,6 +407,282 @@ type AIDMSessionState = {
 	} | null;
 };
 
+function abilityModifier(score: number): number {
+	// D&D 5e modifier: floor((score - 10) / 2)
+	return Math.floor((score - 10) / 2);
+}
+
+function normalizeAbilityKey(ability: string | null): keyof Character['mechanics']['abilityScores'] | null {
+	const a = String(ability || '').trim().toUpperCase();
+	if (a === 'STR') return 'str';
+	if (a === 'DEX') return 'dex';
+	if (a === 'CON') return 'con';
+	if (a === 'INT') return 'int';
+	if (a === 'WIS') return 'wis';
+	if (a === 'CHA') return 'cha';
+	return null;
+}
+
+function rollD20(): number {
+	// Cryptographically strong-ish for Workers.
+	const bytes = new Uint32Array(1);
+	crypto.getRandomValues(bytes);
+	return (bytes[0] % 20) + 1;
+}
+
+function computeCheckTotal(character: Character, ability: string | null, skill: string | null, d20: number): {
+	modifier: number;
+	proficiency: number;
+	total: number;
+} {
+	const abilityKey = normalizeAbilityKey(ability);
+	const scores = character.mechanics?.abilityScores;
+	const score = abilityKey && scores ? scores[abilityKey] : 10;
+	const mod = abilityModifier(score);
+
+	// If the session requested a skill and the character is trained in it, add proficiency bonus.
+	const skillName = String(skill || '').trim().toLowerCase();
+	const trainedSkills = Array.isArray(character.mechanics?.skills)
+		? character.mechanics.skills.map((s) => String(s).trim().toLowerCase())
+		: [];
+	const isTrained = !!skillName && trainedSkills.includes(skillName);
+	let profBonus = isTrained && typeof character.mechanics?.proficiencyBonus === 'number'
+		? character.mechanics.proficiencyBonus
+		: 0;
+
+	// If no skill is specified, this may be a saving throw. If the character is proficient
+	// in that saving throw, add proficiency bonus.
+	if ((!skillName || skillName === 'none') && profBonus === 0) {
+		const saves = Array.isArray(character.mechanics?.savingThrows)
+			? character.mechanics.savingThrows.map((s) => String(s).trim().toLowerCase())
+			: [];
+		const aKey = abilityKey ? String(abilityKey).toLowerCase() : '';
+		const isSaveProficient = !!aKey && saves.includes(aKey);
+		if (isSaveProficient && typeof character.mechanics?.proficiencyBonus === 'number') {
+			profBonus = character.mechanics.proficiencyBonus;
+		}
+	}
+	return { modifier: mod, proficiency: profBonus, total: d20 + mod + profBonus };
+}
+
+function applyProgressDirective(
+	session: AIDMSessionState,
+	adventure: AdventureTemplate,
+	progress: 'stay' | 'advance' | 'complete' | 'fail' | null,
+): {
+	changed: boolean;
+	checkpointIndexBefore: number;
+	checkpointIndexAfter: number;
+	statusBefore: AIDMSessionState['status'];
+	statusAfter: AIDMSessionState['status'];
+} {
+	const checkpointIndexBefore = session.checkpointIndex;
+	const statusBefore = session.status;
+	let changed = false;
+
+	if (progress === 'advance') {
+		const maxIdx = adventure.checkpoints.length - 1;
+		if (session.checkpointIndex < maxIdx) {
+			session.checkpointIndex += 1;
+			changed = true;
+		}
+	}
+	if (progress === 'complete') {
+		session.status = 'completed';
+		changed = true;
+	}
+	if (progress === 'fail') {
+		session.status = 'failed';
+		changed = true;
+	}
+
+	return {
+		changed,
+		checkpointIndexBefore,
+		checkpointIndexAfter: session.checkpointIndex,
+		statusBefore,
+		statusAfter: session.status,
+	};
+}
+
+async function handleAIDMResolveCheck(request: Request, env: Env, origin: string | null): Promise<Response> {
+	let body: any;
+	try {
+		body = await request.json();
+	} catch {
+		return errorResponse('Invalid JSON body', 400, origin);
+	}
+
+	const username = String(body?.username ?? '').trim();
+	const campaignId = String(body?.campaignId ?? '').trim();
+	// Client may provide explicit dice for transparency, otherwise server rolls.
+	const roll1 = Number.isFinite(Number(body?.roll1)) ? Number(body.roll1) : null;
+	const roll2 = Number.isFinite(Number(body?.roll2)) ? Number(body.roll2) : null;
+
+	if (!username || !campaignId) {
+		return errorResponse('username and campaignId are required', 400, origin);
+	}
+
+	const storedCampaign = await env.ADA_DATA.get(`campaign:${campaignId}`);
+	if (!storedCampaign) {
+		return errorResponse('Campaign not found', 404, origin);
+	}
+	let campaign: Campaign;
+	try {
+		campaign = JSON.parse(storedCampaign) as Campaign;
+	} catch {
+		return errorResponse('Corrupted campaign record', 500, origin);
+	}
+
+	const isParticipant =
+		campaign.dm === username ||
+		(Array.isArray(campaign.participants) && campaign.participants.includes(username));
+	if (!isParticipant) {
+		return errorResponse('You are not a participant in this campaign', 403, origin);
+	}
+	if (!campaign.dmIsAI && campaign.mode !== 'ai-solo') {
+		return errorResponse('This campaign is not configured for AI-DM mode', 400, origin);
+	}
+
+	const sessionKey = `aiSession:${campaignId}`;
+	const storedSession = await env.ADA_DATA.get(sessionKey);
+	if (!storedSession) {
+		return errorResponse('AI-DM session not found', 404, origin);
+	}
+	let session: AIDMSessionState;
+	try {
+		session = JSON.parse(storedSession) as AIDMSessionState;
+	} catch {
+		return errorResponse('Corrupted AI-DM session record', 500, origin);
+	}
+
+	if (!session.pendingCheck || !session.pendingCheck.checkDescription) {
+		return errorResponse('No pending check to resolve', 400, origin);
+	}
+
+	const storedCharacter = await env.ADA_DATA.get(`character:${session.characterId}`);
+	if (!storedCharacter) {
+		return errorResponse('Linked character not found', 500, origin);
+	}
+	let character: Character;
+	try {
+		character = JSON.parse(storedCharacter) as Character;
+	} catch {
+		return errorResponse('Corrupted character record', 500, origin);
+	}
+	if (character.owner !== username && campaign.dm !== username) {
+		return errorResponse('You are not allowed to control this AI-DM session', 403, origin);
+	}
+
+	const adventureId = campaign.adventureId;
+	const adventure = ADVENTURES.find((a) => a.id === adventureId);
+	if (!adventure) {
+		return errorResponse('Adventure configuration not found for this campaign', 500, origin);
+	}
+
+	const dc = typeof session.pendingCheck.dc === 'number' ? session.pendingCheck.dc : 0;
+	const adv = session.pendingCheck.advantage || 'none';
+
+	const d1 = roll1 != null ? Math.max(1, Math.min(20, Math.floor(roll1))) : rollD20();
+	const d2 = roll2 != null ? Math.max(1, Math.min(20, Math.floor(roll2))) : rollD20();
+	let chosenD20 = d1;
+	if (adv === 'advantage') chosenD20 = Math.max(d1, d2);
+	if (adv === 'disadvantage') chosenD20 = Math.min(d1, d2);
+
+	const computed = computeCheckTotal(character, session.pendingCheck.ability, session.pendingCheck.skill, chosenD20);
+	const success = computed.total >= dc;
+
+	// Log the check result as a player turn so the AI can react.
+	const checkLine = session.pendingCheck.checkDescription || 'check';
+	const ability = session.pendingCheck.ability || 'none';
+	const skill = session.pendingCheck.skill || 'none';
+	const playerResultText =
+		`Check result: ${checkLine}. ` +
+		`Rolls: ${d1}${adv !== 'none' ? ` and ${d2} (${adv})` : ''}. ` +
+		`Used: ${ability}${skill && skill !== 'none' ? ` (${skill})` : ''}. ` +
+		`Total: ${computed.total} (d20 ${chosenD20} + mod ${computed.modifier} + prof ${computed.proficiency}). ` +
+		`DC ${dc}. Outcome: ${success ? 'SUCCESS' : 'FAILURE'}.`;
+
+	const now = new Date().toISOString();
+	session.log.push({ role: 'player', text: playerResultText, timestamp: now });
+	trimSessionLog(session);
+	// Clear pending check before asking DM to continue.
+	session.pendingCheck = null;
+
+	// Progress is DM-controlled via the MECHANICS.progress field (applied after the follow-up narration).
+	const beforeCheckpointIndex = session.checkpointIndex;
+
+	let dmNarrative: string;
+	let dmMechanics = {
+		checkDescription: null as string | null,
+		dc: null as number | null,
+		ability: null as string | null,
+		skill: null as string | null,
+		advantage: null as 'none' | 'advantage' | 'disadvantage' | null,
+		progress: null as 'stay' | 'advance' | 'complete' | 'fail' | null,
+	};
+	try {
+		const rawResponse = await callAIDungeonMaster(env, adventure, session, character, playerResultText);
+		const parsed = parseAIDMResponse(rawResponse);
+		dmNarrative = parsed.narrative;
+		dmMechanics = parsed.mechanics;
+		// Apply DM-directed progress after narration.
+		applyProgressDirective(session, adventure, parsed.mechanics.progress);
+		// Store next pending check only if it's a real check.
+		const nextCheck = parsed.mechanics.checkDescription;
+		const nextDc = typeof parsed.mechanics.dc === 'number' ? parsed.mechanics.dc : 0;
+		const nextAbility = (parsed.mechanics.ability || '').toUpperCase();
+		if (nextCheck && nextCheck.toLowerCase() !== 'none' && nextDc > 0 && nextAbility !== 'NONE') {
+			session.pendingCheck = {
+				checkDescription: parsed.mechanics.checkDescription,
+				dc: parsed.mechanics.dc,
+				ability: parsed.mechanics.ability,
+				skill: parsed.mechanics.skill,
+				advantage: parsed.mechanics.advantage,
+			};
+		} else {
+			session.pendingCheck = null;
+		}
+	} catch (err) {
+		console.error('AI-DM follow-up after check failed', err);
+		dmNarrative = success
+			? 'You steady your breath and push onward, the momentary tension easing as the path opens ahead.'
+			: 'A misstep sends a jolt of panic through you—something shifts in the brush, and the woods feel suddenly closer.';
+		session.pendingCheck = null;
+	}
+
+	session.log.push({ role: 'dm', text: dmNarrative, timestamp: new Date().toISOString() });
+	trimSessionLog(session);
+	await env.ADA_DATA.put(sessionKey, JSON.stringify(session));
+
+	return jsonResponse(
+		{
+			ok: true,
+			result: {
+				rolls: { roll1: d1, roll2: d2, chosen: chosenD20, mode: adv },
+				modifier: computed.modifier,
+				proficiency: computed.proficiency,
+				total: computed.total,
+				dc,
+				success,
+				checkpointIndexBefore: beforeCheckpointIndex,
+				checkpointIndexAfter: session.checkpointIndex,
+			},
+			narrative: dmNarrative,
+			mechanics: dmMechanics,
+			...(isDebugEnabled(env)
+				? {
+					debug: {
+						gemini: getGeminiDebugSnapshot(),
+					},
+				}
+				: {}),
+		},
+		{ status: 200 },
+		origin,
+	);
+}
+
 async function handleHealth(origin: string | null): Promise<Response> {
 	return jsonResponse({ status: 'ok' }, undefined, origin);
 }
@@ -623,11 +919,15 @@ function buildAIDMSystemPrompt(): string {
 		'- check: a short description of any roll the player should make, or "none"',
 		'- dc: the DC for the check, or 0 if none',
 		'- ability: STR, DEX, CON, INT, WIS, or CHA, or "none" if no check',
-		'- skill: the skill used, or "none" if no check',
+		'- skill: the skill used, or "none" if no check (for ability checks or saving throws)',
 		'- advantage: one of "none", "advantage", or "disadvantage"',
+		'- progress: one of "stay", "advance", "complete", or "fail"',
 		'[/MECHANICS]',
 		'',
-		'Do not include any other sections or markup. If no check is required, set check to "none" and dc to 0.',
+		'Do not include any other sections or markup.',
+		'If no check is required, set check to "none" and dc to 0 and progress to "stay".',
+		'Use progress="advance" only when the narration clearly transitions the player into the next checkpoint scene.',
+		'Use progress="complete" only when victory conditions are met. Use progress="fail" only on a clear defeat state.',
 	].join('\n');
 }
 
@@ -745,13 +1045,17 @@ async function callAIDungeonMaster(
 	return text;
 }
 
-function parseAIDMResponse(raw: string): { narrative: string; mechanics: {
-	checkDescription: string | null;
-	dc: number | null;
-	ability: string | null;
-	skill: string | null;
-	advantage: 'none' | 'advantage' | 'disadvantage' | null;
-} } {
+function parseAIDMResponse(raw: string): {
+	narrative: string;
+	mechanics: {
+		checkDescription: string | null;
+		dc: number | null;
+		ability: string | null;
+		skill: string | null;
+		advantage: 'none' | 'advantage' | 'disadvantage' | null;
+		progress: 'stay' | 'advance' | 'complete' | 'fail' | null;
+	};
+} {
 	const text = String(raw || '');
 	const narrativeMatch = text.match(/\[NARRATIVE\]([\s\S]*?)\[\/NARRATIVE\]/i);
 	const mechanicsMatch = text.match(/\[MECHANICS\]([\s\S]*?)\[\/MECHANICS\]/i);
@@ -763,9 +1067,13 @@ function parseAIDMResponse(raw: string): { narrative: string; mechanics: {
 	let ability: string | null = null;
 	let skill: string | null = null;
 	let advantage: 'none' | 'advantage' | 'disadvantage' | null = null;
+	let progress: 'stay' | 'advance' | 'complete' | 'fail' | null = null;
 
 	if (mechanicsBlock) {
-		checkDescription = mechanicsBlock;
+		const checkMatch = mechanicsBlock.match(/check\s*[:\-]\s*([^\n]+)/i);
+		if (checkMatch) {
+			checkDescription = checkMatch[1].trim();
+		}
 		const dcMatch = mechanicsBlock.match(/dc\s*[:\-]\s*(\d+)/i);
 		if (dcMatch) {
 			dc = Number.parseInt(dcMatch[1], 10);
@@ -782,11 +1090,15 @@ function parseAIDMResponse(raw: string): { narrative: string; mechanics: {
 		if (advMatch) {
 			advantage = advMatch[1].toLowerCase() as 'none' | 'advantage' | 'disadvantage';
 		}
+		const progMatch = mechanicsBlock.match(/progress\s*[:\-]\s*(stay|advance|complete|fail)/i);
+		if (progMatch) {
+			progress = progMatch[1].toLowerCase() as 'stay' | 'advance' | 'complete' | 'fail';
+		}
 	}
 
 	return {
 		narrative,
-		mechanics: { checkDescription, dc, ability, skill, advantage },
+		mechanics: { checkDescription, dc, ability, skill, advantage, progress },
 	};
 }
 
@@ -1150,7 +1462,23 @@ async function handleStartAICampaign(request: Request, env: Env, origin: string 
 	trimSessionLog(session);
 	await env.ADA_DATA.put(`aiSession:${id}`, JSON.stringify(session));
 
-	return jsonResponse({ ok: true, campaign, session, openingNarrative }, { status: 201 }, origin);
+	return jsonResponse(
+		{
+			ok: true,
+			campaign,
+			session,
+			openingNarrative,
+			...(isDebugEnabled(env)
+				? {
+					debug: {
+						gemini: getGeminiDebugSnapshot(),
+					},
+				}
+				: {}),
+		},
+		{ status: 201 },
+		origin,
+	);
 }
 
 async function handleAIDMTurn(request: Request, env: Env, origin: string | null): Promise<Response> {
@@ -1269,14 +1597,30 @@ async function handleAIDMTurn(request: Request, env: Env, origin: string | null)
 		ability: null as string | null,
 		skill: null as string | null,
 		advantage: null as 'none' | 'advantage' | 'disadvantage' | null,
+		progress: null as 'stay' | 'advance' | 'complete' | 'fail' | null,
 	};
 	try {
 		const rawResponse = await callAIDungeonMaster(env, adventure, session, character, playerInput);
 		const parsed = parseAIDMResponse(rawResponse);
 		parsedNarrative = parsed.narrative;
 		parsedMechanics = parsed.mechanics;
+		// Apply DM-directed progress (checkpoint advances/completion/failure).
+		applyProgressDirective(session, adventure, parsed.mechanics.progress);
 		// Remember the latest requested check so it can be resolved separately.
-		session.pendingCheck = parsed.mechanics;
+		const nextCheck = parsed.mechanics.checkDescription;
+		const nextDc = typeof parsed.mechanics.dc === 'number' ? parsed.mechanics.dc : 0;
+		const nextAbility = (parsed.mechanics.ability || '').toUpperCase();
+		if (nextCheck && nextCheck.toLowerCase() !== 'none' && nextDc > 0 && nextAbility !== 'NONE') {
+			session.pendingCheck = {
+				checkDescription: parsed.mechanics.checkDescription,
+				dc: parsed.mechanics.dc,
+				ability: parsed.mechanics.ability,
+				skill: parsed.mechanics.skill,
+				advantage: parsed.mechanics.advantage,
+			};
+		} else {
+			session.pendingCheck = null;
+		}
 	} catch (err) {
 		console.error('AI-DM call failed', err);
 		// Fallback: generate a simple, deterministic DM response so play can
@@ -1295,6 +1639,13 @@ async function handleAIDMTurn(request: Request, env: Env, origin: string | null)
 			ok: true,
 			narrative: parsedNarrative,
 			mechanics: parsedMechanics,
+			...(isDebugEnabled(env)
+				? {
+					debug: {
+						gemini: getGeminiDebugSnapshot(),
+					},
+				}
+				: {}),
 		},
 		{ status: 200 },
 		origin,
@@ -2480,6 +2831,10 @@ export default {
 
 		if (pathname === '/api/ai-dm/turn' && method === 'POST') {
 			return handleAIDMTurn(request, env, origin);
+		}
+
+		if (pathname === '/api/ai-dm/resolve-check' && method === 'POST') {
+			return handleAIDMResolveCheck(request, env, origin);
 		}
 
 		if (pathname === '/api/campaigns' && method === 'POST') {

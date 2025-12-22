@@ -975,6 +975,7 @@
       const payload = result.data || {};
       const narrative = payload.narrative || payload.text || "";
       const mechanics = payload.mechanics || null;
+      const debug = payload.debug || null;
       lastAiMechanics = mechanics;
       if (narrative) {
         appendAiDmLog("dm", narrative);
@@ -984,18 +985,35 @@
         const ability = mechanics.ability;
         const skill = mechanics.skill;
         const advantage = mechanics.advantage;
+        const checkDescription = mechanics.checkDescription;
         const pieces = [];
+        if (checkDescription && String(checkDescription).trim()) {
+          pieces.push(String(checkDescription).trim());
+        }
         if (dc != null) pieces.push(`DC ${dc}`);
         if (ability) pieces.push(ability.toUpperCase());
         if (skill) pieces.push(skill);
-        if (advantage === true) pieces.push("(advantage)");
-        if (advantage === false) pieces.push("(disadvantage)");
+        if (advantage === "advantage") pieces.push("(advantage)");
+        if (advantage === "disadvantage") pieces.push("(disadvantage)");
         aiDmMechanicsEl.textContent =
           pieces.length > 0
             ? `Check requested: ${pieces.join(" ")}`
             : "";
       } else if (aiDmMechanicsEl) {
         aiDmMechanicsEl.textContent = "";
+      }
+
+      // If backend debug is enabled, show which model is being used.
+      const modelName =
+        debug && debug.gemini && debug.gemini.model
+          ? String(debug.gemini.model)
+          : "";
+      if (modelName && aiDmNoticeEl) {
+        aiDmNoticeEl.hidden = false;
+        aiDmNoticeEl.textContent =
+          `ADA is acting as the Dungeon Master for this campaign. ` +
+          `Type what your character does next and send it to continue the story. ` +
+          `AI model: ${modelName}`;
       }
     } catch (e) {
       console.error("[ADA] AI-DM turn failed", e);
@@ -2028,12 +2046,100 @@
   if (aiDmRollBtn) {
     aiDmRollBtn.addEventListener("click", () => {
       if (!activeCampaign || !isAIDmCampaign(activeCampaign)) return;
-      const roll = Math.floor(Math.random() * 20) + 1;
-      if (aiDmMechanicsEl) {
-        const base = aiDmMechanicsEl.textContent || "";
-        const note = `Roll: d20 = ${roll}`;
-        aiDmMechanicsEl.textContent = base ? `${base} — ${note}` : note;
+
+      const username = getCurrentUser();
+      if (!username) {
+        if (aiDmMechanicsEl) aiDmMechanicsEl.textContent = "Log in to roll.";
+        return;
       }
+
+      // Only resolve a roll if ADA actually requested a check.
+      const checkDescription = lastAiMechanics && lastAiMechanics.checkDescription
+        ? String(lastAiMechanics.checkDescription).trim()
+        : "";
+      const dc = lastAiMechanics ? lastAiMechanics.dc : null;
+      if (!checkDescription || checkDescription.toLowerCase() === "none" || !dc) {
+        if (aiDmMechanicsEl)
+          aiDmMechanicsEl.textContent = "No check to roll right now. Ask ADA what you do next.";
+        return;
+      }
+
+      // Roll locally for transparency; send both dice so backend can pick based on adv/disadv.
+      const r1 = Math.floor(Math.random() * 20) + 1;
+      const r2 = Math.floor(Math.random() * 20) + 1;
+
+      if (aiDmMechanicsEl) aiDmMechanicsEl.textContent = "Resolving roll...";
+
+      apiPost("/api/ai-dm/resolve-check", {
+        username,
+        campaignId: activeCampaignId,
+        roll1: r1,
+        roll2: r2,
+      }).then((result) => {
+        if (!result.ok) {
+          const msg = (result.data && result.data.error) || "Could not resolve check.";
+          if (aiDmMechanicsEl) aiDmMechanicsEl.textContent = msg;
+          return;
+        }
+
+        const payload = result.data || {};
+        const resolved = payload.result || {};
+        const narrative = payload.narrative || "";
+        const mechanics = payload.mechanics || null;
+        const debug = payload.debug || null;
+
+        const chosen = resolved.rolls && resolved.rolls.chosen ? resolved.rolls.chosen : r1;
+        const total = typeof resolved.total === "number" ? resolved.total : null;
+        const mode = resolved.rolls && resolved.rolls.mode ? resolved.rolls.mode : "none";
+        const outcome = resolved.success ? "SUCCESS" : "FAILURE";
+        const rollModeText = mode !== "none" ? ` (${mode})` : "";
+        const rollLine =
+          total != null
+            ? `I attempt ${checkDescription} — roll${rollModeText}: ${chosen} (total ${total} vs DC ${dc}) → ${outcome}.`
+            : `I attempt ${checkDescription} — roll${rollModeText}: ${chosen} → ${outcome}.`;
+
+        appendAiDmLog("player", rollLine);
+
+        if (narrative) appendAiDmLog("dm", narrative);
+
+        lastAiMechanics = mechanics;
+
+        if (mechanics && aiDmMechanicsEl) {
+          const mDc = mechanics.dc;
+          const mAbility = mechanics.ability;
+          const mSkill = mechanics.skill;
+          const mAdv = mechanics.advantage;
+          const mDesc = mechanics.checkDescription;
+          const mProgress = mechanics.progress;
+          const pieces = [];
+          if (mDesc && String(mDesc).trim()) pieces.push(String(mDesc).trim());
+          if (mDc != null) pieces.push(`DC ${mDc}`);
+          if (mAbility) pieces.push(String(mAbility).toUpperCase());
+          if (mSkill) pieces.push(String(mSkill));
+          if (mAdv === "advantage") pieces.push("(advantage)");
+          if (mAdv === "disadvantage") pieces.push("(disadvantage)");
+          if (mProgress && mProgress !== "stay") pieces.push(`(progress: ${mProgress})`);
+          aiDmMechanicsEl.textContent =
+            pieces.length ? `Check requested: ${pieces.join(" ")}` : "";
+        } else if (aiDmMechanicsEl) {
+          aiDmMechanicsEl.textContent = "";
+        }
+
+        const modelName =
+          debug && debug.gemini && debug.gemini.model
+            ? String(debug.gemini.model)
+            : "";
+        if (modelName && aiDmNoticeEl) {
+          aiDmNoticeEl.hidden = false;
+          aiDmNoticeEl.textContent =
+            `ADA is acting as the Dungeon Master for this campaign. ` +
+            `Type what your character does next and send it to continue the story. ` +
+            `AI model: ${modelName}`;
+        }
+      }).catch((e) => {
+        console.error("[ADA] resolve-check failed", e);
+        if (aiDmMechanicsEl) aiDmMechanicsEl.textContent = "Error resolving check.";
+      });
     });
   }
 

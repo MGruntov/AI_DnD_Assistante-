@@ -34,3 +34,22 @@ The design aligns with Human-AI Co-creation, where AI supports rather than repla
 Wizards of the Coast. (2014). Player’s handbook (5th ed.). Wizards of the Coast.
 Wizards of the Coast. (n.d.). D&D Beyond. https://www.dndbeyond.com
 CharGen. (n.d.). CharGen: D&D 5e character generator. https://char-gen.com/character
+
+---
+
+## Developer notes
+
+### Backend (Cloudflare Worker)
+
+- Gemini API key is provided via the Worker secret `GEMINI_API_KEY` (do not commit it).
+- Optional debug toggle: set `ADA_DEBUG=1` (as a normal Worker variable) to include extra debug fields in some responses.
+	- When enabled, AI endpoints include the currently selected Gemini model name (e.g. `models/gemini-2.5-flash`).
+
+### AI-DM Step 8 (rolling checks) – early implementation
+
+The backend now supports resolving an AI-requested check and continuing the story:
+
+- `POST /api/ai-dm/resolve-check`
+	- Body: `{ "username": string, "campaignId": string, "roll1"?: number, "roll2"?: number }`
+	- Uses the current session's `pendingCheck` (DC/ability/skill/advantage) and the linked character sheet to compute totals.
+	- Returns the roll result + a follow-up DM narration.

@@ -2547,6 +2547,33 @@
 
   if (logoutBtn) {
     logoutBtn.addEventListener("click", () => {
+      // Best-effort: stop any active speech capture so we don't keep updating UI after logout.
+      try {
+        isListening = false;
+        if (recognition) recognition.stop();
+      } catch {
+        // ignore
+      }
+
+      // Clear app state that is tied to a logged-in user.
+      activeCampaignId = null;
+      activeCampaign = null;
+      activeCharacter = null;
+      activeCampaignCharacters = [];
+      cachedPlayerSpeakerLabel = "You";
+
+      try {
+        localStorage.removeItem(ACTIVE_CAMPAIGN_STORAGE_KEY);
+      } catch {
+        // ignore
+      }
+
+      // Clear user-facing text areas / chat thread.
+      if (transcriptEl) transcriptEl.value = "";
+      if (campaignDialogueTranscriptEl) campaignDialogueTranscriptEl.value = "";
+      if (dialogueContainerEl) dialogueContainerEl.innerHTML = "";
+      if (dialogueTextInputEl) dialogueTextInputEl.value = "";
+
       clearCurrentUser();
       updateNav(null);
       setAuthMessage("");

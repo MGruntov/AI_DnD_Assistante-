@@ -396,12 +396,24 @@
                   <button id="campaignDialogueStopBtn" class="btn" disabled>Stop</button>
                   <span id="campaignDialogueStatus" class="status">Idle</span>
                 </div>
-                <textarea
-                  id="campaignDialogueTranscript"
-                  class="output__text dialogue-panel__transcript"
-                  rows="8"
-                  placeholder="Live session dialogue will appear here..."
-                ></textarea>
+
+                <div
+                  id="campaignDialogueThread"
+                  class="chat-thread"
+                  aria-label="Campaign dialogue"
+                  aria-live="polite"
+                ></div>
+
+                <details class="dialogue-panel__raw">
+                  <summary class="text-muted">Full transcript (read-only)</summary>
+                  <textarea
+                    id="campaignDialogueTranscript"
+                    class="output__text dialogue-panel__transcript"
+                    rows="8"
+                    placeholder="Live session dialogue will appear here..."
+                    readonly
+                  ></textarea>
+                </details>
                 <p id="aiDmNotice" class="text-muted" hidden>
                   ADA is acting as the Dungeon Master for this campaign. Type what your character does next and send it to continue the story.
                 </p>

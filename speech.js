@@ -69,6 +69,7 @@
   const campaignDialogueStopBtn = document.getElementById("campaignDialogueStopBtn");
   const campaignDialogueStatusEl = document.getElementById("campaignDialogueStatus");
   const campaignDialogueTranscriptEl = document.getElementById("campaignDialogueTranscript");
+  const campaignDialogueThreadEl = document.getElementById("campaignDialogueThread");
 
   const aiDmNoticeEl = document.getElementById("aiDmNotice");
   const aiDmPanelEl = document.getElementById("aiDmPanel");
@@ -244,6 +245,89 @@
       target.value = prefix ? prefix + " " + text : text;
     }
     target.scrollTop = target.scrollHeight;
+
+    // If we're in the campaign dialogue view, keep the chat-style thread in sync.
+    if (target === campaignDialogueTranscriptEl) {
+      scheduleRenderCampaignDialogueThread(target.value || "");
+    }
+  }
+
+  function parseCampaignDialogueTranscript(transcript, currentUser) {
+    const raw = typeof transcript === "string" ? transcript : "";
+    const chunks = raw
+      .split(/\n\s*\n+/g)
+      .map((c) => c.trim())
+      .filter(Boolean);
+
+    const messages = [];
+    chunks.forEach((chunk) => {
+      const m = chunk.match(/^([A-Za-z0-9_\-\s]{1,40}):\s*([\s\S]+)$/);
+      if (m) {
+        const speaker = String(m[1] || "").trim();
+        const body = String(m[2] || "").trim();
+        const speakerLower = speaker.toLowerCase();
+        const currentUserLower = (currentUser || "").toLowerCase();
+
+        let role = "other";
+        if (speakerLower === "ada" || speakerLower === "dm" || speakerLower === "dungeon master") {
+          role = "dm";
+        } else if (speakerLower === "you" || (currentUserLower && speakerLower === currentUserLower)) {
+          role = "player";
+        }
+
+        messages.push({ role, speaker, text: body });
+        return;
+      }
+
+      // Untagged transcript chunks (e.g., raw voice capture) are shown as a neutral system message.
+      messages.push({ role: "system", speaker: "Transcript", text: chunk });
+    });
+
+    return messages;
+  }
+
+  function renderCampaignDialogueThread(transcript) {
+    if (!campaignDialogueThreadEl) return;
+    const currentUser = getCurrentUser();
+    const messages = parseCampaignDialogueTranscript(transcript, currentUser);
+    campaignDialogueThreadEl.innerHTML = "";
+
+    if (messages.length === 0) {
+      const empty = document.createElement("p");
+      empty.className = "text-muted";
+      empty.textContent = "No dialogue yet. Start session capture or talk to ADA-DM.";
+      campaignDialogueThreadEl.appendChild(empty);
+      return;
+    }
+
+    messages.forEach((msg) => {
+      const bubble = document.createElement("div");
+      bubble.className = `chat-msg chat-msg--${msg.role}`;
+
+      const meta = document.createElement("div");
+      meta.className = "chat-msg__meta";
+      meta.textContent = msg.speaker;
+
+      const body = document.createElement("div");
+      body.className = "chat-msg__body";
+      body.textContent = msg.text;
+
+      bubble.appendChild(meta);
+      bubble.appendChild(body);
+      campaignDialogueThreadEl.appendChild(bubble);
+    });
+
+    campaignDialogueThreadEl.scrollTop = campaignDialogueThreadEl.scrollHeight;
+  }
+
+  let renderCampaignDialogueTimer = null;
+
+  function scheduleRenderCampaignDialogueThread(transcript) {
+    if (!campaignDialogueThreadEl) return;
+    if (renderCampaignDialogueTimer) window.clearTimeout(renderCampaignDialogueTimer);
+    renderCampaignDialogueTimer = window.setTimeout(() => {
+      renderCampaignDialogueThread(transcript);
+    }, 120);
   }
 
   async function apiPost(path, payload) {
@@ -909,15 +993,21 @@
   }
 
   function appendAiDmLog(role, text) {
-    if (!campaignDialogueTranscriptEl || !text) return;
+    if (!text) return;
     const prefix = role === "dm" ? "ADA: " : "You: ";
-    const current = campaignDialogueTranscriptEl.value.trim();
+    const current = campaignDialogueTranscriptEl
+      ? campaignDialogueTranscriptEl.value.trim()
+      : "";
     const entry = `${prefix}${text.trim()}`;
-    campaignDialogueTranscriptEl.value = current
-      ? `${current}\n\n${entry}`
-      : entry;
-    campaignDialogueTranscriptEl.scrollTop =
-      campaignDialogueTranscriptEl.scrollHeight;
+    const updated = current ? `${current}\n\n${entry}` : entry;
+
+    if (campaignDialogueTranscriptEl) {
+      campaignDialogueTranscriptEl.value = updated;
+      campaignDialogueTranscriptEl.scrollTop =
+        campaignDialogueTranscriptEl.scrollHeight;
+    }
+
+    renderCampaignDialogueThread(updated);
     scheduleSaveCampaignTranscript();
   }
 
@@ -1269,6 +1359,9 @@
         campaignDialogueTranscriptEl.value = transcript;
         campaignDialogueTranscriptEl.scrollTop =
           campaignDialogueTranscriptEl.scrollHeight;
+        renderCampaignDialogueThread(transcript);
+      } else {
+        renderCampaignDialogueThread("");
       }
     }
 
@@ -1285,6 +1378,9 @@
     // Reset dialogue transcript when switching to a different campaign
     if (campaignDialogueTranscriptEl) {
       campaignDialogueTranscriptEl.value = "";
+    }
+    if (campaignDialogueThreadEl) {
+      campaignDialogueThreadEl.innerHTML = "";
     }
 
     try {
@@ -2139,11 +2235,7 @@
   });
 
   if (campaignDialogueTranscriptEl) {
-    campaignDialogueTranscriptEl.addEventListener("input", () => {
-      if (activeTranscriptContext === "dialogue") {
-        scheduleSaveCampaignTranscript();
-      }
-    });
+    // Transcript is now read-only; changes come from voice capture and AI-DM.
   }
 
   if (aiDmSendBtn) {

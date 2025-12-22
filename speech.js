@@ -2439,12 +2439,6 @@
     });
   }
 
-  if (aiDmSendBtn) {
-    aiDmSendBtn.addEventListener("click", () => {
-      sendAiDmTurn();
-    });
-  }
-
   if (aiDmRollBtn) {
     aiDmRollBtn.addEventListener("click", () => {
       if (!activeCampaign || !isAIDmCampaign(activeCampaign)) return;

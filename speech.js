@@ -826,6 +826,13 @@
             : "You don't have any characters in the required level range.";
           return;
         }
+        // Starting a fresh AI-solo run; clear any previous dialogue UI state
+        if (campaignDialogueTranscriptEl) {
+          campaignDialogueTranscriptEl.value = "";
+        }
+        if (aiDmMechanicsEl) {
+          aiDmMechanicsEl.textContent = "";
+        }
         status.textContent = "Starting solo run...";
         const currentUser = getCurrentUser();
         apiPost("/api/ai-campaigns/start", {

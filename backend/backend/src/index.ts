@@ -197,6 +197,72 @@ async function handleHealth(origin: string | null): Promise<Response> {
 	return jsonResponse({ status: 'ok' }, undefined, origin);
 }
 
+async function handleAIHealth(env: Env, origin: string | null): Promise<Response> {
+	const hasKey = typeof env.GEMINI_API_KEY === 'string' && env.GEMINI_API_KEY.trim().length > 0;
+	if (!hasKey) {
+		return jsonResponse(
+			{
+				ok: false,
+				status: 'missing_api_key',
+				message: 'GEMINI_API_KEY is not configured on this Worker.',
+			},
+			{ status: 200 },
+			origin,
+		);
+	}
+
+	const apiKey = env.GEMINI_API_KEY.trim();
+	const url =
+		'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent' +
+		`?key=${encodeURIComponent(apiKey)}`;
+
+	const body = JSON.stringify({
+		contents: [
+			{
+				role: 'user',
+				parts: [{ text: 'Respond with a single word: ok' }],
+			},
+		],
+	});
+
+	let ok = false;
+	let snippet = '';
+	let error: string | null = null;
+
+	try {
+		const res = await fetch(url, {
+			method: 'POST',
+			headers: { 'content-type': 'application/json; charset=utf-8' },
+			body,
+		});
+		if (!res.ok) {
+			error = `Gemini health check failed with status ${res.status}`;
+		} else {
+			const data: any = await res.json().catch(() => null);
+			const parts: string[] =
+				data?.candidates?.[0]?.content?.parts?.map((p: any) =>
+					p && typeof p.text === 'string' ? p.text : '',
+				) || [];
+			snippet = parts.join('').trim();
+			ok = snippet.length > 0;
+		}
+	} catch (err: any) {
+		error = err && typeof err.message === 'string' ? err.message : 'Unknown error calling Gemini';
+	}
+
+	return jsonResponse(
+		{
+			ok,
+			status: ok ? 'healthy' : 'error',
+			hasKey: true,
+			message: ok ? 'Gemini responded successfully.' : error || 'Gemini did not return a usable response.',
+			snippet,
+		},
+		{ status: 200 },
+		origin,
+	);
+}
+
 async function handleListAdventures(origin: string | null): Promise<Response> {
 	return jsonResponse({ ok: true, adventures: ADVENTURES }, undefined, origin);
 }
@@ -2055,6 +2121,10 @@ export default {
 		// Simple routing
 		if (pathname === '/api/health' && method === 'GET') {
 			return handleHealth(origin);
+		}
+
+		if (pathname === '/api/health/ai' && method === 'GET') {
+			return handleAIHealth(env, origin);
 		}
 
 		if (pathname === '/api/register' && method === 'POST') {

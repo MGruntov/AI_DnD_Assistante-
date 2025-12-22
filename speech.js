@@ -69,12 +69,13 @@
   const campaignDialogueStopBtn = document.getElementById("campaignDialogueStopBtn");
   const campaignDialogueStatusEl = document.getElementById("campaignDialogueStatus");
   const campaignDialogueTranscriptEl = document.getElementById("campaignDialogueTranscript");
-  const campaignDialogueThreadEl = document.getElementById("campaignDialogueThread");
+  const dialogueContainerEl = document.getElementById("dialogueContainer");
+  const dialogueComposerEl = document.getElementById("dialogueComposer");
+  const dialogueTextInputEl = document.getElementById("dialogueTextInput");
+  const dialogueSendBtn = document.getElementById("dialogueSendBtn");
 
   const aiDmNoticeEl = document.getElementById("aiDmNotice");
   const aiDmPanelEl = document.getElementById("aiDmPanel");
-  const aiDmInputEl = document.getElementById("aiDmInput");
-  const aiDmSendBtn = document.getElementById("aiDmSendBtn");
   const aiDmRollBtn = document.getElementById("aiDmRollBtn");
   const aiDmMechanicsEl = document.getElementById("aiDmMechanics");
 
@@ -252,6 +253,34 @@
     }
   }
 
+  // Public-ish API for the dialogue UI.
+  // sender: "dm" | "player" | "system" | string
+  function appendMessage(sender, text) {
+    const trimmed = (text || "").trim();
+    if (!trimmed) return;
+
+    const s = String(sender || "").toLowerCase();
+    if (s === "dm" || s === "ada" || s === "ai") {
+      appendAiDmLog("dm", trimmed);
+      return;
+    }
+    if (s === "player" || s === "you") {
+      appendAiDmLog("player", trimmed);
+      return;
+    }
+
+    // Unknown sender: keep transcript consistent for parsing.
+    if (!campaignDialogueTranscriptEl) return;
+    const current = campaignDialogueTranscriptEl.value.trim();
+    const label = sender ? String(sender).trim() : "Transcript";
+    const entry = `${label}: ${trimmed}`;
+    const updated = current ? `${current}\n\n${entry}` : entry;
+    campaignDialogueTranscriptEl.value = updated;
+    campaignDialogueTranscriptEl.scrollTop = campaignDialogueTranscriptEl.scrollHeight;
+    renderCampaignDialogueThread(updated);
+    scheduleSaveCampaignTranscript();
+  }
+
   function parseCampaignDialogueTranscript(transcript, currentUser) {
     const raw = typeof transcript === "string" ? transcript : "";
     const chunks = raw
@@ -287,16 +316,16 @@
   }
 
   function renderCampaignDialogueThread(transcript) {
-    if (!campaignDialogueThreadEl) return;
+    if (!dialogueContainerEl) return;
     const currentUser = getCurrentUser();
     const messages = parseCampaignDialogueTranscript(transcript, currentUser);
-    campaignDialogueThreadEl.innerHTML = "";
+    dialogueContainerEl.innerHTML = "";
 
     if (messages.length === 0) {
       const empty = document.createElement("p");
       empty.className = "text-muted";
       empty.textContent = "No dialogue yet. Start session capture or talk to ADA-DM.";
-      campaignDialogueThreadEl.appendChild(empty);
+      dialogueContainerEl.appendChild(empty);
       return;
     }
 
@@ -314,16 +343,16 @@
 
       bubble.appendChild(meta);
       bubble.appendChild(body);
-      campaignDialogueThreadEl.appendChild(bubble);
+      dialogueContainerEl.appendChild(bubble);
     });
 
-    campaignDialogueThreadEl.scrollTop = campaignDialogueThreadEl.scrollHeight;
+    dialogueContainerEl.scrollTop = dialogueContainerEl.scrollHeight;
   }
 
   let renderCampaignDialogueTimer = null;
 
   function scheduleRenderCampaignDialogueThread(transcript) {
-    if (!campaignDialogueThreadEl) return;
+    if (!dialogueContainerEl) return;
     if (renderCampaignDialogueTimer) window.clearTimeout(renderCampaignDialogueTimer);
     renderCampaignDialogueTimer = window.setTimeout(() => {
       renderCampaignDialogueThread(transcript);
@@ -536,14 +565,19 @@
       }
     }
 
+    if (activeTranscriptContext === "dialogue") {
+      // In campaign dialogue mode, treat each final chunk as a message.
+      if (final) {
+        handleDialoguePlayerInput(final.trim(), { source: "speech" });
+      }
+      // We intentionally ignore interim results in chat mode to avoid spammy bubbles.
+      return;
+    }
+
     if (final) {
       lastFinal += final;
       const combinedFinal = lastFinal.trim();
       updateTranscript(combinedFinal, TranscriptMode.REPLACE);
-      if (activeTranscriptContext === "dialogue") {
-        logDialogueSnippet(final.trim(), combinedFinal);
-        scheduleSaveCampaignTranscript();
-      }
     } else if (interim) {
       const combined = (lastFinal + " " + interim).trim();
       updateTranscript(combined, TranscriptMode.REPLACE);
@@ -1034,32 +1068,37 @@
   }
 
   async function sendAiDmTurn() {
-    if (!activeCampaign || !isAIDmCampaign(activeCampaign)) {
-      return;
-    }
+    // Backwards-compatible wrapper for old button wiring.
+    const text = dialogueTextInputEl ? dialogueTextInputEl.value.trim() : "";
+    if (!text) return;
+    await handleDialoguePlayerInput(text, { source: "typing" });
+  }
+
+  let aiDmTurnQueue = Promise.resolve();
+
+  async function sendAiDmTurnWithText(text) {
+    if (!activeCampaign || !isAIDmCampaign(activeCampaign)) return;
     const username = getCurrentUser();
     if (!username) {
       if (aiDmMechanicsEl)
         aiDmMechanicsEl.textContent = "Log in to talk to ADA as DM.";
       return;
     }
-    if (!aiDmInputEl || !aiDmSendBtn) return;
-    const text = aiDmInputEl.value.trim();
-    if (!text) return;
 
-    aiDmSendBtn.disabled = true;
-    if (aiDmMechanicsEl)
-      aiDmMechanicsEl.textContent = "Talking to ADA...";
+    const trimmed = (text || "").trim();
+    if (!trimmed) return;
 
-    appendAiDmLog("player", text);
-    aiDmInputEl.value = "";
+    if (dialogueSendBtn) dialogueSendBtn.disabled = true;
+    if (aiDmMechanicsEl) aiDmMechanicsEl.textContent = "Talking to ADA...";
 
-    try {
+    // Ensure we serialize turns so responses stay in order.
+    aiDmTurnQueue = aiDmTurnQueue.then(async () => {
       const result = await apiPost("/api/ai-dm/turn", {
         username,
         campaignId: activeCampaignId,
-        text,
+        text: trimmed,
       });
+
       if (!result.ok) {
         const msg =
           (result.data && (result.data.error || result.data.message)) ||
@@ -1073,9 +1112,11 @@
       const mechanics = payload.mechanics || null;
       const debug = payload.debug || null;
       lastAiMechanics = mechanics;
+
       if (narrative) {
-        appendAiDmLog("dm", narrative);
+        appendMessage("dm", narrative);
       }
+
       if (mechanics && aiDmMechanicsEl) {
         const dc = mechanics.dc;
         const ability = mechanics.ability;
@@ -1092,9 +1133,7 @@
         if (advantage === "advantage") pieces.push("(advantage)");
         if (advantage === "disadvantage") pieces.push("(disadvantage)");
         aiDmMechanicsEl.textContent =
-          pieces.length > 0
-            ? `Check requested: ${pieces.join(" ")}`
-            : "";
+          pieces.length > 0 ? `Check requested: ${pieces.join(" ")}` : "";
       } else if (aiDmMechanicsEl) {
         aiDmMechanicsEl.textContent = "";
       }
@@ -1111,13 +1150,34 @@
           `Type what your character does next and send it to continue the story. ` +
           `AI model: ${modelName}`;
       }
-    } catch (e) {
+    }).catch((e) => {
       console.error("[ADA] AI-DM turn failed", e);
-      if (aiDmMechanicsEl)
-        aiDmMechanicsEl.textContent = "Error talking to ADA.";
-    } finally {
-      if (aiDmSendBtn) aiDmSendBtn.disabled = false;
+      if (aiDmMechanicsEl) aiDmMechanicsEl.textContent = "Error talking to ADA.";
+    }).finally(() => {
+      if (dialogueSendBtn) dialogueSendBtn.disabled = false;
+    });
+
+    return aiDmTurnQueue;
+  }
+
+  async function handleDialoguePlayerInput(text, { source } = {}) {
+    const trimmed = (text || "").trim();
+    if (!trimmed) return;
+
+    // Echo the player's message to the chat.
+    appendMessage("player", trimmed);
+    if (dialogueTextInputEl) dialogueTextInputEl.value = "";
+
+    // For journals and future mechanics, keep the transcript log action for speech captures.
+    if (source === "speech") {
+      logDialogueSnippet(trimmed, campaignDialogueTranscriptEl ? campaignDialogueTranscriptEl.value : trimmed);
     }
+
+    // If this is an AI-DM campaign, request the AI's reply.
+    if (activeCampaign && isAIDmCampaign(activeCampaign)) {
+      await sendAiDmTurnWithText(trimmed);
+    }
+
   }
 
   function renderCampaignCharacters(characters) {
@@ -1320,8 +1380,8 @@
       const isAi = isAIDmCampaign(campaign);
       if (aiDmNoticeEl) aiDmNoticeEl.hidden = !isAi;
       if (aiDmPanelEl) aiDmPanelEl.hidden = !isAi;
-      if (aiDmInputEl) aiDmInputEl.disabled = !isAi;
-      if (aiDmSendBtn) aiDmSendBtn.disabled = !isAi;
+      if (dialogueTextInputEl) dialogueTextInputEl.disabled = false;
+      if (dialogueSendBtn) dialogueSendBtn.disabled = false;
       if (aiDmMechanicsEl) aiDmMechanicsEl.textContent = "";
 
       // Configure delete/leave buttons based on campaign type and user role
@@ -1379,8 +1439,8 @@
     if (campaignDialogueTranscriptEl) {
       campaignDialogueTranscriptEl.value = "";
     }
-    if (campaignDialogueThreadEl) {
-      campaignDialogueThreadEl.innerHTML = "";
+    if (dialogueContainerEl) {
+      dialogueContainerEl.innerHTML = "";
     }
 
     try {
@@ -2234,15 +2294,16 @@
     });
   });
 
-  if (campaignDialogueTranscriptEl) {
-    // Transcript is now read-only; changes come from voice capture and AI-DM.
-  }
-
-  if (aiDmSendBtn) {
-    aiDmSendBtn.addEventListener("click", () => {
-      sendAiDmTurn();
+  if (dialogueComposerEl) {
+    dialogueComposerEl.addEventListener("submit", (e) => {
+      e.preventDefault();
+      const text = dialogueTextInputEl ? dialogueTextInputEl.value.trim() : "";
+      if (!text) return;
+      handleDialoguePlayerInput(text, { source: "typing" });
     });
   }
+
+  // Note: sending is now handled by the dialogue composer.
 
   if (campaignScriptGenerateBtn) {
     campaignScriptGenerateBtn.addEventListener("click", () => {

@@ -139,6 +139,8 @@
   let activeCampaignId = null;
   let activeCampaign = null;
   let activeCharacter = null;
+  let activeCampaignCharacters = [];
+  let cachedPlayerSpeakerLabel = "You";
   // Backend API base URL (Cloudflare Worker)
   // Automatically use localhost for development, production URL otherwise
   const isDevelopment = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' || window.location.hostname === '0.0.0.0';
@@ -195,6 +197,24 @@
     const el = activeTranscriptStatusEl || statusEl;
     if (!el) return;
     el.textContent = text;
+  }
+
+  function computePlayerSpeakerLabel({ characters, username }) {
+    const u = (username || "").trim();
+    const list = Array.isArray(characters) ? characters : [];
+    const owned = u ? list.filter((c) => c && c.owner === u) : [];
+    const candidate = owned.length ? owned[0] : null;
+    const name = candidate && candidate.name ? String(candidate.name).trim() : "";
+    if (name) return name;
+
+    // If no owned character is linked (e.g., DM-only), fall back gracefully.
+    return u || "You";
+  }
+
+  function refreshDialogueComposerLabel() {
+    if (!dialogueTextInputEl) return;
+    const label = cachedPlayerSpeakerLabel || "You";
+    dialogueTextInputEl.placeholder = `Type as ${label}…`;
   }
 
   function setPortraitStatus(text) {
@@ -281,7 +301,7 @@
     scheduleSaveCampaignTranscript();
   }
 
-  function parseCampaignDialogueTranscript(transcript, currentUser) {
+  function parseCampaignDialogueTranscript(transcript, currentUser, playerLabel) {
     const raw = typeof transcript === "string" ? transcript : "";
     const chunks = raw
       .split(/\n\s*\n+/g)
@@ -296,11 +316,16 @@
         const body = String(m[2] || "").trim();
         const speakerLower = speaker.toLowerCase();
         const currentUserLower = (currentUser || "").toLowerCase();
+        const playerLabelLower = (playerLabel || "").toLowerCase();
 
         let role = "other";
         if (speakerLower === "ada" || speakerLower === "dm" || speakerLower === "dungeon master") {
           role = "dm";
-        } else if (speakerLower === "you" || (currentUserLower && speakerLower === currentUserLower)) {
+        } else if (
+          speakerLower === "you" ||
+          (playerLabelLower && speakerLower === playerLabelLower) ||
+          (currentUserLower && speakerLower === currentUserLower)
+        ) {
           role = "player";
         }
 
@@ -318,7 +343,7 @@
   function renderCampaignDialogueThread(transcript) {
     if (!dialogueContainerEl) return;
     const currentUser = getCurrentUser();
-    const messages = parseCampaignDialogueTranscript(transcript, currentUser);
+    const messages = parseCampaignDialogueTranscript(transcript, currentUser, cachedPlayerSpeakerLabel);
     dialogueContainerEl.innerHTML = "";
 
     if (messages.length === 0) {
@@ -1028,7 +1053,8 @@
 
   function appendAiDmLog(role, text) {
     if (!text) return;
-    const prefix = role === "dm" ? "ADA: " : "You: ";
+    const playerLabel = cachedPlayerSpeakerLabel || "You";
+    const prefix = role === "dm" ? "ADA: " : `${playerLabel}: `;
     const current = campaignDialogueTranscriptEl
       ? campaignDialogueTranscriptEl.value.trim()
       : "";
@@ -1361,6 +1387,10 @@
     const journals = Array.isArray(data.journals) ? data.journals : [];
     const scripts = Array.isArray(data.scripts) ? data.scripts : [];
 
+    activeCampaignCharacters = characters;
+    cachedPlayerSpeakerLabel = computePlayerSpeakerLabel({ characters, username: currentUser });
+    refreshDialogueComposerLabel();
+
     if (campaign) {
       activeCampaign = campaign;
       if (campaignDetailTitle)
@@ -1442,6 +1472,10 @@
     if (dialogueContainerEl) {
       dialogueContainerEl.innerHTML = "";
     }
+
+    activeCampaignCharacters = [];
+    cachedPlayerSpeakerLabel = computePlayerSpeakerLabel({ characters: [], username: getCurrentUser() });
+    refreshDialogueComposerLabel();
 
     try {
       localStorage.setItem(ACTIVE_CAMPAIGN_STORAGE_KEY, String(campaign.id));

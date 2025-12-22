@@ -267,6 +267,9 @@ function buildAIDMSystemPrompt(): string {
 		'You run tightly scoped, structured solo adventures for a single player.',
 		'Always respect D&D 5e tone and mechanics: low-level heroes are fragile, magic and powerful items are limited.',
 		'',
+		'Never simply repeat the player\'s last input back to them as your narration.',
+		'Always advance the scene with new details: environment, NPC reactions, consequences, or new options.',
+		'',
 		'Your output MUST follow this exact structure:',
 		'[NARRATIVE]',
 		'Rich second-person narration describing what happens next at the current scene.',
@@ -788,7 +791,8 @@ async function handleAIDMTurn(request: Request, env: Env, origin: string | null)
 		console.error('AI-DM call failed', err);
 		// Fallback: generate a simple, deterministic DM response so play can
 		// continue even if the external AI service is down.
-		parsedNarrative = `ADA pauses for a moment, then narrates in a calm voice: "${playerInput}" plays out in the Whispering Woods. Imagine how your character moves, reacts, and feels — we will continue from there.`;
+		parsedNarrative =
+			'Even without the usual weave of magic behind her words, ADA keeps the story moving. The forest responds to your actions: branches creak, unseen eyes track your steps, and the trail twists toward whatever you choose to do next.';
 	}
 
 	session.log.push({ role: 'dm', text: parsedNarrative, timestamp: new Date().toISOString() });

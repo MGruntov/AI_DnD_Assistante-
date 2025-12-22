@@ -1133,6 +1133,7 @@
     if (campaignCharactersGrid) campaignCharactersGrid.innerHTML = "";
     if (campaignJournalsList) campaignJournalsList.innerHTML = "";
     if (campaignScriptsList) campaignScriptsList.innerHTML = "";
+    if (campaignDialogueTranscriptEl) campaignDialogueTranscriptEl.value = "";
 
     const result = await apiGet(
       `/api/campaigns/details?id=${encodeURIComponent(
@@ -1206,6 +1207,11 @@
     if (!campaign) return;
     activeCampaignId = campaign.id;
     activeCampaign = campaign;
+
+    // Reset dialogue transcript when switching to a different campaign
+    if (campaignDialogueTranscriptEl) {
+      campaignDialogueTranscriptEl.value = "";
+    }
 
     try {
       localStorage.setItem(ACTIVE_CAMPAIGN_STORAGE_KEY, String(campaign.id));

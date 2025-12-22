@@ -16,6 +16,200 @@ type Env = {
 	GEMINI_API_KEY: string;
 };
 
+// Gemini (Google Generative Language API) uses v1beta endpoints for generateContent and model listing.
+// Model names are typically versioned (e.g. gemini-1.5-flash-001) and listModels returns full names
+// like "models/gemini-1.5-flash-001".
+const GEMINI_API_VERSION = 'v1beta';
+const GEMINI_PREFERRED_BASE_MODEL_ID = 'gemini-1.5-flash';
+
+type GeminiModelInfo = {
+	name?: string; // e.g. "models/gemini-1.5-flash-001"
+	baseModelId?: string; // e.g. "gemini-1.5-flash"
+	version?: string; // e.g. "1.5"
+	displayName?: string;
+	supportedGenerationMethods?: string[];
+};
+
+let geminiResolvedModelCache:
+	| {
+		modelName: string;
+		expiresAt: number;
+	}
+	| null = null;
+
+function normalizeGeminiModelName(name: string): string {
+	const trimmed = String(name || '').trim();
+	// The REST path parameter expects a resource name like "models/{model}".
+	if (trimmed.startsWith('models/')) return trimmed;
+	return `models/${trimmed}`;
+}
+
+function isSupportedForGenerateContent(model: GeminiModelInfo): boolean {
+	const methods = Array.isArray(model.supportedGenerationMethods)
+		? model.supportedGenerationMethods
+		: [];
+	return methods.some((m) => String(m).toLowerCase() === 'generatecontent');
+}
+
+function extractNumericSuffix(modelName: string): number | null {
+	// "models/gemini-1.5-flash-001" -> 1
+	const cleaned = modelName.replace(/^models\//, '');
+	const m = cleaned.match(/-(\d{3})$/);
+	if (!m) return null;
+	const n = Number.parseInt(m[1], 10);
+	return Number.isFinite(n) ? n : null;
+}
+
+function inferBaseModelIdFromName(modelName: string): string {
+	const cleaned = String(modelName || '').replace(/^models\//, '').trim();
+	if (!cleaned) return '';
+	// Strip common version suffixes.
+	const withoutNumeric = cleaned.replace(/-(\d{3})$/, '');
+	return withoutNumeric;
+}
+
+async function listGeminiModels(apiKey: string): Promise<{
+	ok: boolean;
+	models: GeminiModelInfo[];
+	upstreamStatus: number | null;
+	upstreamBodySnippet: string | null;
+}> {
+	const url =
+		`https://generativelanguage.googleapis.com/${encodeURIComponent(GEMINI_API_VERSION)}/models` +
+		`?pageSize=1000&key=${encodeURIComponent(apiKey)}`;
+	let upstreamStatus: number | null = null;
+	let upstreamBodySnippet: string | null = null;
+	try {
+		const res = await fetch(url, { method: 'GET' });
+		upstreamStatus = res.status;
+		const rawText = await res.text().catch(() => '');
+		upstreamBodySnippet = rawText ? rawText.slice(0, 1200) : null;
+		if (!res.ok) {
+			return { ok: false, models: [], upstreamStatus, upstreamBodySnippet };
+		}
+		let data: any = null;
+		try {
+			data = rawText ? JSON.parse(rawText) : null;
+		} catch {
+			data = null;
+		}
+		const models = Array.isArray(data?.models) ? (data.models as GeminiModelInfo[]) : [];
+		return { ok: true, models, upstreamStatus, upstreamBodySnippet };
+	} catch (err: any) {
+		return {
+			ok: false,
+			models: [],
+			upstreamStatus,
+			upstreamBodySnippet:
+				err && typeof err.message === 'string' ? err.message.slice(0, 1200) : 'Unknown error',
+		};
+	}
+}
+
+async function resolveGeminiModelName(apiKey: string): Promise<{
+	modelName: string;
+	resolvedFrom: 'cache' | 'models.list' | 'fallback';
+	debug?: {
+		candidateCount?: number;
+		chosenBaseModelId?: string;
+		chosenNumericSuffix?: number | null;
+	};
+}> {
+	const now = Date.now();
+	if (geminiResolvedModelCache && geminiResolvedModelCache.expiresAt > now) {
+		return { modelName: geminiResolvedModelCache.modelName, resolvedFrom: 'cache' };
+	}
+
+	const listed = await listGeminiModels(apiKey);
+	if (listed.ok && listed.models.length) {
+		const candidates = listed.models
+			.map((m) => ({
+				...m,
+				name: m.name ? String(m.name) : undefined,
+				baseModelId: m.baseModelId
+					? String(m.baseModelId)
+					: m.name
+						? inferBaseModelIdFromName(String(m.name))
+						: undefined,
+			}))
+			.filter((m) => m.name && isSupportedForGenerateContent(m));
+
+		// Prefer the requested base model id; pick the highest numeric suffix (e.g. -002 over -001).
+		const preferred = candidates.filter((m) => m.baseModelId === GEMINI_PREFERRED_BASE_MODEL_ID);
+		if (preferred.length) {
+			preferred.sort((a, b) => {
+				const an = extractNumericSuffix(a.name || '') ?? -1;
+				const bn = extractNumericSuffix(b.name || '') ?? -1;
+				return bn - an;
+			});
+			const chosen = normalizeGeminiModelName(preferred[0].name || GEMINI_PREFERRED_BASE_MODEL_ID);
+			geminiResolvedModelCache = { modelName: chosen, expiresAt: now + 60 * 60 * 1000 };
+			return {
+				modelName: chosen,
+				resolvedFrom: 'models.list',
+				debug: {
+					candidateCount: preferred.length,
+					chosenBaseModelId: GEMINI_PREFERRED_BASE_MODEL_ID,
+					chosenNumericSuffix: extractNumericSuffix(preferred[0].name || ''),
+				},
+			};
+		}
+
+		// Otherwise, pick any model that supports generateContent, preferring a modern "flash" model.
+		const preferenceOrder = [
+			'gemini-2.5-flash',
+			'gemini-2.0-flash',
+			'gemini-2.0-flash-lite',
+			'gemini-3-flash',
+			'gemini-1.5-flash',
+			'gemini-1.5-pro',
+		];
+		for (const base of preferenceOrder) {
+			const subset = candidates.filter((m) => (m.baseModelId || '').startsWith(base));
+			if (subset.length) {
+				// Prefer stable (non-preview/exp) variants, then highest numeric suffix.
+				subset.sort((a, b) => {
+					const aName = (a.name || '').toLowerCase();
+					const bName = (b.name || '').toLowerCase();
+					const aIsPreview = /\b(preview|exp|experimental)\b/.test(aName);
+					const bIsPreview = /\b(preview|exp|experimental)\b/.test(bName);
+					if (aIsPreview !== bIsPreview) return aIsPreview ? 1 : -1;
+					const an = extractNumericSuffix(a.name || '') ?? -1;
+					const bn = extractNumericSuffix(b.name || '') ?? -1;
+					return bn - an;
+				});
+				const chosen = normalizeGeminiModelName(subset[0].name || base);
+				geminiResolvedModelCache = { modelName: chosen, expiresAt: now + 60 * 60 * 1000 };
+				return {
+					modelName: chosen,
+					resolvedFrom: 'models.list',
+					debug: {
+						candidateCount: subset.length,
+						chosenBaseModelId: subset[0].baseModelId,
+						chosenNumericSuffix: extractNumericSuffix(subset[0].name || ''),
+					},
+				};
+			}
+		}
+		const chosen = normalizeGeminiModelName(candidates[0].name || GEMINI_PREFERRED_BASE_MODEL_ID);
+		geminiResolvedModelCache = { modelName: chosen, expiresAt: now + 60 * 60 * 1000 };
+		return {
+			modelName: chosen,
+			resolvedFrom: 'models.list',
+			debug: {
+				candidateCount: candidates.length,
+				chosenBaseModelId: candidates[0].baseModelId,
+				chosenNumericSuffix: extractNumericSuffix(candidates[0].name || ''),
+			},
+		};
+	}
+
+	// Fallback to a reasonable default. This may 404 if the key doesn't have access.
+	const fallback = normalizeGeminiModelName('gemini-2.0-flash');
+	geminiResolvedModelCache = { modelName: fallback, expiresAt: now + 5 * 60 * 1000 };
+	return { modelName: fallback, resolvedFrom: 'fallback' };
+}
+
 const CORS_HEADERS_BASE = {
 	'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
 	'Access-Control-Allow-Headers': 'Content-Type',
@@ -212,8 +406,9 @@ async function handleAIHealth(env: Env, origin: string | null): Promise<Response
 	}
 
 	const apiKey = env.GEMINI_API_KEY.trim();
+	const resolved = await resolveGeminiModelName(apiKey);
 	const url =
-		'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent' +
+		`https://generativelanguage.googleapis.com/${encodeURIComponent(GEMINI_API_VERSION)}/${resolved.modelName}:generateContent` +
 		`?key=${encodeURIComponent(apiKey)}`;
 
 	const body = JSON.stringify({
@@ -223,11 +418,19 @@ async function handleAIHealth(env: Env, origin: string | null): Promise<Response
 				parts: [{ text: 'Respond with a single word: ok' }],
 			},
 		],
+		generationConfig: {
+			temperature: 0.0,
+			maxOutputTokens: 32,
+			// Avoid "thinking" consuming the entire tiny output budget.
+			thinkingConfig: { thinkingBudget: 0 },
+		},
 	});
 
 	let ok = false;
 	let snippet = '';
 	let error: string | null = null;
+	let upstreamStatus: number | null = null;
+	let upstreamBodySnippet: string | null = null;
 
 	try {
 		const res = await fetch(url, {
@@ -235,10 +438,18 @@ async function handleAIHealth(env: Env, origin: string | null): Promise<Response
 			headers: { 'content-type': 'application/json; charset=utf-8' },
 			body,
 		});
+		upstreamStatus = res.status;
+		const rawText = await res.text().catch(() => '');
+		upstreamBodySnippet = rawText ? rawText.slice(0, 600) : null;
 		if (!res.ok) {
 			error = `Gemini health check failed with status ${res.status}`;
 		} else {
-			const data: any = await res.json().catch(() => null);
+			let data: any = null;
+			try {
+				data = rawText ? JSON.parse(rawText) : null;
+			} catch {
+				data = null;
+			}
 			const parts: string[] =
 				data?.candidates?.[0]?.content?.parts?.map((p: any) =>
 					p && typeof p.text === 'string' ? p.text : '',
@@ -257,6 +468,59 @@ async function handleAIHealth(env: Env, origin: string | null): Promise<Response
 			hasKey: true,
 			message: ok ? 'Gemini responded successfully.' : error || 'Gemini did not return a usable response.',
 			snippet,
+			apiVersion: GEMINI_API_VERSION,
+			model: resolved.modelName,
+			resolvedFrom: resolved.resolvedFrom,
+			upstreamStatus,
+			upstreamBodySnippet,
+		},
+		{ status: 200 },
+		origin,
+	);
+}
+
+async function handleAIModels(env: Env, origin: string | null): Promise<Response> {
+	const hasKey = typeof env.GEMINI_API_KEY === 'string' && env.GEMINI_API_KEY.trim().length > 0;
+	if (!hasKey) {
+		return jsonResponse(
+			{
+				ok: false,
+				status: 'missing_api_key',
+				message: 'GEMINI_API_KEY is not configured on this Worker.',
+			},
+			{ status: 200 },
+			origin,
+		);
+	}
+
+	const apiKey = env.GEMINI_API_KEY.trim();
+	const listed = await listGeminiModels(apiKey);
+	const models = listed.models
+		.map((m) => ({
+			name: m.name ?? null,
+			baseModelId: m.baseModelId ?? null,
+			version: m.version ?? null,
+			displayName: m.displayName ?? null,
+			supportedGenerationMethods: Array.isArray(m.supportedGenerationMethods)
+				? m.supportedGenerationMethods
+				: [],
+		}))
+		// Keep payload bounded.
+		.slice(0, 80);
+
+	const resolved = await resolveGeminiModelName(apiKey);
+
+	return jsonResponse(
+		{
+			ok: listed.ok,
+			apiVersion: GEMINI_API_VERSION,
+			count: listed.models.length,
+			returned: models.length,
+			resolvedModel: resolved.modelName,
+			resolvedFrom: resolved.resolvedFrom,
+			models,
+			upstreamStatus: listed.upstreamStatus,
+			upstreamBodySnippet: listed.upstreamBodySnippet,
 		},
 		{ status: 200 },
 		origin,
@@ -425,14 +689,14 @@ async function callAIDungeonMaster(
 	if (!apiKey) {
 		throw new Error('GEMINI_API_KEY is not configured');
 	}
+	const resolved = await resolveGeminiModelName(apiKey.trim());
 
 	const url =
-		'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent' +
-		`?key=${encodeURIComponent(apiKey)}`;
+		`https://generativelanguage.googleapis.com/${encodeURIComponent(GEMINI_API_VERSION)}/${resolved.modelName}:generateContent` +
+		`?key=${encodeURIComponent(apiKey.trim())}`;
 
 	const body = JSON.stringify({
-		system_instruction: {
-			role: 'system',
+		systemInstruction: {
 			parts: [{ text: systemPrompt }],
 		},
 		contents: [
@@ -441,6 +705,10 @@ async function callAIDungeonMaster(
 				parts: [{ text: userPrompt }],
 			},
 		],
+		generationConfig: {
+			temperature: 0.7,
+			maxOutputTokens: 800,
+		},
 	});
 
 	const res = await fetch(url, {
@@ -452,7 +720,13 @@ async function callAIDungeonMaster(
 	});
 
 	if (!res.ok) {
-		throw new Error(`Gemini AI-DM request failed with status ${res.status}`);
+		let detail = '';
+		try {
+			detail = (await res.text()).slice(0, 300);
+		} catch {
+			// ignore
+		}
+		throw new Error(`Gemini AI-DM request failed with status ${res.status}${detail ? `: ${detail}` : ''}`);
 	}
 
 	let data: any;
@@ -2170,6 +2444,10 @@ export default {
 
 		if (pathname === '/api/health/ai' && method === 'GET') {
 			return handleAIHealth(env, origin);
+		}
+
+		if (pathname === '/api/health/ai/models' && method === 'GET') {
+			return handleAIModels(env, origin);
 		}
 
 		if (pathname === '/api/register' && method === 'POST') {

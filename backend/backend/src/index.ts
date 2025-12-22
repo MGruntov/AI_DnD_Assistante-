@@ -13,6 +13,7 @@
 
 type Env = {
 	ADA_DATA: KVNamespace;
+	GEMINI_API_KEY: string;
 };
 
 const CORS_HEADERS_BASE = {
@@ -338,24 +339,66 @@ function buildAIDMUserPrompt(
 }
 
 async function callAIDungeonMaster(
+	env: Env,
 	adventure: AdventureTemplate,
 	session: AIDMSessionState,
 	character: Character,
 	playerInput: string,
 ): Promise<string> {
-	// Use Pollinations simple text endpoint for robustness.
-	// We inline both the system and user prompts into a single text prompt and
-	// rely on the model to follow the requested [NARRATIVE]/[MECHANICS] format.
+	// Use Google Gemini 1.5 Flash via the Generative Language API.
+	// We send the system prompt as a system instruction and the adventure/user
+	// context as a single user message, and expect the model to follow the
+	// requested [NARRATIVE]/[MECHANICS] format.
 	const systemPrompt = buildAIDMSystemPrompt();
 	const userPrompt = buildAIDMUserPrompt(adventure, session, character, playerInput);
-	const combinedPrompt = `${systemPrompt}\n\n---\n\n${userPrompt}`;
-
-	const url = `https://text.pollinations.ai/${encodeURIComponent(combinedPrompt)}`;
-	const res = await fetch(url, { method: 'GET' });
-	if (!res.ok) {
-		throw new Error(`AI-DM request failed with status ${res.status}`);
+	const apiKey = env.GEMINI_API_KEY;
+	if (!apiKey) {
+		throw new Error('GEMINI_API_KEY is not configured');
 	}
-	return await res.text();
+
+	const url =
+		'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent' +
+		`?key=${encodeURIComponent(apiKey)}`;
+
+	const body = JSON.stringify({
+		system_instruction: {
+			role: 'system',
+			parts: [{ text: systemPrompt }],
+		},
+		contents: [
+			{
+				role: 'user',
+				parts: [{ text: userPrompt }],
+			},
+		],
+	});
+
+	const res = await fetch(url, {
+		method: 'POST',
+		headers: {
+			'content-type': 'application/json; charset=utf-8',
+		},
+		body,
+	});
+
+	if (!res.ok) {
+		throw new Error(`Gemini AI-DM request failed with status ${res.status}`);
+	}
+
+	let data: any;
+	try {
+		data = await res.json();
+	} catch (err) {
+		throw new Error('Failed to parse Gemini response JSON');
+	}
+
+	const parts: string[] =
+		data?.candidates?.[0]?.content?.parts?.map((p: any) => (p && typeof p.text === 'string' ? p.text : '')) || [];
+	const text = parts.join('').trim();
+	if (!text) {
+		throw new Error('Gemini returned an empty response');
+	}
+	return text;
 }
 
 function parseAIDMResponse(raw: string): { narrative: string; mechanics: {
@@ -401,6 +444,29 @@ function parseAIDMResponse(raw: string): { narrative: string; mechanics: {
 		narrative,
 		mechanics: { checkDescription, dc, ability, skill, advantage },
 	};
+}
+
+function normalizePlayerActionClause(input: string): string {
+	const trimmed = (input || '').trim();
+	if (!trimmed) return 'press on along the path';
+	// Strip a leading "I" so we can safely say "You ..."
+	let withoutI = trimmed.replace(/^i\b[\s,]*/i, '').trim();
+	if (!withoutI) {
+		withoutI = trimmed;
+	}
+	// Make the first character lowercase for smoother insertion after "You "
+	return withoutI.charAt(0).toLowerCase() + withoutI.slice(1);
+}
+
+function buildFallbackNarrativeFromInput(playerInput: string, adventure: AdventureTemplate): string {
+	const actionClause = normalizePlayerActionClause(playerInput);
+	const settingNoun = adventure.title.toLowerCase().includes('forest')
+		? 'forest'
+		: 'scene';
+	return [
+		'Even without the usual weave of distant magic behind her words, ADA falls back on simple storytelling.',
+		`You ${actionClause}, and the ${settingNoun} responds in small but tangible ways: branches creak, unseen eyes track your steps, and the trail twists around your choice.`,
+	].join(' ');
 }
 
 function appendToSessionSummary(session: AIDMSessionState, entries: TurnEntry[]): void {
@@ -677,6 +743,7 @@ async function handleStartAICampaign(request: Request, env: Env, origin: string 
 	let openingNarrative: string | null = null;
 	try {
 		const openingRaw = await callAIDungeonMaster(
+			env,
 			adventure,
 			session,
 			character,
@@ -819,7 +886,7 @@ async function handleAIDMTurn(request: Request, env: Env, origin: string | null)
 		advantage: null as 'none' | 'advantage' | 'disadvantage' | null,
 	};
 	try {
-		const rawResponse = await callAIDungeonMaster(adventure, session, character, playerInput);
+		const rawResponse = await callAIDungeonMaster(env, adventure, session, character, playerInput);
 		const parsed = parseAIDMResponse(rawResponse);
 		parsedNarrative = parsed.narrative;
 		parsedMechanics = parsed.mechanics;
@@ -829,8 +896,7 @@ async function handleAIDMTurn(request: Request, env: Env, origin: string | null)
 		console.error('AI-DM call failed', err);
 		// Fallback: generate a simple, deterministic DM response so play can
 		// continue even if the external AI service is down.
-		parsedNarrative =
-			'Even without the usual weave of magic behind her words, ADA keeps the story moving. The forest responds to your actions: branches creak, unseen eyes track your steps, and the trail twists toward whatever you choose to do next.';
+		parsedNarrative = buildFallbackNarrativeFromInput(playerInput, adventure);
 		session.pendingCheck = null;
 	}
 

@@ -139,6 +139,8 @@
     : "https://backend.ada-assistante.workers.dev";
   let cachedAdventures = [];
   let cachedAdventureCharacters = [];
+  let cachedUserCampaigns = [];
+  let cachedVaultCharacters = [];
   let lastAiMechanics = null;
   let pendingForgedCharacter = null;
   let pendingNarrativeText = "";

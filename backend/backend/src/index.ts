@@ -338,9 +338,13 @@ function buildSessionHistory(log: TurnEntry[]): string {
 
 function buildAIDMSystemPrompt(): string {
 	return [
-		'You are ADA, an AI Dungeon Master for D&D 5e.',
+		'You are the Dungeon Master (DM) for a solo D&D 5e adventure.',
 		'You run tightly scoped, structured solo adventures for a single player.',
 		'Always respect D&D 5e tone and mechanics: low-level heroes are fragile, magic and powerful items are limited.',
+		'',
+		'Never mention that you are an AI, a model, or a system. Never refer to yourself as "ADA" in the narration.',
+		'Do not narrate about "ADA" speaking, her words, or anything meta about how the response was generated.',
+		'If the player asks who/what you are, answer in-world or as the DM in first person ("I"), not in third person.',
 		'',
 		'Never simply repeat the player\'s last input back to them as your narration.',
 		'Always advance the scene with new details: environment, NPC reactions, consequences, or new options.',
@@ -512,26 +516,57 @@ function parseAIDMResponse(raw: string): { narrative: string; mechanics: {
 	};
 }
 
-function normalizePlayerActionClause(input: string): string {
+function isQuestionLikeInput(input: string): boolean {
+	const t = (input || '').trim();
+	if (!t) return false;
+	if (/[?？]\s*$/.test(t)) return true;
+	return /^(who|what|where|when|why|how)\b/i.test(t);
+}
+
+function formatPlayerAsActionOrSpeech(input: string): { kind: 'action' | 'question'; clause: string } {
 	const trimmed = (input || '').trim();
-	if (!trimmed) return 'press on along the path';
+	if (!trimmed) return { kind: 'action', clause: 'press on along the path' };
+	if (isQuestionLikeInput(trimmed)) {
+		return { kind: 'question', clause: trimmed };
+	}
 	// Strip a leading "I" so we can safely say "You ..."
 	let withoutI = trimmed.replace(/^i\b[\s,]*/i, '').trim();
-	if (!withoutI) {
-		withoutI = trimmed;
-	}
-	// Make the first character lowercase for smoother insertion after "You "
-	return withoutI.charAt(0).toLowerCase() + withoutI.slice(1);
+	if (!withoutI) withoutI = trimmed;
+	// Lowercase first char for smoother insertion after "You "
+	const clause = withoutI.charAt(0).toLowerCase() + withoutI.slice(1);
+	return { kind: 'action', clause };
 }
 
 function buildFallbackNarrativeFromInput(playerInput: string, adventure: AdventureTemplate): string {
-	const actionClause = normalizePlayerActionClause(playerInput);
-	const settingNoun = adventure.title.toLowerCase().includes('forest')
-		? 'forest'
-		: 'scene';
+	const setting = adventure.title.toLowerCase().includes('whisper')
+		? 'Whispering Woods'
+		: adventure.title.toLowerCase().includes('forest')
+			? 'the forest'
+			: 'the road';
+	const parsed = formatPlayerAsActionOrSpeech(playerInput);
+
+	// Provide a clean, non-repetitive fallback that never mentions ADA in third person.
+	if (parsed.kind === 'question') {
+		const q = parsed.clause;
+		// Special-case the common meta question to avoid confusion.
+		if (/\b(what|who)\s+is\s+ada\b/i.test(q)) {
+			return [
+				`A calm presence seems to answer as you move through ${setting}.`,
+				`"I'm your Dungeon Master—think of me as the narrator of this world. Tell me what you do, and I'll describe what happens next."`,
+				`The air smells of wet bark and crushed pine needles. Somewhere deeper among the trees, something pads softly through the undergrowth.`,
+			].join(' ');
+		}
+		return [
+			`You ask, “${q.replace(/^[\s"“”]+|[\s"“”]+$/g, '')}”`,
+			`For a heartbeat, ${setting} offers only hints: the hush of leaves, the creak of boughs, and the feeling that you’re being watched.`,
+			`You can act, listen, or change course—what do you do next?`,
+		].join(' ');
+	}
+
 	return [
-		'Even without the usual weave of distant magic behind her words, ADA falls back on simple storytelling.',
-		`You ${actionClause}, and the ${settingNoun} responds in small but tangible ways: branches creak, unseen eyes track your steps, and the trail twists around your choice.`,
+		`You ${parsed.clause}.`,
+		`The world answers immediately: branches creak overhead, a cold draft slides between trunks, and the ground underfoot softens into damp loam.`,
+		`No clear howl follows—only the uneasy sense of movement somewhere just out of sight.`,
 	].join(' ');
 }
 
@@ -824,6 +859,16 @@ async function handleStartAICampaign(request: Request, env: Env, origin: string 
 		const name = character.name || 'your character';
 		openingNarrative = `You tug your red cloak tighter against the whispering chill of the forest. Tonight, ${name} carries spirit-warding herbs along the lonely path to Grandmother's cottage. The trees lean close, shadows pooling between their roots, and far off you think you hear the low, hungry growl of something stalking the trail.`;
 	}
+
+	// Initialize the campaign transcript with the opening DM narration so the
+	// Dialogue tab has an immediate "what's going on" message even after the
+	// dashboard view reloads campaign details.
+	if (openingNarrative && openingNarrative.trim().length > 0) {
+		campaign.conversationTranscript = `ADA: ${openingNarrative.trim()}`;
+	} else {
+		campaign.conversationTranscript = campaign.conversationTranscript || '';
+	}
+	await env.ADA_DATA.put(`campaign:${id}`, JSON.stringify(campaign));
 
 	// Record this as the first DM entry in the session log.
 	const now = new Date().toISOString();

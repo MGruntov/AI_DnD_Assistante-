@@ -450,6 +450,7 @@
       updateTranscript(combinedFinal, TranscriptMode.REPLACE);
       if (activeTranscriptContext === "dialogue") {
         logDialogueSnippet(final.trim(), combinedFinal);
+        scheduleSaveCampaignTranscript();
       }
     } else if (interim) {
       const combined = (lastFinal + " " + interim).trim();
@@ -909,6 +910,29 @@
       : entry;
     campaignDialogueTranscriptEl.scrollTop =
       campaignDialogueTranscriptEl.scrollHeight;
+    scheduleSaveCampaignTranscript();
+  }
+
+  let saveTranscriptTimer = null;
+
+  function scheduleSaveCampaignTranscript() {
+    if (!campaignDialogueTranscriptEl) return;
+    if (!activeCampaignId) return;
+    const username = getCurrentUser();
+    if (!username) return;
+
+    const text = campaignDialogueTranscriptEl.value || "";
+    if (saveTranscriptTimer) window.clearTimeout(saveTranscriptTimer);
+    saveTranscriptTimer = window.setTimeout(() => {
+      apiPost("/api/campaigns/details", {
+        action: "updateTranscript",
+        campaignId: activeCampaignId,
+        username,
+        transcript: text,
+      }).catch((e) => {
+        console.warn("[ADA] Failed to save campaign transcript", e);
+      });
+    }, 800);
   }
 
   async function sendAiDmTurn() {
@@ -1203,6 +1227,16 @@
       }
 
       if (campaignActionStatusEl) campaignActionStatusEl.textContent = "";
+
+      if (campaignDialogueTranscriptEl) {
+        const transcript =
+          typeof campaign.conversationTranscript === "string"
+            ? campaign.conversationTranscript
+            : "";
+        campaignDialogueTranscriptEl.value = transcript;
+        campaignDialogueTranscriptEl.scrollTop =
+          campaignDialogueTranscriptEl.scrollHeight;
+      }
     }
 
     renderCampaignCharacters(characters);
@@ -1909,6 +1943,14 @@
       setCampaignTab(tab);
     });
   });
+
+  if (campaignDialogueTranscriptEl) {
+    campaignDialogueTranscriptEl.addEventListener("input", () => {
+      if (activeTranscriptContext === "dialogue") {
+        scheduleSaveCampaignTranscript();
+      }
+    });
+  }
 
   if (aiDmSendBtn) {
     aiDmSendBtn.addEventListener("click", () => {

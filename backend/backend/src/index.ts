@@ -71,6 +71,7 @@ type Campaign = {
 	journalEntryIds?: string[];
 	scriptIds?: string[];
 	linkedCharacterIds?: string[];
+	conversationTranscript?: string;
 	// Optional AI-DM fields
 	mode?: 'ai-solo' | 'standard';
 	adventureId?: string;
@@ -182,6 +183,13 @@ type AIDMSessionState = {
 	summary: string;
 	checkpointIndex: number;
 	status: 'active' | 'completed' | 'failed';
+	pendingCheck?: {
+		checkDescription: string | null;
+		dc: number | null;
+		ability: string | null;
+		skill: string | null;
+		advantage: 'none' | 'advantage' | 'disadvantage' | null;
+	} | null;
 };
 
 async function handleHealth(origin: string | null): Promise<Response> {
@@ -317,6 +325,9 @@ function buildAIDMUserPrompt(
 		'Player character:',
 		characterSummary,
 		'',
+		'Longer-term session summary (may be truncated):',
+		session.summary || '(no prior summary; rely on recent log above)',
+		'',
 		'Recent conversation log (most recent last):',
 		history || '(no previous turns – this is the opening scene)',
 		'',
@@ -390,6 +401,34 @@ function parseAIDMResponse(raw: string): { narrative: string; mechanics: {
 		narrative,
 		mechanics: { checkDescription, dc, ability, skill, advantage },
 	};
+}
+
+function appendToSessionSummary(session: AIDMSessionState, entries: TurnEntry[]): void {
+	if (!Array.isArray(entries) || entries.length === 0) return;
+	const lines = entries.map((e) => {
+		const who = e.role === 'player' ? 'Player' : 'DM';
+		return `${who}: ${e.text}`;
+	});
+	const joined = lines.join('\n');
+	if (!session.summary) {
+		session.summary = joined;
+	} else {
+		session.summary = `${session.summary}\n${joined}`;
+	}
+	// Keep summary from growing without bound: trim to last ~4000 characters
+	if (session.summary.length > 4000) {
+		session.summary = session.summary.slice(session.summary.length - 4000);
+	}
+}
+
+function trimSessionLog(session: AIDMSessionState, maxEntries = 12): void {
+	if (!Array.isArray(session.log)) return;
+	if (session.log.length <= maxEntries) return;
+	const overflow = session.log.length - maxEntries;
+	if (overflow <= 0) return;
+	const removed = session.log.slice(0, overflow);
+	appendToSessionSummary(session, removed);
+	session.log = session.log.slice(-maxEntries);
 }
 
 async function handleRegister(request: Request, env: Env, origin: string | null): Promise<Response> {
@@ -628,6 +667,7 @@ async function handleStartAICampaign(request: Request, env: Env, origin: string 
 		summary: '',
 		checkpointIndex: 0,
 		status: 'active',
+		pendingCheck: null,
 	};
 
 	await env.ADA_DATA.put(`aiSession:${id}`, JSON.stringify(session));
@@ -655,9 +695,7 @@ async function handleStartAICampaign(request: Request, env: Env, origin: string 
 	// Record this as the first DM entry in the session log.
 	const now = new Date().toISOString();
 	session.log.push({ role: 'dm', text: openingNarrative ?? '', timestamp: now });
-	if (session.log.length > 12) {
-		session.log = session.log.slice(-12);
-	}
+	trimSessionLog(session);
 	await env.ADA_DATA.put(`aiSession:${id}`, JSON.stringify(session));
 
 	return jsonResponse({ ok: true, campaign, session, openingNarrative }, { status: 201 }, origin);
@@ -743,6 +781,7 @@ async function handleAIDMTurn(request: Request, env: Env, origin: string | null)
 			summary: '',
 			checkpointIndex: 0,
 			status: 'active',
+			pendingCheck: null,
 		};
 	}
 
@@ -769,10 +808,7 @@ async function handleAIDMTurn(request: Request, env: Env, origin: string | null)
 
 	const now = new Date().toISOString();
 	session.log.push({ role: 'player', text: playerInput, timestamp: now });
-	// Keep short-term memory bounded
-	if (session.log.length > 12) {
-		session.log = session.log.slice(-12);
-	}
+	trimSessionLog(session);
 
 	let parsedNarrative: string;
 	let parsedMechanics = {
@@ -787,18 +823,19 @@ async function handleAIDMTurn(request: Request, env: Env, origin: string | null)
 		const parsed = parseAIDMResponse(rawResponse);
 		parsedNarrative = parsed.narrative;
 		parsedMechanics = parsed.mechanics;
+		// Remember the latest requested check so it can be resolved separately.
+		session.pendingCheck = parsed.mechanics;
 	} catch (err) {
 		console.error('AI-DM call failed', err);
 		// Fallback: generate a simple, deterministic DM response so play can
 		// continue even if the external AI service is down.
 		parsedNarrative =
 			'Even without the usual weave of magic behind her words, ADA keeps the story moving. The forest responds to your actions: branches creak, unseen eyes track your steps, and the trail twists toward whatever you choose to do next.';
+		session.pendingCheck = null;
 	}
 
 	session.log.push({ role: 'dm', text: parsedNarrative, timestamp: new Date().toISOString() });
-	if (session.log.length > 12) {
-		session.log = session.log.slice(-12);
-	}
+	trimSessionLog(session);
 
 	await env.ADA_DATA.put(sessionKey, JSON.stringify(session));
 
@@ -1181,6 +1218,26 @@ async function handlePostCampaignDetails(request: Request, env: Env, origin: str
 		await env.ADA_DATA.put(indexKey, JSON.stringify(ids));
 
 		return jsonResponse({ ok: true }, { status: 201 }, origin);
+	}
+
+	if (action === 'updateTranscript') {
+		const username = String(body?.username ?? '').trim();
+		const transcriptRaw = body?.transcript;
+		const transcript = typeof transcriptRaw === 'string' ? transcriptRaw : '';
+		if (!username) {
+			return errorResponse('username is required for updateTranscript', 400, origin);
+		}
+
+		const isParticipant =
+			campaign.dm === username ||
+			(Array.isArray(campaign.participants) && campaign.participants.includes(username));
+		if (!isParticipant) {
+			return errorResponse('You are not a participant in this campaign', 403, origin);
+		}
+
+		campaign.conversationTranscript = transcript;
+		await env.ADA_DATA.put(`campaign:${campaignId}`, JSON.stringify(campaign));
+		return jsonResponse({ ok: true }, { status: 200 }, origin);
 	}
 
 	if (action === 'deleteCampaign') {

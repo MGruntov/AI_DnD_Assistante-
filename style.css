@@ -113,6 +113,35 @@ h1, h2, h3, h4,
     inset 0 0 0 1px rgba(243, 203, 112, 0.50),
     0 22px 55px rgba(30, 23, 18, 0.14);
 }
+
+/* Celtic knot side braid (tasteful, not overpowering) */
+.app {
+  --knot-strip-width: 56px;
+  padding-left: calc(24px + var(--knot-strip-width));
+}
+
+.app::before {
+  content: "";
+  position: absolute;
+  top: 18px;
+  bottom: 18px;
+  left: 16px;
+  width: calc(var(--knot-strip-width) - 16px);
+  border-radius: 18px;
+  pointer-events: none;
+  opacity: 0.55;
+  background-repeat: repeat-y;
+  background-position: center;
+  background-size: 40px 120px;
+  background-image: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='40'%20height='120'%20viewBox='0%200%2040%20120'%3E%3Crect%20width='40'%20height='120'%20fill='none'/%3E%3Cg%20fill='none'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Cpath%20d='M20%206%20C10%206%206%2010%206%2020%20C6%2030%2010%2034%2020%2034%20C30%2034%2034%2030%2034%2020%20C34%2010%2030%206%2020%206Z'%20stroke='%23E01C29'%20stroke-opacity='0.35'%20stroke-width='3.2'/%3E%3Cpath%20d='M20%2022%20C14%2022%2012%2024%2012%2030%20C12%2036%2014%2038%2020%2038%20C26%2038%2028%2036%2028%2030%20C28%2024%2026%2022%2020%2022Z'%20stroke='%23F3CB70'%20stroke-opacity='0.45'%20stroke-width='2.6'/%3E%3Cpath%20d='M20%2034%20V54%20M20%2066%20V86'%20stroke='%23E01C29'%20stroke-opacity='0.22'%20stroke-width='3.2'/%3E%3Cpath%20d='M20%2040%20C10%2040%206%2044%206%2054%20C6%2064%2010%2068%2020%2068%20C30%2068%2034%2064%2034%2054%20C34%2044%2030%2040%2020%2040Z'%20stroke='%23E01C29'%20stroke-opacity='0.35'%20stroke-width='3.2'/%3E%3Cpath%20d='M20%2056%20C14%2056%2012%2058%2012%2064%20C12%2070%2014%2072%2020%2072%20C26%2072%2028%2070%2028%2064%20C28%2058%2026%2056%2020%2056Z'%20stroke='%23F3CB70'%20stroke-opacity='0.45'%20stroke-width='2.6'/%3E%3Cpath%20d='M20%2074%20V94%20M20%20106%20V116'%20stroke='%23E01C29'%20stroke-opacity='0.22'%20stroke-width='3.2'/%3E%3Cpath%20d='M20%2074%20C10%2074%206%2078%206%2088%20C6%2098%2010%20102%2020%20102%20C30%20102%2034%2098%2034%2088%20C34%2078%2030%2074%2020%2074Z'%20stroke='%23E01C29'%20stroke-opacity='0.35'%20stroke-width='3.2'/%3E%3Cpath%20d='M20%2090%20C14%2090%2012%2092%2012%2098%20C12%20104%2014%20106%2020%20106%20C26%20106%2028%20104%2028%2098%20C28%2092%2026%2090%2020%2090Z'%20stroke='%23F3CB70'%20stroke-opacity='0.45'%20stroke-width='2.6'/%3E%3C/g%3E%3C/svg%3E");
+  mix-blend-mode: multiply;
+  z-index: 0;
+}
+
+.app > * {
+  position: relative;
+  z-index: 1;
+}
 /* Celtic ornament border motif (two-color knotwork, same palette) */
 .app::after {
   content: "";
@@ -153,26 +182,9 @@ h1, h2, h3, h4,
 
 /* Explicit dragon head silhouette (single, tasteful) */
 .app__header-main::after {
-  content: "";
-  position: absolute;
+  position: relative;
+  padding-right: 0;
   right: -10px;
-  top: -18px;
-  width: 150px;
-  height: 150px;
-  pointer-events: none;
-  opacity: 0.22;
-  background-repeat: no-repeat;
-  background-position: center;
-  background-size: contain;
-  opacity: 0.26;
-  background-image: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%20200%20200'%3E%3Cpath%20d='M168%2064%20c-14-18-40-24-62-12%20l-10%207%20c-18-8-39-3-52%2012%20c-14%2017-14%2041%200%2058%20c-12%2011-18%2027-16%2045%20c3%2026%2025%2045%2052%2047%20c22%202%2044-9%2058-29%20l10-15%20c8-12%2012-26%2011-40%20c-1-12-6-22-15-31%20c12-6%2020-18%2021-32%20c1-14-4-27-17-40%20Z%20M119%2074%20l-10%204%20l7%208%20l-12%2010%20l-8-5%20l-9%206%20l9%209%20l-16%2014%20l-18%206%20l9%208%20l-8%207%20l-12-4%20l-6%2011%20l10%206%20c-3%209-2%2019%203%2027%20c8%2013%2026%2018%2042%2013%20c12-4%2022-12%2029-24%20l8-13%20l-12-10%20l11-6%20l16%2012%20l7-9%20l-10-10%20l10-6%20l14%208%20l6-10%20l-9-8%20l8-5%20c4-3%205-8%203-12%20c-2-4-7-6-12-4%20Z'%20fill='%23E01C29'%20fill-opacity='0.20'/%3E%3Cpath%20d='M168%2064%20c-14-18-40-24-62-12%20l-10%207%20c-18-8-39-3-52%2012%20c-14%2017-14%2041%200%2058%20c-12%2011-18%2027-16%2045%20c3%2026%2025%2045%2052%2047%20c22%202%2044-9%2058-29%20l10-15%20c8-12%2012-26%2011-40%20c-1-12-6-22-15-31%20c12-6%2020-18%2021-32%20c1-14-4-27-17-40%20Z'%20fill='none'%20stroke='%23F3CB70'%20stroke-opacity='0.34'%20stroke-width='6'%20stroke-linejoin='round'/%3E%3Cpath%20d='M141%2088%20c6%200%2010%204%2010%2010%20c0%205-4%209-10%209%20c-5%200-9-4-9-9%20c0-6%204-10%209-10%20Z'%20fill='%23F3CB70'%20fill-opacity='0.16'/%3E%3Cpath%20d='M140%2050%20l12-22%20l10%2010%20l-13%2024%20Z'%20fill='%23E01C29'%20fill-opacity='0.16'/%3E%3Cpath%20d='M126%2056%20l3-26%20l14%206%20l-6%2026%20Z'%20fill='%23F3CB70'%20fill-opacity='0.14'/%3E%3C/svg%3E");
-  filter: drop-shadow(0 12px 22px rgba(30, 23, 18, 0.10));
-}
-
-.brand {
-  display: flex;
-  align-items: center;
-  gap: 12px;
 }
 
 .brand__mark {
@@ -1881,6 +1893,7 @@ h1, h2, h3, h4,
   .app {
     margin: 12px;
     padding: 18px 16px 16px;
+    padding-left: calc(16px + var(--knot-strip-width));
   }
 
   .controls {

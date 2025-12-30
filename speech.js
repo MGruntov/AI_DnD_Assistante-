@@ -19,6 +19,20 @@
 
   const authSection = document.getElementById("authSection");
   const homeSection = document.getElementById("homeSection");
+  const viewForge = document.getElementById("viewForge");
+  const viewHud = document.getElementById("viewHud");
+  const switchToForgeBtn = document.getElementById("switchToForgeBtn");
+  const switchToHudBtn = document.getElementById("switchToHudBtn");
+  const extractionFeedEl = document.getElementById("extractionFeed");
+  const autoPortraitsToggle = document.getElementById("autoPortraitsToggle");
+
+  const hudActiveCharacterMetaEl = document.getElementById("hudActiveCharacterMeta");
+  const hudChangeCharacterBtn = document.getElementById("hudChangeCharacterBtn");
+  const hudRollLogEl = document.getElementById("hudRollLog");
+  const hudDiceButtons = Array.from(document.querySelectorAll(".dice__btn"));
+  const sessionNotesEl = document.getElementById("sessionNotes");
+  const sessionNotesStatusEl = document.getElementById("sessionNotesStatus");
+
   const profileSection = document.getElementById("profileSection");
   const campaignsSection = document.getElementById("campaignsSection");
   const vaultSection = document.getElementById("vaultSection");
@@ -132,15 +146,28 @@
     currentIndex: 0,
   };
 
+  let rulesLookupDebounceTimer = null;
+  let rulesLookupAbortController = null;
+  let rulesLookupRequestSeq = 0;
+  let rulesLookupLastIssuedQuery = "";
+
   const PORTRAIT_STORAGE_KEY = "adaCurrentCharacterPortraitUrl";
   const CURRENT_USER_STORAGE_KEY = "adaCurrentUser";
   const ACTIVE_CAMPAIGN_STORAGE_KEY = "adaActiveCampaignId";
+  const ACTIVE_CHARACTER_STORAGE_KEY = "adaActiveCharacterId";
 
   let activeCampaignId = null;
   let activeCampaign = null;
   let activeCharacter = null;
   let activeCampaignCharacters = [];
   let cachedPlayerSpeakerLabel = "You";
+
+  let currentWorkspaceView = "forge"; // "forge" | "hud"
+  let awaitingHudCharacterSelect = false;
+  let lastAutoPortraitAt = 0;
+  let lastAutoPortraitSignature = "";
+  let extractionUpdateTimer = null;
+  let notesSaveTimer = null;
   // Backend API base URL (Cloudflare Worker)
   // Automatically use localhost for development, production URL otherwise
   const isDevelopment = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' || window.location.hostname === '0.0.0.0';
@@ -155,11 +182,17 @@
   let pendingForgedCharacter = null;
   let pendingNarrativeText = "";
   let pendingCharacterName = "";
+  let storedActiveCharacterId = null;
 
   try {
     const storedCampaignId = localStorage.getItem(ACTIVE_CAMPAIGN_STORAGE_KEY);
     if (storedCampaignId) {
       activeCampaignId = storedCampaignId;
+    }
+
+    const storedCharId = localStorage.getItem(ACTIVE_CHARACTER_STORAGE_KEY);
+    if (storedCharId) {
+      storedActiveCharacterId = String(storedCharId);
     }
   } catch {
     // ignore storage issues
@@ -256,6 +289,179 @@
     setStatus(listening ? "Listening..." : "Idle");
   }
 
+  function setWorkspaceView(next) {
+    const view = next === "hud" ? "hud" : "forge";
+    currentWorkspaceView = view;
+
+    if (viewForge) viewForge.hidden = view !== "forge";
+    if (viewHud) viewHud.hidden = view !== "hud";
+
+    if (switchToForgeBtn) {
+      const selected = view === "forge";
+      switchToForgeBtn.setAttribute("aria-selected", selected ? "true" : "false");
+    }
+    if (switchToHudBtn) {
+      const selected = view === "hud";
+      switchToHudBtn.setAttribute("aria-selected", selected ? "true" : "false");
+    }
+  }
+
+  function updateHudActiveCharacterUI() {
+    if (!hudActiveCharacterMetaEl) return;
+    if (!activeCharacter) {
+      hudActiveCharacterMetaEl.textContent = "No character selected yet.";
+      return;
+    }
+    const name = activeCharacter.name || "Unnamed Adventurer";
+    const race = activeCharacter.concept?.race || "";
+    const cls = activeCharacter.concept?.classSummary || "Adventurer";
+    const level = activeCharacter.concept?.levelSummary || "";
+    const bits = [name, [race, cls].filter(Boolean).join(" "), level ? `Lv ${level}` : ""]
+      .filter(Boolean)
+      .join(" • ");
+    hudActiveCharacterMetaEl.textContent = bits;
+  }
+
+  function setActiveCharacter(character, { persist = true } = {}) {
+    activeCharacter = character || null;
+    updateHudActiveCharacterUI();
+    // Chronicle notes are scoped by (campaign, character).
+    if (sessionNotesEl) {
+      loadSessionNotesFromStorage();
+    }
+    if (!persist) return;
+    try {
+      if (activeCharacter && activeCharacter.id) {
+        localStorage.setItem(ACTIVE_CHARACTER_STORAGE_KEY, String(activeCharacter.id));
+      } else {
+        localStorage.removeItem(ACTIVE_CHARACTER_STORAGE_KEY);
+      }
+    } catch {
+      // ignore storage issues
+    }
+  }
+
+  function requestHudCharacterSelection(message) {
+    awaitingHudCharacterSelect = true;
+    if (hudActiveCharacterMetaEl && message) {
+      hudActiveCharacterMetaEl.textContent = message;
+    }
+    showView("vault");
+  }
+
+  function hashStringToInt(str) {
+    // small deterministic hash for auto-portrait seeds
+    const s = String(str || "");
+    let h = 2166136261;
+    for (let i = 0; i < s.length; i++) {
+      h ^= s.charCodeAt(i);
+      h = Math.imul(h, 16777619);
+    }
+    return Math.abs(h);
+  }
+
+  function generatePortraits({ mode: generationMode } = {}) {
+    const prompt = buildPortraitPrompt();
+    if (!prompt) {
+      setPortraitStatus("Add some transcript text first, then we can generate portraits from it.");
+      return;
+    }
+
+    const modeLabel = generationMode === "auto" ? "Updating" : "Generating";
+    setPortraitStatus(`${modeLabel} portraits…`);
+
+    const baseSeed = generationMode === "auto"
+      ? hashStringToInt(prompt) % 1_000_000_000
+      : Math.floor(Math.random() * 1_000_000_000);
+
+    portraitImgs.forEach((img, index) => {
+      if (!img) return;
+      const seed = baseSeed + index;
+      const url = buildPortraitImageUrl(prompt, seed);
+      img.hidden = false;
+      img.src = url;
+    });
+
+    enablePortraitSelection();
+  }
+
+  function extractNarrativeGems(text) {
+    const raw = String(text || "");
+    const t = raw.toLowerCase();
+    const gems = [];
+
+    const classes = [
+      "barbarian","bard","cleric","druid","fighter","monk","paladin","ranger","rogue","sorcerer","warlock","wizard","artificer"
+    ];
+    const races = [
+      "human","elf","dwarf","halfling","gnome","half-elf","half elf","half-orc","half orc","tiefling","dragonborn","orc","goblin","goliath","aasimar"
+    ];
+    const backgrounds = [
+      "acolyte","criminal","folk hero","noble","sage","soldier","urchin","entertainer","hermit","outlander","charlatan","guild artisan","sailor"
+    ];
+
+    const foundClass = classes.find((c) => t.includes(c));
+    if (foundClass) gems.push({ kind: "Class", value: foundClass });
+
+    const foundRace = races.find((r) => t.includes(r));
+    if (foundRace) gems.push({ kind: "Race", value: foundRace.replace(/\b\w/g, (m) => m.toUpperCase()) });
+
+    const foundBg = backgrounds.find((b) => t.includes(b));
+    if (foundBg) gems.push({ kind: "Background", value: foundBg.replace(/\b\w/g, (m) => m.toUpperCase()) });
+
+    // Alignment hint
+    const align = t.match(/\b(lawful|neutral|chaotic)\s+(good|neutral|evil)\b/);
+    if (align) {
+      gems.push({ kind: "Alignment", value: `${align[1]} ${align[2]}`.replace(/\b\w/g, (m) => m.toUpperCase()) });
+    }
+
+    // A couple of narrative motifs that help the vibe feel "alive"
+    const motifs = [
+      { k: "Theme", rx: /\b(vengeance|redemption|oath|destiny|prophecy)\b/i },
+      { k: "Gear", rx: /\b(dagger|rapier|longsword|bow|spellbook|staff|cloak)\b/i },
+    ];
+    motifs.forEach((m) => {
+      const match = raw.match(m.rx);
+      if (match) gems.push({ kind: m.k, value: match[1] });
+    });
+
+    // Dedupe by kind and value
+    const seen = new Set();
+    return gems
+      .map((g) => ({ ...g, value: String(g.value || "").trim() }))
+      .filter((g) => g.value)
+      .filter((g) => {
+        const key = `${g.kind}:${g.value.toLowerCase()}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      })
+      .slice(0, 8);
+  }
+
+  function renderExtractionFeed(text) {
+    if (!extractionFeedEl) return;
+    const gems = extractNarrativeGems(text);
+    extractionFeedEl.innerHTML = "";
+    gems.forEach((g) => {
+      const li = document.createElement("li");
+      li.className = "extraction__item";
+      const span = document.createElement("span");
+      span.className = "extraction__tag";
+      span.innerHTML = `<b>Detected ${g.kind}:</b> ${String(g.value)}`;
+      li.appendChild(span);
+      extractionFeedEl.appendChild(li);
+    });
+  }
+
+  function scheduleExtractionUpdate(text) {
+    if (!extractionFeedEl) return;
+    if (extractionUpdateTimer) window.clearTimeout(extractionUpdateTimer);
+    extractionUpdateTimer = window.setTimeout(() => {
+      renderExtractionFeed(text);
+    }, 160);
+  }
+
   function updateTranscript(text, updateMode) {
     const target = activeTranscriptEl || transcriptEl;
     if (!target) return;
@@ -270,6 +476,27 @@
     // If we're in the campaign dialogue view, keep the chat-style thread in sync.
     if (target === campaignDialogueTranscriptEl) {
       scheduleRenderCampaignDialogueThread(target.value || "");
+    }
+
+    // Forge extras: extraction feed + auto portraits.
+    if (target === transcriptEl) {
+      scheduleExtractionUpdate(target.value || "");
+
+      const wantsAuto = !!(autoPortraitsToggle && autoPortraitsToggle.checked);
+      if (wantsAuto && isListening) {
+        const signature = (target.value || "").trim().slice(0, 280);
+        const now = Date.now();
+        // Throttle auto-portrait refreshes so we don't hammer the image endpoint.
+        if (
+          signature.length >= 40 &&
+          (now - lastAutoPortraitAt) > 6500 &&
+          signature !== lastAutoPortraitSignature
+        ) {
+          lastAutoPortraitAt = now;
+          lastAutoPortraitSignature = signature;
+          generatePortraits({ mode: "auto" });
+        }
+      }
     }
   }
 
@@ -430,17 +657,33 @@
   }
 
   function showView(view) {
-    // view: "auth-login" | "auth-register" | "home" | "profile" | "campaigns" | "campaign-detail" | "vault"
-    const isAuthView = view === "auth-login" || view === "auth-register";
-    const isCampaignView = view === "campaigns" || view === "campaign-detail";
-    const isVaultView = view === "vault";
+    // view: "auth-login" | "auth-register" | "forge" | "hud" | "home" | "profile" | "campaigns" | "campaign-detail" | "vault"
+    // ("home" is kept as a backwards-compatible alias for "forge")
+    let next = view === "home" ? "forge" : view;
+
+    if (next === "hud" && !activeCharacter) {
+      awaitingHudCharacterSelect = true;
+      next = "vault";
+    }
+
+    const isAuthView = next === "auth-login" || next === "auth-register";
+    const isWorkspaceView = next === "forge" || next === "hud";
+    const isCampaignView = next === "campaigns" || next === "campaign-detail";
+    const isVaultView = next === "vault";
 
     if (authSection) authSection.hidden = !isAuthView;
-    if (loginView) loginView.hidden = view !== "auth-login";
-    if (registerView) registerView.hidden = view !== "auth-register";
-    if (homeSection) homeSection.hidden = view !== "home";
-    if (profileSection) profileSection.hidden = view !== "profile";
+    if (loginView) loginView.hidden = next !== "auth-login";
+    if (registerView) registerView.hidden = next !== "auth-register";
+    if (homeSection) homeSection.hidden = !isWorkspaceView;
+    if (profileSection) profileSection.hidden = next !== "profile";
     if (campaignsSection) campaignsSection.hidden = !isCampaignView;
+
+    if (isWorkspaceView) {
+      setWorkspaceView(next);
+      if (next === "hud") {
+        updateHudActiveCharacterUI();
+      }
+    }
     if (vaultSection) {
       vaultSection.hidden = !isVaultView;
       if (isVaultView) {
@@ -453,10 +696,10 @@
     }
 
     if (campaignsListView && campaignDetailView) {
-      if (view === "campaigns") {
+      if (next === "campaigns") {
         campaignsListView.hidden = false;
         campaignDetailView.hidden = true;
-      } else if (view === "campaign-detail") {
+      } else if (next === "campaign-detail") {
         campaignsListView.hidden = true;
         campaignDetailView.hidden = false;
       }
@@ -722,28 +965,7 @@
    // Portrait generation wiring
   if (generatePortraitsBtn) {
     generatePortraitsBtn.addEventListener("click", () => {
-      const prompt = buildPortraitPrompt();
-      if (!prompt) {
-        setPortraitStatus(
-          "Add some transcript text first, then we'll generate portraits from it."
-        );
-        return;
-      }
-
-      setPortraitStatus(
-        "Generating portraits... this may take a few seconds on the first request."
-      );
-
-      const baseSeed = Math.floor(Math.random() * 1_000_000_000);
-      portraitImgs.forEach((img, index) => {
-        if (!img) return;
-        const seed = baseSeed + index;
-        const url = buildPortraitImageUrl(prompt, seed);
-        img.hidden = false;
-        img.src = url;
-      });
-
-      enablePortraitSelection();
+      generatePortraits({ mode: "manual" });
     });
   }
 
@@ -1465,6 +1687,9 @@
     activeCampaignId = campaign.id;
     activeCampaign = campaign;
 
+    // Chronicle notes are scoped by (campaign, character).
+    loadSessionNotesFromStorage();
+
     // Reset dialogue transcript when switching to a different campaign
     if (campaignDialogueTranscriptEl) {
       campaignDialogueTranscriptEl.value = "";
@@ -1604,11 +1829,13 @@
     renderCampaigns(campaigns, filter, currentUser);
   }
 
-  async function loadVaultCharacters() {
+  async function loadVaultCharacters({ silent = false } = {}) {
     const user = getCurrentUser();
     if (!user) return;
-    vaultMessage.textContent = "Loading your characters...";
-    vaultCharactersGrid.innerHTML = "";
+    if (!silent) {
+      vaultMessage.textContent = "Loading your characters...";
+      vaultCharactersGrid.innerHTML = "";
+    }
     try {
       const result = await apiGet(`/api/characters?user=${encodeURIComponent(user)}`);
       if (!result.ok) {
@@ -1617,8 +1844,20 @@
       const data = result.data || {};
       const characters = Array.isArray(data.characters) ? data.characters : [];
       cachedVaultCharacters = characters;
+
+      // If we have a persisted active character, restore it as soon as the vault list is known.
+      if (!activeCharacter && storedActiveCharacterId && characters.length) {
+        const restored = characters.find((c) => String(c.id) === String(storedActiveCharacterId));
+        if (restored) {
+          setActiveCharacter(restored, { persist: false });
+        }
+      }
+
+      if (silent) {
+        return;
+      }
       if (!characters.length) {
-        vaultMessage.textContent = "No characters yet. Forge one from the Home tab to get started.";
+        vaultMessage.textContent = "No characters yet. Forge one from the Character Forge to get started.";
         return;
       }
       vaultMessage.textContent = "";
@@ -1639,7 +1878,9 @@
       });
     } catch (err) {
       console.error("Failed to load characters", err);
-      vaultMessage.textContent = err.message || "Error loading characters.";
+      if (!silent) {
+        vaultMessage.textContent = err.message || "Error loading characters.";
+      }
     }
   }
 
@@ -1688,7 +1929,7 @@
   }
 
   function renderVaultDetail(character) {
-    activeCharacter = character;
+    setActiveCharacter(character);
     vaultDetailName.textContent = character.name || "Unnamed Adventurer";
     const race = character.concept?.race || "";
     const mainClass = Array.isArray(character.concept?.classes) && character.concept.classes.length
@@ -1835,6 +2076,11 @@
 
     vaultListView.hidden = true;
     vaultDetailView.hidden = false;
+
+    if (awaitingHudCharacterSelect) {
+      awaitingHudCharacterSelect = false;
+      showView("hud");
+    }
   }
 
   if (vaultLevelUpBtn) {
@@ -1880,10 +2126,110 @@
   if (initialUser) {
     updateNav(initialUser);
     if (profileUsernameEl) profileUsernameEl.textContent = initialUser;
-    showView("home");
+    showView("forge");
+
+    // Best-effort restoration of the previously active character so the HUD can be entered immediately.
+    // This runs silently (no vault UI updates) and is safe if the vault is never opened.
+    loadVaultCharacters({ silent: true });
   } else {
     updateNav(null);
     showView("auth-login");
+  }
+
+  if (switchToForgeBtn) {
+    switchToForgeBtn.addEventListener("click", () => {
+      showView("forge");
+    });
+  }
+
+  if (switchToHudBtn) {
+    switchToHudBtn.addEventListener("click", () => {
+      showView("hud");
+    });
+  }
+
+  if (hudChangeCharacterBtn) {
+    hudChangeCharacterBtn.addEventListener("click", () => {
+      requestHudCharacterSelection("Choose an active character to enter the Session HUD.");
+    });
+  }
+
+  if (transcriptEl) {
+    transcriptEl.addEventListener("input", () => {
+      scheduleExtractionUpdate(transcriptEl.value || "");
+    });
+    // Initial render
+    scheduleExtractionUpdate(transcriptEl.value || "");
+  }
+
+  if (hudDiceButtons.length && hudRollLogEl) {
+    const rollHistory = [];
+
+    function logRoll({ die, result }) {
+      const now = new Date();
+      const stamp = now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+      const item = { die, result, stamp };
+      rollHistory.unshift(item);
+      if (rollHistory.length > 40) rollHistory.pop();
+
+      hudRollLogEl.innerHTML = "";
+      rollHistory.forEach((r) => {
+        const li = document.createElement("li");
+        li.className = "roll-log__item";
+        li.innerHTML = `Rolled d${r.die}: <b>${r.result}</b> <span>(${r.stamp})</span>`;
+        hudRollLogEl.appendChild(li);
+      });
+    }
+
+    hudDiceButtons.forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const die = Number(btn.getAttribute("data-die"));
+        if (!Number.isFinite(die) || die <= 0) return;
+        const result = Math.floor(Math.random() * die) + 1;
+        btn.classList.remove("dice__btn--popped");
+        // restart animation
+        void btn.offsetWidth;
+        btn.classList.add("dice__btn--popped");
+        logRoll({ die, result });
+      });
+    });
+  }
+
+  function currentNotesStorageKey() {
+    const ch = activeCharacter && activeCharacter.id ? String(activeCharacter.id) : "none";
+    const camp = activeCampaignId ? String(activeCampaignId) : "no-campaign";
+    return `adaSessionNotes:${camp}:${ch}`;
+  }
+
+  function loadSessionNotesFromStorage() {
+    if (!sessionNotesEl) return;
+    try {
+      const key = currentNotesStorageKey();
+      const raw = localStorage.getItem(key) || "";
+      sessionNotesEl.value = raw;
+      if (sessionNotesStatusEl) sessionNotesStatusEl.textContent = "";
+    } catch {
+      // ignore
+    }
+  }
+
+  function scheduleSaveSessionNotes() {
+    if (!sessionNotesEl) return;
+    if (notesSaveTimer) window.clearTimeout(notesSaveTimer);
+    if (sessionNotesStatusEl) sessionNotesStatusEl.textContent = "Saving…";
+    notesSaveTimer = window.setTimeout(() => {
+      try {
+        localStorage.setItem(currentNotesStorageKey(), sessionNotesEl.value || "");
+        if (sessionNotesStatusEl) sessionNotesStatusEl.textContent = "Saved.";
+      } catch {
+        if (sessionNotesStatusEl) sessionNotesStatusEl.textContent = "Could not save on this device.";
+      }
+    }, 350);
+  }
+
+  if (sessionNotesEl) {
+    sessionNotesEl.addEventListener("input", scheduleSaveSessionNotes);
+    loadSessionNotesFromStorage();
   }
 
   if (showRegisterBtn) {
@@ -2124,8 +2470,14 @@
       if (!(target instanceof HTMLElement)) return;
       const view = target.getAttribute("data-view");
       if (!view) return;
-      if (view === "home") {
-        showView("home");
+      if (view === "forge") {
+        showView("forge");
+      } else if (view === "hud") {
+        // If no active character is set yet, showView will route to the vault.
+        showView("hud");
+      } else if (view === "home") {
+        // legacy
+        showView("forge");
       } else if (view === "profile") {
         showView("profile");
       } else if (view === "campaigns") {
@@ -2136,6 +2488,7 @@
         } catch {
           // ignore
         }
+        loadSessionNotesFromStorage();
         showView("campaigns");
         loadCampaigns("all");
         loadAdventuresAndCharacters();
@@ -2195,6 +2548,7 @@
       } catch {
         // ignore
       }
+      loadSessionNotesFromStorage();
       showView("campaigns");
       loadCampaigns("all");
     });
@@ -2655,14 +3009,22 @@
 
   // Rules Lookup Event Listeners
   if (rulesLookupBtn) {
-    rulesLookupBtn.addEventListener("click", performRulesLookup);
+    rulesLookupBtn.addEventListener("click", () => {
+      performRulesLookup({ immediate: true });
+    });
   }
 
   if (rulesLookupInput) {
-    rulesLookupInput.addEventListener("keypress", (event) => {
+    rulesLookupInput.addEventListener("keydown", (event) => {
       if (event.key === "Enter") {
-        performRulesLookup();
+        event.preventDefault();
+        performRulesLookup({ immediate: true });
       }
+    });
+
+    // Typeahead: show results as the user types, without spamming the backend.
+    rulesLookupInput.addEventListener("input", () => {
+      scheduleRulesLookup(rulesLookupInput.value);
     });
   }
 
@@ -2687,39 +3049,101 @@
   /**
    * Perform rules lookup by querying the backend
    */
-  function performRulesLookup() {
-    const query = rulesLookupInput.value.trim();
+  function scheduleRulesLookup(rawQuery) {
+    const query = String(rawQuery || "").trim();
+
+    if (rulesLookupDebounceTimer) window.clearTimeout(rulesLookupDebounceTimer);
 
     if (!query) {
-      if (rulesLookupMessage) {
-        rulesLookupMessage.textContent = "Please enter a search query.";
+      // Clear UI when user clears the input.
+      rulesLookupState.results = [];
+      rulesLookupState.currentIndex = 0;
+      if (rulesLookupMessage) rulesLookupMessage.textContent = "";
+      if (rulesLookupResults) rulesLookupResults.hidden = true;
+      // Cancel any in-flight request.
+      if (rulesLookupAbortController) {
+        rulesLookupAbortController.abort();
+        rulesLookupAbortController = null;
       }
       return;
     }
 
-    if (rulesLookupMessage) {
-      rulesLookupMessage.textContent = "Searching...";
+    // Keep the backend happy: wait for enough signal.
+    if (query.length < 2) {
+      if (rulesLookupMessage) rulesLookupMessage.textContent = "Keep typing…";
+      if (rulesLookupResults) rulesLookupResults.hidden = true;
+      return;
     }
 
-    // Query the backend API
-    apiPost("/api/srd/query", { query, k: 5 }).then((result) => {
-      if (!result.ok) {
+    rulesLookupDebounceTimer = window.setTimeout(() => {
+      performRulesLookup({ query });
+    }, 220);
+  }
+
+  async function performRulesLookup({ query, k = 5, immediate = false } = {}) {
+    if (!rulesLookupInput) return;
+    const q = (typeof query === "string" ? query : rulesLookupInput.value).trim();
+
+    if (!q) {
+      if (rulesLookupMessage) {
+        rulesLookupMessage.textContent = "Please enter a search query.";
+      }
+      if (rulesLookupResults) rulesLookupResults.hidden = true;
+      return;
+    }
+
+    if (!immediate && q.length < 2) {
+      if (rulesLookupMessage) rulesLookupMessage.textContent = "Keep typing…";
+      if (rulesLookupResults) rulesLookupResults.hidden = true;
+      return;
+    }
+
+    const normalized = q.toLowerCase();
+    if (!immediate && normalized === rulesLookupLastIssuedQuery) {
+      return;
+    }
+    rulesLookupLastIssuedQuery = normalized;
+
+    // Cancel any in-flight request.
+    if (rulesLookupAbortController) {
+      rulesLookupAbortController.abort();
+    }
+    rulesLookupAbortController = new AbortController();
+    const seq = ++rulesLookupRequestSeq;
+
+    if (rulesLookupMessage) {
+      rulesLookupMessage.textContent = "Searching…";
+    }
+
+    try {
+      const res = await fetch(`${BACKEND_BASE_URL}/api/srd/query`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query: q, k }),
+        signal: rulesLookupAbortController.signal,
+      });
+      const data = await res.json().catch(() => ({}));
+
+      // Ignore stale responses.
+      if (seq !== rulesLookupRequestSeq) return;
+
+      if (!res.ok || data.ok === false) {
         if (rulesLookupMessage) {
           rulesLookupMessage.textContent =
-            "Could not search rules. Please try again.";
+            data.error || data.message || "Could not search rules. Please try again.";
         }
+        if (rulesLookupResults) rulesLookupResults.hidden = true;
         return;
       }
 
-      const data = result.data;
-      rulesLookupState.results = data.results || [];
+      rulesLookupState.results = Array.isArray(data.results) ? data.results : [];
       rulesLookupState.currentIndex = 0;
 
       if (rulesLookupState.results.length === 0) {
         if (rulesLookupMessage) {
           rulesLookupMessage.textContent = "No results found for that query.";
         }
-        rulesLookupResults.hidden = true;
+        if (rulesLookupResults) rulesLookupResults.hidden = true;
         return;
       }
 
@@ -2727,7 +3151,16 @@
       if (rulesLookupMessage) {
         rulesLookupMessage.textContent = "";
       }
-    });
+    } catch (err) {
+      if (err && err.name === "AbortError") {
+        return;
+      }
+      console.warn("[ADA] Rules lookup failed", err);
+      if (rulesLookupMessage) {
+        rulesLookupMessage.textContent = "Could not search rules. Please try again.";
+      }
+      if (rulesLookupResults) rulesLookupResults.hidden = true;
+    }
   }
 
   /**

@@ -16,7 +16,8 @@
       <div class="app__header-user">
         <span id="currentUserLabel" class="user-label" hidden></span>
         <nav id="appNav" class="nav" hidden>
-          <button type="button" class="nav__link" data-view="home">Home</button>
+          <button type="button" class="nav__link" data-view="forge">Character Forge</button>
+          <button type="button" class="nav__link" data-view="hud">Session HUD</button>
           <button type="button" class="nav__link" data-view="vault">My Characters</button>
           <button type="button" class="nav__link" data-view="campaigns">My Campaigns</button>
           <button type="button" class="nav__link" data-view="profile">Profile</button>
@@ -70,146 +71,214 @@
       </div>
     </section>
 
-    <section id="homeSection" hidden>
-      <section class="controls">
-        <button id="startBtn" class="btn btn--primary">Start Recording</button>
-        <button id="stopBtn" class="btn" disabled>Stop</button>
-        <span id="status" class="status">Idle</span>
-      </section>
-
-      <section class="output">
-        <label for="transcript">Transcript</label>
-        <textarea
-          id="transcript"
-          class="output__text"
-          rows="12"
-          placeholder="Your spoken notes will appear here..."
-        ></textarea>
-      </section>
-
-      <section class="notes">
-        <p class="hint">
-          Tip: Talk as if you were journaling. For example, "We descended into the crypt and met a nervous goblin..."
-        </p>
-        <p class="warning" id="supportWarning" hidden>
-          Speech recognition is not supported in this browser. Try the latest Chrome or Edge.
-        </p>
-      </section>
-
-      <section class="rules-lookup">
-        <div class="rules-lookup__header">
-          <h2>Rules Lookup</h2>
-          <p class="rules-lookup__subtitle">Search the D&D 5e SRD</p>
+    <section id="homeSection" class="workspace" hidden>
+      <header class="workspace__header">
+        <div class="workspace__title">
+          <h2 id="workspaceTitle">Adventurer's Journal</h2>
+          <p class="text-muted">Two modes: creative forging, or tactical play.</p>
         </div>
-        <div class="rules-lookup__search">
-          <input
-            type="text"
-            id="rulesLookupInput"
-            class="rules-lookup__input"
-            placeholder="e.g., 'darkvision', 'fireball spell', 'ranger abilities'..."
-          />
-          <button id="rulesLookupBtn" class="btn btn--primary">Search</button>
+        <div class="workspace__switcher" role="tablist" aria-label="Workspace mode">
+          <button type="button" id="switchToForgeBtn" class="btn btn--secondary btn--small" aria-selected="true">
+            Character Forge
+          </button>
+          <button type="button" id="switchToHudBtn" class="btn btn--secondary btn--small" aria-selected="false">
+            Session HUD
+          </button>
         </div>
-        <div id="rulesLookupResults" class="rules-lookup__results" hidden>
-          <div class="rules-lookup__result-card">
-            <h3 id="rulesResultTitle" class="rules-lookup__result-title"></h3>
-            <div id="rulesResultText" class="rules-lookup__result-text"></div>
-            <p id="rulesResultSource" class="rules-lookup__result-source"></p>
-            <div class="rules-lookup__navigation">
-              <button id="rulesLookupPrevBtn" class="btn btn--secondary btn--small" hidden>← Previous</button>
-              <span id="rulesLookupCounter" class="rules-lookup__counter"></span>
-              <button id="rulesLookupNextBtn" class="btn btn--secondary btn--small" hidden>Next →</button>
+      </header>
+
+      <!-- Pillar 1: The Character Forge (creative space) -->
+      <section id="viewForge" class="view view--forge" aria-label="Character Forge">
+        <div class="panel panel--leather">
+          <div class="panel__header">
+            <h3 class="panel__title">The Transcript Hearth</h3>
+            <div class="controls controls--inline" aria-label="Voice controls">
+              <button id="startBtn" class="btn btn--primary">Start Recording</button>
+              <button id="stopBtn" class="btn" disabled>Stop</button>
+              <span id="status" class="status">Idle</span>
+            </div>
+          </div>
+
+          <div class="forge-layout">
+            <section class="hearth" aria-label="Transcript Hearth">
+              <label for="transcript" class="hearth__label">Live transcript</label>
+              <textarea
+                id="transcript"
+                class="hearth__text"
+                rows="12"
+                placeholder="Speak your character into being…"
+              ></textarea>
+              <div class="notes">
+                <p class="hint">
+                  Tip: Talk like you're writing a bright morning journal. "I tightened my cloak, and the road welcomed me…"
+                </p>
+                <p class="warning" id="supportWarning" hidden>
+                  Speech recognition is not supported in this browser. Try the latest Chrome or Edge.
+                </p>
+              </div>
+            </section>
+
+            <aside class="extraction" aria-label="Extraction Feed">
+              <div class="extraction__header">
+                <h4 class="extraction__title">Extraction Feed</h4>
+                <p class="text-muted extraction__subtitle">Narrative gems found in your words</p>
+              </div>
+              <ol id="extractionFeed" class="extraction__list" aria-live="polite"></ol>
+              <p class="text-muted extraction__footer">Examples: Detected Class, Race, Background, Alignment.</p>
+            </aside>
+          </div>
+        </div>
+
+        <section class="panel" aria-label="Portrait Gallery">
+          <div class="panel__header">
+            <h3 class="panel__title">The Portrait Gallery</h3>
+            <div class="portraits__controls">
+              <label class="toggle">
+                <input type="checkbox" id="autoPortraitsToggle" checked />
+                <span>Auto-update while recording</span>
+              </label>
+              <button id="generatePortraitsBtn" class="btn btn--secondary">
+                Generate now
+              </button>
+            </div>
+          </div>
+          <p class="text-muted">
+            Framed sketch options update as your story sharpens. Pick one to save for this character.
+          </p>
+          <div class="portraits__grid">
+            <article class="portrait-card portrait-card--framed" data-index="0">
+              <div class="portrait-card__thumb-wrapper">
+                <div class="portrait-card__placeholder">Sketch I</div>
+                <img id="portraitImg0" class="portrait-card__image" alt="Character portrait option 1" hidden />
+              </div>
+              <button class="btn portrait-card__select-btn" data-index="0" disabled>Select</button>
+            </article>
+
+            <article class="portrait-card portrait-card--framed" data-index="1">
+              <div class="portrait-card__thumb-wrapper">
+                <div class="portrait-card__placeholder">Sketch II</div>
+                <img id="portraitImg1" class="portrait-card__image" alt="Character portrait option 2" hidden />
+              </div>
+              <button class="btn portrait-card__select-btn" data-index="1" disabled>Select</button>
+            </article>
+
+            <article class="portrait-card portrait-card--framed" data-index="2">
+              <div class="portrait-card__thumb-wrapper">
+                <div class="portrait-card__placeholder">Sketch III</div>
+                <img id="portraitImg2" class="portrait-card__image" alt="Character portrait option 3" hidden />
+              </div>
+              <button class="btn portrait-card__select-btn" data-index="2" disabled>Select</button>
+            </article>
+          </div>
+          <p id="portraitStatus" class="portraits__status"></p>
+        </section>
+
+        <section class="panel" aria-label="Character forging">
+          <div class="forge__header">
+            <h3 class="panel__title">Forge a Character</h3>
+            <button id="forgeCharacterBtn" class="btn btn--primary">Forge from Transcript</button>
+          </div>
+          <div class="forge__name field">
+            <label for="forgeCharacterName">Character name (optional)</label>
+            <input
+              type="text"
+              id="forgeCharacterName"
+              name="forgeCharacterName"
+              placeholder="Elaria of the Moonlit Isles"
+            />
+          </div>
+          <p class="forge__hint text-muted">
+            We'll infer race, class (including multiclass), and key stats, then build a draft character sheet.
+          </p>
+          <div id="forgeStatus" class="forge__status"></div>
+          <div id="forgedCharacter" class="forge__result" hidden></div>
+          <button id="finishCharacterBtn" class="btn btn--primary forge__finish" disabled>
+            Finish character creation
+          </button>
+          <p class="forge__finish-hint text-muted">
+            This preview is not saved yet. Choose a portrait and click “Finish character creation” to add it to My Characters.
+          </p>
+        </section>
+      </section>
+
+      <!-- Pillar 2: The Session HUD (tactical space) -->
+      <section id="viewHud" class="view view--hud" aria-label="Session HUD" hidden>
+        <div class="panel panel--compact" aria-label="Active character">
+          <div class="hud-header">
+            <div>
+              <h3 class="hud-header__title">Active Character</h3>
+              <p id="hudActiveCharacterMeta" class="text-muted hud-header__meta">No character selected yet.</p>
+            </div>
+            <div class="hud-header__actions">
+              <button type="button" id="hudChangeCharacterBtn" class="btn btn--secondary btn--small">Choose character</button>
             </div>
           </div>
         </div>
-        <div id="rulesLookupMessage" class="rules-lookup__message text-muted"></div>
-      </section>
 
-      <section class="forge">
-        <div class="forge__header">
-          <h2>Forge a Character</h2>
-          <button id="forgeCharacterBtn" class="btn btn--primary">Forge from Transcript</button>
-        </div>
-        <div class="forge__name field">
-          <label for="forgeCharacterName">Character name (optional)</label>
-          <input
-            type="text"
-            id="forgeCharacterName"
-            name="forgeCharacterName"
-            placeholder="Elaria of the Moonlit Isles"
-          />
-        </div>
-        <p class="forge__hint">
-          We'll take your current transcript, infer race, class (including multiclass like Ranger/Warlock), and basic stats, then build a draft character sheet.
-        </p>
-        <div id="forgeStatus" class="forge__status"></div>
-        <div id="forgedCharacter" class="forge__result" hidden></div>
-        <button id="finishCharacterBtn" class="btn btn--primary forge__finish" disabled>
-          Finish character creation
-        </button>
-        <p class="forge__finish-hint text-muted">
-          This preview is not saved yet. Choose a portrait and click "Finish character creation" to add it to My Characters.
-        </p>
-      </section>
-
-      <section class="portraits">
-        <div class="portraits__header">
-          <h2>Character Portraits</h2>
-          <button id="generatePortraitsBtn" class="btn btn--secondary">
-            Generate from Transcript
-          </button>
-        </div>
-        <p class="portraits__hint">
-          We'll suggest three D&amp;D-style character portraits from your notes. Pick one to save for this character.
-        </p>
-        <div class="portraits__grid">
-          <article class="portrait-card" data-index="0">
-            <div class="portrait-card__thumb-wrapper">
-              <div class="portrait-card__placeholder">Portrait 1</div>
-              <img
-                id="portraitImg0"
-                class="portrait-card__image"
-                alt="Character portrait option 1"
-                hidden
-              />
+        <div class="hud-grid">
+          <section class="panel" aria-label="Quick-Roll Station">
+            <div class="panel__header">
+              <h3 class="panel__title">Quick-Roll Station</h3>
+              <p class="text-muted">Tap a die to roll. Results are logged instantly.</p>
             </div>
-            <button class="btn portrait-card__select-btn" data-index="0" disabled>
-              Select
-            </button>
-          </article>
-
-          <article class="portrait-card" data-index="1">
-            <div class="portrait-card__thumb-wrapper">
-              <div class="portrait-card__placeholder">Portrait 2</div>
-              <img
-                id="portraitImg1"
-                class="portrait-card__image"
-                alt="Character portrait option 2"
-                hidden
-              />
+            <div class="dice">
+              <button type="button" class="dice__btn" data-die="20" aria-label="Roll a d20">d20</button>
+              <button type="button" class="dice__btn" data-die="12" aria-label="Roll a d12">d12</button>
+              <button type="button" class="dice__btn" data-die="10" aria-label="Roll a d10">d10</button>
+              <button type="button" class="dice__btn" data-die="8" aria-label="Roll a d8">d8</button>
+              <button type="button" class="dice__btn" data-die="6" aria-label="Roll a d6">d6</button>
+              <button type="button" class="dice__btn" data-die="4" aria-label="Roll a d4">d4</button>
+              <button type="button" class="dice__btn" data-die="100" aria-label="Roll a d100">d100</button>
             </div>
-            <button class="btn portrait-card__select-btn" data-index="1" disabled>
-              Select
-            </button>
-          </article>
-
-          <article class="portrait-card" data-index="2">
-            <div class="portrait-card__thumb-wrapper">
-              <div class="portrait-card__placeholder">Portrait 3</div>
-              <img
-                id="portraitImg2"
-                class="portrait-card__image"
-                alt="Character portrait option 3"
-                hidden
-              />
+            <div class="roll-log" aria-label="Session roll history">
+              <ol id="hudRollLog" class="roll-log__list" aria-live="polite"></ol>
             </div>
-            <button class="btn portrait-card__select-btn" data-index="2" disabled>
-              Select
-            </button>
-          </article>
+          </section>
+
+          <section class="panel" aria-label="The Chronicle">
+            <div class="panel__header">
+              <h3 class="panel__title">The Chronicle</h3>
+              <p class="text-muted">Short-hand session notes (separate from the Forge transcript).</p>
+            </div>
+            <label class="sr-only" for="sessionNotes">Session notes</label>
+            <textarea
+              id="sessionNotes"
+              class="chronicle__text"
+              rows="10"
+              placeholder="Treasure: silver ring. NPC: Captain Vey. Clue: moon-sigil on the door…"
+            ></textarea>
+            <p id="sessionNotesStatus" class="text-muted" aria-live="polite"></p>
+          </section>
+
+          <section class="panel" aria-label="Sage’s Search">
+            <div class="rules-lookup__header">
+              <h3 class="panel__title">Sage’s Search</h3>
+              <p class="rules-lookup__subtitle">Fast SRD lookup—stay on the page.</p>
+            </div>
+            <div class="rules-lookup__search">
+              <input
+                type="text"
+                id="rulesLookupInput"
+                class="rules-lookup__input"
+                placeholder="Type 'Grappled', 'Cover', 'Darkvision'…"
+              />
+              <button id="rulesLookupBtn" class="btn btn--primary">Search</button>
+            </div>
+            <div id="rulesLookupResults" class="rules-lookup__results" hidden>
+              <div class="rules-lookup__result-card">
+                <h4 id="rulesResultTitle" class="rules-lookup__result-title"></h4>
+                <div id="rulesResultText" class="rules-lookup__result-text"></div>
+                <p id="rulesResultSource" class="rules-lookup__result-source"></p>
+                <div class="rules-lookup__navigation">
+                  <button id="rulesLookupPrevBtn" class="btn btn--secondary btn--small" hidden>← Previous</button>
+                  <span id="rulesLookupCounter" class="rules-lookup__counter"></span>
+                  <button id="rulesLookupNextBtn" class="btn btn--secondary btn--small" hidden>Next →</button>
+                </div>
+              </div>
+            </div>
+            <div id="rulesLookupMessage" class="rules-lookup__message text-muted"></div>
+          </section>
         </div>
-
-        <p id="portraitStatus" class="portraits__status"></p>
       </section>
     </section>
 

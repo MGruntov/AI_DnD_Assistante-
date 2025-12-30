@@ -80,6 +80,7 @@
   const gmEncounterGenerateBtn = document.getElementById("gmEncounterGenerateBtn");
   const gmEncounterStatusEl = document.getElementById("gmEncounterStatus");
   const gmEncounterResultsEl = document.getElementById("gmEncounterResults");
+  const gmEncounterArchiveEl = document.getElementById("gmEncounterArchive");
   const gmFlavorSeedInput = document.getElementById("gmFlavorSeed");
   const gmFlavorGenerateBtn = document.getElementById("gmFlavorGenerateBtn");
   const gmFlavorSendToLogBtn = document.getElementById("gmFlavorSendToLogBtn");
@@ -228,6 +229,7 @@
   let activeCharacter = null;
   let activeCampaignCharacters = [];
   let activeCampaignPartyStatus = null;
+  let activeCampaignEncounters = [];
   let cachedPlayerSpeakerLabel = "You";
 
   let currentWorkspaceView = "forge"; // "forge" | "hud"
@@ -1712,6 +1714,40 @@
     return lines.join("\n");
   }
 
+  function buildEncounterQuickViewText({ option, monster }) {
+    const sb = monster && monster.statBlock ? monster.statBlock : null;
+    if (!sb) return "";
+
+    const header = [
+      sb.name ? String(sb.name) : (monster.name ? String(monster.name) : "Creature"),
+      sb.size && sb.type ? `${sb.size} ${sb.type}` : (sb.type ? String(sb.type) : ""),
+      sb.alignment ? String(sb.alignment) : "",
+    ].filter(Boolean).join(" · ");
+
+    const ac = sb.ac != null ? `AC ${sb.ac}` : "";
+    const hp = sb.hp && (sb.hp.max != null || sb.hp.current != null)
+      ? `HP ${sb.hp.max != null ? sb.hp.max : "?"}`
+      : (sb.hp != null ? `HP ${sb.hp}` : "");
+    const speed = sb.speed ? `Speed ${String(sb.speed)}` : "";
+    const basics = [ac, hp, speed].filter(Boolean).join(" · ");
+
+    const ability = sb.abilityScores && typeof sb.abilityScores === "object" ? sb.abilityScores : null;
+    const abilityLine = ability
+      ? `STR ${ability.str ?? "?"}  DEX ${ability.dex ?? "?"}  CON ${ability.con ?? "?"}  INT ${ability.int ?? "?"}  WIS ${ability.wis ?? "?"}  CHA ${ability.cha ?? "?"}`
+      : "";
+
+    const traits = Array.isArray(sb.traits) ? sb.traits.map((t) => `• ${t.name}: ${t.text}`).join("\n") : "";
+    const actions = Array.isArray(sb.actions) ? sb.actions.map((a) => `• ${a.name}: ${a.text}`).join("\n") : "";
+
+    return [
+      header,
+      basics,
+      abilityLine,
+      traits ? `\nTraits:\n${traits}` : "",
+      actions ? `\nActions:\n${actions}` : "",
+    ].filter(Boolean).join("\n");
+  }
+
   function renderEncounterResults(options) {
     if (!gmEncounterResultsEl) return;
     gmEncounterResultsEl.innerHTML = "";
@@ -1748,7 +1784,67 @@
 
       const body = document.createElement("div");
       body.className = "gm-option-card__body";
-      body.textContent = buildEncounterOptionText(opt);
+      // Keep the main body concise (the full sheet lives in Quick View).
+      const shortLines = [];
+      if (opt && opt.hook) shortLines.push(`Hook: ${String(opt.hook)}`);
+      if (opt && opt.setup) shortLines.push(`Setup: ${String(opt.setup)}`);
+      if (opt && opt.twist) shortLines.push(`Twist: ${String(opt.twist)}`);
+      if (opt && opt.tactics) shortLines.push(`Tactics: ${String(opt.tactics)}`);
+      body.textContent = shortLines.length ? shortLines.join("\n\n") : buildEncounterOptionText(opt);
+
+      const quickView = document.createElement("details");
+      const quickSummary = document.createElement("summary");
+      quickSummary.textContent = "Quick View: Threat Scale + Monster Sheets";
+      quickView.appendChild(quickSummary);
+
+      const threatScale = opt && opt.threatScale ? opt.threatScale : null;
+      if (threatScale && (Array.isArray(threatScale.dialUp) || Array.isArray(threatScale.dialDown))) {
+        const ts = document.createElement("div");
+        ts.className = "gm-statblock";
+        const titleEl = document.createElement("div");
+        titleEl.className = "gm-statblock__title";
+        titleEl.textContent = "Threat Scale";
+        const lineEl = document.createElement("div");
+        lineEl.className = "gm-statblock__line";
+        const up = Array.isArray(threatScale.dialUp) ? threatScale.dialUp.map((s) => `+ ${s}`).join("\n") : "";
+        const down = Array.isArray(threatScale.dialDown) ? threatScale.dialDown.map((s) => `- ${s}`).join("\n") : "";
+        lineEl.textContent = [up ? `Dial Up:\n${up}` : "", down ? `Dial Down:\n${down}` : ""].filter(Boolean).join("\n\n");
+        ts.appendChild(titleEl);
+        ts.appendChild(lineEl);
+        quickView.appendChild(ts);
+      }
+
+      const monsters = Array.isArray(opt && opt.monsters) ? opt.monsters : [];
+      monsters.forEach((m) => {
+        const monsterDetails = document.createElement("details");
+        const monsterSummary = document.createElement("summary");
+        const name = m && m.name ? String(m.name) : "Monster";
+        const count = Number.isFinite(Number(m && m.count)) ? Number(m.count) : null;
+        monsterSummary.textContent = `${name}${count != null ? ` x${count}` : ""}`;
+        monsterDetails.appendChild(monsterSummary);
+
+        const sbWrap = document.createElement("div");
+        sbWrap.className = "gm-statblock";
+
+        const sbTitle = document.createElement("div");
+        sbTitle.className = "gm-statblock__title";
+        sbTitle.textContent = name;
+
+        const meta = document.createElement("div");
+        meta.className = "gm-statblock__meta";
+        const tier = opt && opt.difficulty ? String(opt.difficulty) : "";
+        meta.textContent = [tier ? `Tier: ${tier}` : "", m && m.role ? `Role: ${m.role}` : ""].filter(Boolean).join(" · ");
+
+        const line = document.createElement("div");
+        line.className = "gm-statblock__line";
+        line.textContent = buildEncounterQuickViewText({ option: opt, monster: m });
+
+        sbWrap.appendChild(sbTitle);
+        if (meta.textContent) sbWrap.appendChild(meta);
+        sbWrap.appendChild(line);
+        monsterDetails.appendChild(sbWrap);
+        quickView.appendChild(monsterDetails);
+      });
 
       const actions = document.createElement("div");
       actions.className = "gm-option-card__actions";
@@ -1770,9 +1866,60 @@
 
       card.appendChild(header);
       card.appendChild(body);
+      card.appendChild(quickView);
       card.appendChild(actions);
 
       gmEncounterResultsEl.appendChild(card);
+    });
+  }
+
+  function renderEncounterArchive(encounters) {
+    if (!gmEncounterArchiveEl) return;
+    gmEncounterArchiveEl.innerHTML = "";
+
+    if (!Array.isArray(encounters) || encounters.length === 0) {
+      const empty = document.createElement("p");
+      empty.className = "text-muted";
+      empty.textContent = "No archived encounter bundles yet.";
+      gmEncounterArchiveEl.appendChild(empty);
+      return;
+    }
+
+    const sorted = encounters.slice().sort((a, b) => {
+      const ad = Date.parse(a && a.createdAt ? a.createdAt : "");
+      const bd = Date.parse(b && b.createdAt ? b.createdAt : "");
+      return (bd || 0) - (ad || 0);
+    });
+
+    sorted.forEach((bundle) => {
+      const card = document.createElement("div");
+      card.className = "gm-archive-card";
+
+      const seed = bundle && bundle.seed ? String(bundle.seed) : "";
+      const createdAt = new Date(bundle && bundle.createdAt ? bundle.createdAt : Date.now()).toLocaleString();
+      const mode = bundle && bundle.intentMode ? String(bundle.intentMode) : "balanced";
+      const meta = document.createElement("div");
+      meta.className = "gm-archive-card__meta";
+      meta.textContent = `${createdAt} · Mode: ${mode}${seed ? ` · Seed: ${seed}` : ""}`;
+
+      const actions = document.createElement("div");
+      actions.className = "gm-archive-card__actions";
+
+      const loadBtn = document.createElement("button");
+      loadBtn.type = "button";
+      loadBtn.className = "btn btn--secondary btn--small";
+      loadBtn.textContent = "Load options";
+      loadBtn.addEventListener("click", () => {
+        const options = bundle && Array.isArray(bundle.options) ? bundle.options : [];
+        renderEncounterResults(options);
+        if (gmEncounterStatusEl) gmEncounterStatusEl.textContent = "Loaded archived bundle.";
+      });
+
+      actions.appendChild(loadBtn);
+
+      card.appendChild(meta);
+      card.appendChild(actions);
+      gmEncounterArchiveEl.appendChild(card);
     });
   }
 
@@ -1866,12 +2013,15 @@
     const campaign = data.campaign;
     const characters = Array.isArray(data.characters) ? data.characters : [];
     const partyStatus = data.partyStatus || null;
+    const encounters = Array.isArray(data.encounters) ? data.encounters : [];
     const journals = Array.isArray(data.journals) ? data.journals : [];
     const scripts = Array.isArray(data.scripts) ? data.scripts : [];
 
     activeCampaignCharacters = characters;
     activeCampaignPartyStatus = partyStatus;
+    activeCampaignEncounters = encounters;
     renderGmPartyStatus(partyStatus);
+    renderEncounterArchive(encounters);
     cachedPlayerSpeakerLabel = computePlayerSpeakerLabel({ characters, username: currentUser });
     refreshDialogueComposerLabel();
 
@@ -2962,6 +3112,13 @@
       if (data.partyStatus) {
         activeCampaignPartyStatus = data.partyStatus;
         renderGmPartyStatus(data.partyStatus);
+      }
+      if (data.encounterBundle) {
+        // Optimistically add to archive without reloading campaign details.
+        activeCampaignEncounters = Array.isArray(activeCampaignEncounters)
+          ? [data.encounterBundle, ...activeCampaignEncounters]
+          : [data.encounterBundle];
+        renderEncounterArchive(activeCampaignEncounters);
       }
       const options = data.result && Array.isArray(data.result.options) ? data.result.options : [];
       renderEncounterResults(options);

@@ -285,6 +285,7 @@ type Campaign = {
 	createdAt: string;
 	journalEntryIds?: string[];
 	scriptIds?: string[];
+	encounterIds?: string[];
 	linkedCharacterIds?: string[];
 	conversationTranscript?: string;
 	status?: 'active' | 'completed';
@@ -294,6 +295,65 @@ type Campaign = {
 	mode?: 'ai-solo' | 'standard';
 	adventureId?: string;
 	dmIsAI?: boolean;
+};
+
+type EncounterStatBlock = {
+	name: string;
+	size?: string;
+	type?: string;
+	alignment?: string;
+	ac: number;
+	hp: { max: number };
+	speed?: string;
+	abilityScores: { str: number; dex: number; con: number; int: number; wis: number; cha: number };
+	saves?: string;
+	skills?: string;
+	senses?: string;
+	languages?: string;
+	challenge?: string;
+	traits?: { name: string; text: string }[];
+	actions?: { name: string; text: string }[];
+};
+
+type EncounterMonster = {
+	name: string;
+	count: number;
+	role?: string;
+	statBlock: EncounterStatBlock;
+};
+
+type EncounterThreatScale = {
+	dialUp: string[];
+	dialDown: string[];
+};
+
+type EncounterOption = {
+	id: 'A' | 'B' | 'C';
+	difficulty: 'Easy' | 'Medium' | 'Hard' | 'Deadly';
+	intentMode: 'balanced' | 'kill';
+	title: string;
+	type: 'combat' | 'social' | 'exploration' | 'mixed';
+	hook: string;
+	setup: string;
+	oppositionSummary?: string;
+	monsters: EncounterMonster[];
+	threatScale: EncounterThreatScale;
+	twist: string;
+	tactics: string;
+	scaling: { easier: string; harder: string };
+	rewards: string;
+};
+
+type EncounterBundle = {
+	id: string;
+	campaignId: string;
+	author: string;
+	createdAt: string;
+	seed: string;
+	intentMode: 'balanced' | 'kill';
+	overrideDifficulty: EncounterOption['difficulty'] | null;
+	partyStatus: PartyStatus;
+	options: EncounterOption[];
 };
 
 type CharacterClass = {
@@ -2048,10 +2108,26 @@ async function handleGetCampaignDetails(request: Request, env: Env, origin: stri
 		}
 	}
 
+	// Load encounter bundles linked from the campaign (archive for recall)
+	const encounters: EncounterBundle[] = [];
+	const encounterIds = Array.isArray(campaign.encounterIds) ? campaign.encounterIds : [];
+	// Return only the most recent 20 to keep payload reasonable.
+	const recentEncounterIds = encounterIds.slice(Math.max(0, encounterIds.length - 20));
+	for (const encounterId of recentEncounterIds) {
+		const stored = await env.ADA_DATA.get(`encounter:${encounterId}`);
+		if (!stored) continue;
+		try {
+			const parsed = JSON.parse(stored) as EncounterBundle;
+			if (parsed && parsed.id) encounters.push(parsed);
+		} catch {
+			// ignore malformed
+		}
+	}
+
 	const characters = await loadCampaignPartyCharacters(env, campaign);
 	const partyStatus = computePartyStatus(characters);
 
-	return jsonResponse({ ok: true, campaign, characters, partyStatus, journals, scripts }, undefined, origin);
+	return jsonResponse({ ok: true, campaign, characters, partyStatus, journals, scripts, encounters }, undefined, origin);
 }
 
 function basicPolishJournal(raw: string): string {
@@ -2849,6 +2925,155 @@ function truncateForPrompt(text: string, maxChars: number): string {
 	return `${s.slice(0, maxChars)}\n[...trimmed...]`;
 }
 
+function parseArchitectIntent(seed: string): {
+	intentMode: 'balanced' | 'kill';
+	overrideDifficulty: EncounterOption['difficulty'] | null;
+	reason: string;
+} {
+	const s = String(seed || '').toLowerCase();
+	const has = (re: RegExp) => re.test(s);
+
+	// Kill Mode triggers (lethal intent language)
+	if (has(/\b(tpk|total party kill|wipe( them)?|kill( mode)?|slaughter|massacre|no mercy|lethal)\b/i)) {
+		return { intentMode: 'kill', overrideDifficulty: 'Deadly', reason: 'Detected lethal intent (Kill Mode).' };
+	}
+
+	// Explicit difficulty overrides
+	if (has(/\b(deadly)\b/i)) return { intentMode: 'kill', overrideDifficulty: 'Deadly', reason: 'Explicit deadly difficulty.' };
+	if (has(/\b(hard)\b/i)) return { intentMode: 'balanced', overrideDifficulty: 'Hard', reason: 'Explicit hard difficulty.' };
+	if (has(/\b(medium|moderate|standard|balanced)\b/i)) {
+		return { intentMode: 'balanced', overrideDifficulty: 'Medium', reason: 'Explicit medium/balanced difficulty.' };
+	}
+	if (has(/\b(easy|trivial|nuisance|cakewalk)\b/i)) {
+		return { intentMode: 'balanced', overrideDifficulty: 'Easy', reason: 'Explicit easy/trivial intent.' };
+	}
+
+	return { intentMode: 'balanced', overrideDifficulty: null, reason: 'No explicit override; using Easy/Medium/Hard tiers.' };
+}
+
+function clampCount(n: unknown, fallback: number): number {
+	const x = Number(n);
+	if (!Number.isFinite(x)) return fallback;
+	return Math.max(1, Math.min(99, Math.floor(x)));
+}
+
+function normalizeEncounterDifficulty(d: unknown): EncounterOption['difficulty'] {
+	const v = String(d || '').trim().toLowerCase();
+	if (v === 'easy') return 'Easy';
+	if (v === 'medium') return 'Medium';
+	if (v === 'hard') return 'Hard';
+	if (v === 'deadly') return 'Deadly';
+	// Default
+	return 'Medium';
+}
+
+function normalizeEncounterType(t: unknown): EncounterOption['type'] {
+	const v = String(t || '').trim().toLowerCase();
+	if (v === 'combat') return 'combat';
+	if (v === 'social') return 'social';
+	if (v === 'exploration') return 'exploration';
+	if (v === 'mixed') return 'mixed';
+	return 'mixed';
+}
+
+function normalizeEncounterOptions(raw: any, intent: ReturnType<typeof parseArchitectIntent>): EncounterOption[] | null {
+	const options = Array.isArray(raw?.options) ? raw.options : null;
+	if (!options) return null;
+
+	const ids: Array<'A' | 'B' | 'C'> = ['A', 'B', 'C'];
+	const defaultTiers: EncounterOption['difficulty'][] = ['Easy', 'Medium', 'Hard'];
+
+	const normalized: EncounterOption[] = [];
+	for (let i = 0; i < Math.min(3, options.length); i++) {
+		const o = options[i] || {};
+		const id = (String(o.id || ids[i]).toUpperCase() as 'A' | 'B' | 'C');
+		const forcedDifficulty = intent.overrideDifficulty ? intent.overrideDifficulty : defaultTiers[i];
+
+		const monstersRaw = Array.isArray(o.monsters) ? o.monsters : Array.isArray(o.opposition) ? o.opposition : [];
+		const monsters: EncounterMonster[] = monstersRaw
+			.map((m: any) => {
+				const name = m?.name ? String(m.name) : 'Unknown creature';
+				const count = clampCount(m?.count, 1);
+				const sb = m?.statBlock || m?.stat || {};
+				const ability = sb?.abilityScores || sb?.abilities || {};
+				const statBlock: EncounterStatBlock = {
+					name: sb?.name ? String(sb.name) : name,
+					size: sb?.size ? String(sb.size) : undefined,
+					type: sb?.type ? String(sb.type) : undefined,
+					alignment: sb?.alignment ? String(sb.alignment) : undefined,
+					ac: Number.isFinite(Number(sb?.ac)) ? Math.max(5, Math.min(30, Math.floor(Number(sb.ac)))) : 12,
+					hp: {
+						max: Number.isFinite(Number(sb?.hp?.max ?? sb?.hp))
+							? Math.max(1, Math.floor(Number(sb.hp?.max ?? sb.hp)))
+							: 11,
+					},
+					speed: sb?.speed ? String(sb.speed) : undefined,
+					abilityScores: {
+						str: Number.isFinite(Number(ability?.str)) ? Math.floor(Number(ability.str)) : 10,
+						dex: Number.isFinite(Number(ability?.dex)) ? Math.floor(Number(ability.dex)) : 10,
+						con: Number.isFinite(Number(ability?.con)) ? Math.floor(Number(ability.con)) : 10,
+						int: Number.isFinite(Number(ability?.int)) ? Math.floor(Number(ability.int)) : 10,
+						wis: Number.isFinite(Number(ability?.wis)) ? Math.floor(Number(ability.wis)) : 10,
+						cha: Number.isFinite(Number(ability?.cha)) ? Math.floor(Number(ability.cha)) : 10,
+					},
+					saves: sb?.saves ? String(sb.saves) : undefined,
+					skills: sb?.skills ? String(sb.skills) : undefined,
+					senses: sb?.senses ? String(sb.senses) : undefined,
+					languages: sb?.languages ? String(sb.languages) : undefined,
+					challenge: sb?.challenge ? String(sb.challenge) : undefined,
+					traits: Array.isArray(sb?.traits)
+						? sb.traits
+							.map((t: any) => ({ name: String(t?.name || 'Trait'), text: String(t?.text || '') }))
+							.filter((t: any) => t.text)
+						: [],
+					actions: Array.isArray(sb?.actions)
+						? sb.actions
+							.map((a: any) => ({ name: String(a?.name || 'Action'), text: String(a?.text || '') }))
+							.filter((a: any) => a.text)
+						: [],
+				};
+				return {
+					name,
+					count,
+					role: m?.role ? String(m.role) : undefined,
+					statBlock,
+				};
+			})
+			.filter((m: EncounterMonster) => m.name);
+
+		const threat = o.threatScale || {};
+		const threatScale: EncounterThreatScale = {
+			dialUp: Array.isArray(threat.dialUp) ? threat.dialUp.map((x: any) => String(x)).filter(Boolean) : [],
+			dialDown: Array.isArray(threat.dialDown) ? threat.dialDown.map((x: any) => String(x)).filter(Boolean) : [],
+		};
+
+		normalized.push({
+			id,
+			difficulty: forcedDifficulty,
+			intentMode: intent.intentMode,
+			title: o.title ? String(o.title) : `Encounter Option ${id}`,
+			type: normalizeEncounterType(o.type),
+			hook: o.hook ? String(o.hook) : '',
+			setup: o.setup ? String(o.setup) : '',
+			oppositionSummary: o.oppositionSummary ? String(o.oppositionSummary) : undefined,
+			monsters,
+			threatScale,
+			twist: o.twist ? String(o.twist) : '',
+			tactics: o.tactics ? String(o.tactics) : '',
+			scaling: {
+				easier: o.scaling?.easier ? String(o.scaling.easier) : 'Reduce monster count by 1/3 and remove one hazard.',
+				harder: o.scaling?.harder ? String(o.scaling.harder) : 'Increase monster count by 1/3 and add a hazard.',
+			},
+			rewards: o.rewards ? String(o.rewards) : '',
+		});
+	}
+
+	if (normalized.length !== 3) return null;
+	// Ensure A/B/C ordering.
+	normalized.sort((a, b) => a.id.localeCompare(b.id));
+	return normalized;
+}
+
 async function handleGmTool(request: Request, env: Env, origin: string | null): Promise<Response> {
 	let body: any;
 	try {
@@ -2901,103 +3126,171 @@ async function handleGmTool(request: Request, env: Env, origin: string | null): 
 		.join('\n');
 
 	if (toolTypeRaw === 'encounter') {
+		const intent = parseArchitectIntent(seed);
+		const overrideLabel = intent.overrideDifficulty ? intent.overrideDifficulty : null;
+
 		const systemPrompt = [
-			'You are a veteran D&D 5e Dungeon Master and encounter designer.',
-			'Generate THREE encounter options (A, B, C) tailored to the party status and resources.',
-			'Each option must be runnable at the table: clear objective, opposition, twist, and pacing.',
-			'Respect the party\'s current HP and remaining spell slots (low resources -> lean lighter / allow outs).',
-			'Output must be STRICT JSON and nothing else (no markdown, no code fences).',
+			'You are “The Unfiltered Architect”: a high-powered D&D 5e tactical encounter engine.',
+			'You provide raw, table-ready tools. Default to a balanced advisor, but pivot to KILL MODE when the DM intent is lethal.',
 			'',
-			'Required JSON schema:',
+			'ABSOLUTE RULES:',
+			'- Output MUST be STRICT JSON only. No markdown. No code fences. No extra commentary.',
+			'- You MUST invent ORIGINAL (homebrew) monsters and stat blocks. Do NOT copy official D&D monster text.',
+			'- Provide THREE options with ids A, B, C.',
+			'- If overrideDifficulty is provided, ALL THREE options MUST use that difficulty tier.',
+			'- If overrideDifficulty is NOT provided, the tiers MUST be: A=Easy, B=Medium, C=Hard.',
+			'- Each option MUST include:',
+			'  - distinct enemy set (monsters + counts),',
+			'  - threatScale with dialUp and dialDown factors (hazards/behaviors to change lethality live),',
+			'  - full statBlock for every monster type (AC, HP, abilities, traits, actions).',
+			'',
+			'Required schema:',
 			'{"options":[',
-			' {"id":"A","title":"...","difficulty":"Easy|Medium|Hard|Deadly","type":"combat|social|exploration|mixed",',
-			'  "hook":"...","setup":"...","opposition":[{"name":"...","count":number,"notes":"..."}],',
+			' {"id":"A","difficulty":"Easy|Medium|Hard|Deadly","intentMode":"balanced|kill","type":"combat|social|exploration|mixed",',
+			'  "title":"...","hook":"...","setup":"...","oppositionSummary":"...",',
+			'  "monsters":[{"name":"...","count":2,"role":"brute|skirmisher|controller|support|boss","statBlock":{',
+			'    "name":"...","size":"...","type":"...","alignment":"...",',
+			'    "ac":13,"hp":{"max":22},"speed":"30 ft",',
+			'    "abilityScores":{"str":12,"dex":14,"con":12,"int":10,"wis":10,"cha":8},',
+			'    "saves":"...","skills":"...","senses":"...","languages":"...","challenge":"...",',
+			'    "traits":[{"name":"...","text":"..."}],',
+			'    "actions":[{"name":"...","text":"..."}]',
+			'  }}],',
+			'  "threatScale":{"dialUp":["..."],"dialDown":["..."]},',
 			'  "twist":"...","tactics":"...","scaling":{"easier":"...","harder":"..."},"rewards":"..."}',
-			' ... B ...',
-			' ... C ...',
-			']}',
+			' ]}',
 		].join('\n');
 
 		const userPrompt = [
 			`Campaign: ${campaignName}`,
-			seed ? `Seed: ${seed}` : 'Seed: (none provided)',
+			`Intent mode: ${intent.intentMode}`,
+			`Override difficulty: ${overrideLabel ?? '(none)'}`,
+			`Intent reason: ${intent.reason}`,
+			seed ? `DM seed: ${seed}` : 'DM seed: (none provided)',
 			'',
-			'Party status:',
+			'Party status (baseline for tuning):',
 			partyLines || '(no linked party members)',
 			'',
 			transcriptSnippet ? 'Recent campaign transcript excerpt (context):\n' + transcriptSnippet : '',
+			'',
+			'Generate the three options now. Ensure each option is distinct in enemy set and play pattern.',
 		].filter(Boolean).join('\n');
 
 		const gem = await callGeminiText(env, {
 			systemPrompt,
 			userPrompt,
-			temperature: 0.65,
-			maxOutputTokens: 1100,
+			temperature: intent.intentMode === 'kill' ? 0.7 : 0.6,
+			maxOutputTokens: 1700,
 		});
 
-		let options: any[] | null = null;
+		let normalizedOptions: EncounterOption[] | null = null;
 		let rawText = '';
 		if (gem.ok) {
 			rawText = gem.text;
 			const parsed = tryParseJsonLoose(rawText);
-			if (parsed && Array.isArray(parsed.options)) {
-				options = parsed.options;
-			}
+			normalizedOptions = normalizeEncounterOptions(parsed, intent);
 		}
 
-		if (!options || options.length < 3) {
-			// Fallback deterministic options (still useful without AI key).
-			const base = seed || 'an unexpected complication on the road';
-			options = [
-				{
-					id: 'A',
-					title: 'Roadside Pressure',
-					difficulty: 'Medium',
-					type: 'mixed',
-					hook: `The party is drawn into ${base}.`,
-					setup: 'Use terrain and time pressure. Provide a clear non-lethal out.',
-					opposition: [{ name: 'Bandit scouts', count: 4, notes: 'Flee if half drop; surrender is possible.' }],
-					twist: 'A third party arrives and changes the stakes.',
-					tactics: 'Enemies probe first; escalate only if the party commits.',
-					scaling: { easier: 'Reduce opposition by 1–2; offer cover.', harder: 'Add a leader or hazard.' },
-					rewards: 'A clue, a small stash, and momentum toward the next scene.',
-				},
-				{
-					id: 'B',
-					title: 'The Offer',
-					difficulty: 'Easy',
-					type: 'social',
-					hook: `A messenger brings terms connected to ${campaignName}.`,
-					setup: 'A tense negotiation with consequences, not a combat.',
-					opposition: [{ name: 'Envoy and escorts', count: 3, notes: 'They are not here to fight unless provoked.' }],
-					twist: 'The envoy is telling the truth—but omitting the real cost.',
-					tactics: 'Lean on persuasion, insight, and a meaningful choice.',
-					scaling: { easier: 'Make the offer generous.', harder: 'Add a ticking clock or hostage.' },
-					rewards: 'Information + a hook into the next arc.',
-				},
-				{
-					id: 'C',
-					title: 'Quiet Ruins',
-					difficulty: 'Hard',
-					type: 'exploration',
-					hook: `The party investigates ruins tied to ${base}.`,
-					setup: 'Layer 2–3 obstacles (hazard, puzzle, sentinel) and an optional fight.',
-					opposition: [{ name: 'Restless sentinel', count: 1, notes: 'Triggered by noise or magic.' }],
-					twist: 'The real threat is environmental—collapse, flood, or curse.',
-					tactics: 'Reward caution; telegraph danger; let clever play bypass risk.',
-					scaling: { easier: 'Make hazards forgiving.', harder: 'Add a second sentinel or tight timer.' },
-					rewards: 'A relic, a map fragment, or a name whispered in old ink.',
-				},
-			];
+		if (!normalizedOptions) {
+			// Fallback: still produce structured, homebrew stat blocks.
+			const forced = intent.overrideDifficulty;
+			const tiers: EncounterOption['difficulty'][] = forced ? [forced, forced, forced] : ['Easy', 'Medium', 'Hard'];
+			const base = seed || 'a sudden pressure point in the current scene';
+			normalizedOptions = (['A', 'B', 'C'] as const).map((id, idx) => {
+				const difficulty = tiers[idx];
+				const mk = (name: string, count: number, ac: number, hp: number, str: number, dex: number, con: number, int: number, wis: number, cha: number): EncounterMonster => ({
+					name,
+					count,
+					role: id === 'C' ? 'boss' : 'skirmisher',
+					statBlock: {
+						name,
+						size: 'Medium',
+						type: 'humanoid',
+						alignment: 'any',
+						ac,
+						hp: { max: hp },
+						speed: '30 ft',
+						abilityScores: { str, dex, con, int, wis, cha },
+						traits: [{ name: 'Tactical Footing', text: 'Has advantage on its next attack roll if it moved at least 10 feet this turn.' }],
+						actions: [{ name: 'Blade', text: 'Melee Weapon Attack: +4 to hit, reach 5 ft., one target. Hit: 6 (1d8 + 2) slashing damage.' }],
+					},
+				});
+				const pack = idx === 0
+					? [mk('Ash-Scarf Cutthroat', 2, 12, 11, 10, 14, 10, 10, 10, 10)]
+					: idx === 1
+						? [
+							mk('Ash-Scarf Cutthroat', 3, 13, 14, 10, 15, 11, 10, 10, 10),
+							mk('Cinder Hexer', 1, 12, 18, 8, 12, 12, 14, 11, 12),
+						]
+						: [
+							mk('Ash-Scarf Cutthroat', 4, 13, 14, 10, 15, 11, 10, 10, 10),
+							mk('Cinder Hexer', 2, 12, 18, 8, 12, 12, 14, 11, 12),
+							mk('Wyrm-Brand Enforcer', 1, 15, 45, 16, 12, 14, 10, 12, 10),
+						];
+				return {
+					id,
+					difficulty,
+					intentMode: intent.intentMode,
+					title: `${difficulty} Pressure: ${base}`,
+					type: 'combat',
+					hook: `The party collides with ${base}.`,
+					setup: 'Use cover, a clear objective, and at least one retreat/surrender vector unless in Kill Mode.',
+					oppositionSummary: 'A disciplined cell tests the party\'s remaining resources.',
+					monsters: pack,
+					threatScale: {
+						dialUp: ['Add a second wave on round 3', 'Hazard: choking smoke reduces vision', 'Enemies focus-fire the weakest target'],
+						dialDown: ['Enemies break morale at 50% casualties', 'Remove the hazard', 'Give the party advantageous terrain'],
+					},
+					twist: 'A witness (or rival faction) arrives mid-fight and changes what “winning” means.',
+					tactics: 'Probe defenses first, then commit to a decisive push once a weakness is spotted.',
+					scaling: {
+						easier: 'Reduce one monster group by 1 and remove the hazard.',
+						harder: 'Add +1 elite and a lair-style hazard that triggers each round.',
+					},
+					rewards: 'A tangible clue, salvageable gear, and a forward-moving consequence.',
+				};
+			});
 		}
+
+		// Persist the generated bundle for recall.
+		const now = new Date().toISOString();
+		const bundleId = crypto.randomUUID();
+		const bundle: EncounterBundle = {
+			id: bundleId,
+			campaignId,
+			author: username,
+			createdAt: now,
+			seed,
+			intentMode: intent.intentMode,
+			overrideDifficulty: overrideLabel,
+			partyStatus,
+			options: normalizedOptions,
+		};
+		await env.ADA_DATA.put(`encounter:${bundleId}`, JSON.stringify(bundle));
+		if (!Array.isArray(campaign.encounterIds)) campaign.encounterIds = [];
+		campaign.encounterIds.push(bundleId);
+		// Keep archive bounded.
+		if (campaign.encounterIds.length > 50) {
+			campaign.encounterIds = campaign.encounterIds.slice(-50);
+		}
+		await env.ADA_DATA.put(`campaign:${campaignId}`, JSON.stringify(campaign));
 
 		return jsonResponse(
 			{
 				ok: true,
 				toolType: 'encounter',
 				partyStatus,
-				result: { options },
-				...(isDebugEnabled(env) ? { debug: { gemini: getGeminiDebugSnapshot() } } : {}),
+				result: { options: normalizedOptions },
+				encounterBundle: bundle,
+				...(isDebugEnabled(env)
+					? {
+						debug: {
+							gemini: getGeminiDebugSnapshot(),
+							intent,
+							rawSnippet: rawText ? rawText.slice(0, 1200) : null,
+						},
+					}
+					: {}),
 			},
 			{ status: 200 },
 			origin,

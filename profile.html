@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>ADA — Profile</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;800&family=MedievalSharp&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body data-page="profile">
+  <main class="app">
+    <header class="app__header">
+      <div class="app__header-main">
+        <h1>ADA</h1>
+        <p>AI D&D assistant for narrative, mechanics, and character art.</p>
+      </div>
+      <div class="app__header-user">
+        <span id="currentUserLabel" class="user-label" hidden></span>
+        <nav id="appNav" class="nav" aria-label="Primary">
+          <a class="nav__link" href="forge.html">Character Forge</a>
+          <a class="nav__link" href="hud.html">Session HUD</a>
+          <a class="nav__link" href="vault.html">My Characters</a>
+          <a class="nav__link" href="campaigns.html">My Campaigns</a>
+          <a class="nav__link" href="profile.html">Profile</a>
+          <button type="button" class="nav__link nav__link--danger" id="logoutBtn">Logout</button>
+        </nav>
+      </div>
+    </header>
+
+    <section id="profileSection" class="profile">
+      <h2>Your profile</h2>
+      <p>
+        <strong>Username:</strong>
+        <span id="profileUsername"></span>
+      </p>
+      <div id="profilePortrait" class="profile__portrait"></div>
+      <p class="profile__hint">
+        Portrait and settings are stored locally for now and tied to this browser.
+      </p>
+    </section>
+  </main>
+
+  <script src="speech.js"></script>
+</body>
+</html>

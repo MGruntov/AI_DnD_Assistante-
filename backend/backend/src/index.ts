@@ -13,7 +13,222 @@
 
 type Env = {
 	ADA_DATA: KVNamespace;
+	GEMINI_API_KEY: string;
+	// Non-secret toggle for returning debug fields in API responses.
+	// Set via Wrangler vars (not secrets), e.g. ADA_DEBUG="1".
+	ADA_DEBUG?: string;
 };
+
+// Gemini (Google Generative Language API) uses v1beta endpoints for generateContent and model listing.
+// Model names are typically versioned (e.g. gemini-1.5-flash-001) and listModels returns full names
+// like "models/gemini-1.5-flash-001".
+const GEMINI_API_VERSION = 'v1beta';
+const GEMINI_PREFERRED_BASE_MODEL_ID = 'gemini-1.5-flash';
+
+type GeminiModelInfo = {
+	name?: string; // e.g. "models/gemini-1.5-flash-001"
+	baseModelId?: string; // e.g. "gemini-1.5-flash"
+	version?: string; // e.g. "1.5"
+	displayName?: string;
+	supportedGenerationMethods?: string[];
+};
+
+let geminiResolvedModelCache:
+	| {
+		modelName: string;
+		expiresAt: number;
+	}
+	| null = null;
+
+function isDebugEnabled(env: Env): boolean {
+	const v = String(env.ADA_DEBUG ?? '').trim().toLowerCase();
+	return v === '1' || v === 'true' || v === 'yes' || v === 'on';
+}
+
+function getGeminiDebugSnapshot(): {
+	apiVersion: string;
+	model: string | null;
+	cacheExpiresAt: number | null;
+} {
+	return {
+		apiVersion: GEMINI_API_VERSION,
+		model: geminiResolvedModelCache?.modelName ?? null,
+		cacheExpiresAt: geminiResolvedModelCache?.expiresAt ?? null,
+	};
+}
+
+function normalizeGeminiModelName(name: string): string {
+	const trimmed = String(name || '').trim();
+	// The REST path parameter expects a resource name like "models/{model}".
+	if (trimmed.startsWith('models/')) return trimmed;
+	return `models/${trimmed}`;
+}
+
+function isSupportedForGenerateContent(model: GeminiModelInfo): boolean {
+	const methods = Array.isArray(model.supportedGenerationMethods)
+		? model.supportedGenerationMethods
+		: [];
+	return methods.some((m) => String(m).toLowerCase() === 'generatecontent');
+}
+
+function extractNumericSuffix(modelName: string): number | null {
+	// "models/gemini-1.5-flash-001" -> 1
+	const cleaned = modelName.replace(/^models\//, '');
+	const m = cleaned.match(/-(\d{3})$/);
+	if (!m) return null;
+	const n = Number.parseInt(m[1], 10);
+	return Number.isFinite(n) ? n : null;
+}
+
+function inferBaseModelIdFromName(modelName: string): string {
+	const cleaned = String(modelName || '').replace(/^models\//, '').trim();
+	if (!cleaned) return '';
+	// Strip common version suffixes.
+	const withoutNumeric = cleaned.replace(/-(\d{3})$/, '');
+	return withoutNumeric;
+}
+
+async function listGeminiModels(apiKey: string): Promise<{
+	ok: boolean;
+	models: GeminiModelInfo[];
+	upstreamStatus: number | null;
+	upstreamBodySnippet: string | null;
+}> {
+	const url =
+		`https://generativelanguage.googleapis.com/${encodeURIComponent(GEMINI_API_VERSION)}/models` +
+		`?pageSize=1000&key=${encodeURIComponent(apiKey)}`;
+	let upstreamStatus: number | null = null;
+	let upstreamBodySnippet: string | null = null;
+	try {
+		const res = await fetch(url, { method: 'GET' });
+		upstreamStatus = res.status;
+		const rawText = await res.text().catch(() => '');
+		upstreamBodySnippet = rawText ? rawText.slice(0, 1200) : null;
+		if (!res.ok) {
+			return { ok: false, models: [], upstreamStatus, upstreamBodySnippet };
+		}
+		let data: any = null;
+		try {
+			data = rawText ? JSON.parse(rawText) : null;
+		} catch {
+			data = null;
+		}
+		const models = Array.isArray(data?.models) ? (data.models as GeminiModelInfo[]) : [];
+		return { ok: true, models, upstreamStatus, upstreamBodySnippet };
+	} catch (err: any) {
+		return {
+			ok: false,
+			models: [],
+			upstreamStatus,
+			upstreamBodySnippet:
+				err && typeof err.message === 'string' ? err.message.slice(0, 1200) : 'Unknown error',
+		};
+	}
+}
+
+async function resolveGeminiModelName(apiKey: string): Promise<{
+	modelName: string;
+	resolvedFrom: 'cache' | 'models.list' | 'fallback';
+	debug?: {
+		candidateCount?: number;
+		chosenBaseModelId?: string;
+		chosenNumericSuffix?: number | null;
+	};
+}> {
+	const now = Date.now();
+	if (geminiResolvedModelCache && geminiResolvedModelCache.expiresAt > now) {
+		return { modelName: geminiResolvedModelCache.modelName, resolvedFrom: 'cache' };
+	}
+
+	const listed = await listGeminiModels(apiKey);
+	if (listed.ok && listed.models.length) {
+		const candidates = listed.models
+			.map((m) => ({
+				...m,
+				name: m.name ? String(m.name) : undefined,
+				baseModelId: m.baseModelId
+					? String(m.baseModelId)
+					: m.name
+						? inferBaseModelIdFromName(String(m.name))
+						: undefined,
+			}))
+			.filter((m) => m.name && isSupportedForGenerateContent(m));
+
+		// Prefer the requested base model id; pick the highest numeric suffix (e.g. -002 over -001).
+		const preferred = candidates.filter((m) => m.baseModelId === GEMINI_PREFERRED_BASE_MODEL_ID);
+		if (preferred.length) {
+			preferred.sort((a, b) => {
+				const an = extractNumericSuffix(a.name || '') ?? -1;
+				const bn = extractNumericSuffix(b.name || '') ?? -1;
+				return bn - an;
+			});
+			const chosen = normalizeGeminiModelName(preferred[0].name || GEMINI_PREFERRED_BASE_MODEL_ID);
+			geminiResolvedModelCache = { modelName: chosen, expiresAt: now + 60 * 60 * 1000 };
+			return {
+				modelName: chosen,
+				resolvedFrom: 'models.list',
+				debug: {
+					candidateCount: preferred.length,
+					chosenBaseModelId: GEMINI_PREFERRED_BASE_MODEL_ID,
+					chosenNumericSuffix: extractNumericSuffix(preferred[0].name || ''),
+				},
+			};
+		}
+
+		// Otherwise, pick any model that supports generateContent, preferring a modern "flash" model.
+		const preferenceOrder = [
+			'gemini-2.5-flash',
+			'gemini-2.0-flash',
+			'gemini-2.0-flash-lite',
+			'gemini-3-flash',
+			'gemini-1.5-flash',
+			'gemini-1.5-pro',
+		];
+		for (const base of preferenceOrder) {
+			const subset = candidates.filter((m) => (m.baseModelId || '').startsWith(base));
+			if (subset.length) {
+				// Prefer stable (non-preview/exp) variants, then highest numeric suffix.
+				subset.sort((a, b) => {
+					const aName = (a.name || '').toLowerCase();
+					const bName = (b.name || '').toLowerCase();
+					const aIsPreview = /\b(preview|exp|experimental)\b/.test(aName);
+					const bIsPreview = /\b(preview|exp|experimental)\b/.test(bName);
+					if (aIsPreview !== bIsPreview) return aIsPreview ? 1 : -1;
+					const an = extractNumericSuffix(a.name || '') ?? -1;
+					const bn = extractNumericSuffix(b.name || '') ?? -1;
+					return bn - an;
+				});
+				const chosen = normalizeGeminiModelName(subset[0].name || base);
+				geminiResolvedModelCache = { modelName: chosen, expiresAt: now + 60 * 60 * 1000 };
+				return {
+					modelName: chosen,
+					resolvedFrom: 'models.list',
+					debug: {
+						candidateCount: subset.length,
+						chosenBaseModelId: subset[0].baseModelId,
+						chosenNumericSuffix: extractNumericSuffix(subset[0].name || ''),
+					},
+				};
+			}
+		}
+		const chosen = normalizeGeminiModelName(candidates[0].name || GEMINI_PREFERRED_BASE_MODEL_ID);
+		geminiResolvedModelCache = { modelName: chosen, expiresAt: now + 60 * 60 * 1000 };
+		return {
+			modelName: chosen,
+			resolvedFrom: 'models.list',
+			debug: {
+				candidateCount: candidates.length,
+				chosenBaseModelId: candidates[0].baseModelId,
+				chosenNumericSuffix: extractNumericSuffix(candidates[0].name || ''),
+			},
+		};
+	}
+
+	// Fallback to a reasonable default. This may 404 if the key doesn't have access.
+	const fallback = normalizeGeminiModelName('gemini-2.0-flash');
+	geminiResolvedModelCache = { modelName: fallback, expiresAt: now + 5 * 60 * 1000 };
+	return { modelName: fallback, resolvedFrom: 'fallback' };
+}
 
 const CORS_HEADERS_BASE = {
 	'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
@@ -70,11 +285,75 @@ type Campaign = {
 	createdAt: string;
 	journalEntryIds?: string[];
 	scriptIds?: string[];
+	encounterIds?: string[];
 	linkedCharacterIds?: string[];
+	conversationTranscript?: string;
+	status?: 'active' | 'completed';
+	completedAt?: string;
+	xpAwardedToCharacterIds?: string[];
 	// Optional AI-DM fields
 	mode?: 'ai-solo' | 'standard';
 	adventureId?: string;
 	dmIsAI?: boolean;
+};
+
+type EncounterStatBlock = {
+	name: string;
+	size?: string;
+	type?: string;
+	alignment?: string;
+	ac: number;
+	hp: { max: number };
+	speed?: string;
+	abilityScores: { str: number; dex: number; con: number; int: number; wis: number; cha: number };
+	saves?: string;
+	skills?: string;
+	senses?: string;
+	languages?: string;
+	challenge?: string;
+	traits?: { name: string; text: string }[];
+	actions?: { name: string; text: string }[];
+};
+
+type EncounterMonster = {
+	name: string;
+	count: number;
+	role?: string;
+	statBlock: EncounterStatBlock;
+};
+
+type EncounterThreatScale = {
+	dialUp: string[];
+	dialDown: string[];
+};
+
+type EncounterOption = {
+	id: 'A' | 'B' | 'C';
+	difficulty: 'Easy' | 'Medium' | 'Hard' | 'Deadly';
+	intentMode: 'balanced' | 'kill';
+	title: string;
+	type: 'combat' | 'social' | 'exploration' | 'mixed';
+	hook: string;
+	setup: string;
+	oppositionSummary?: string;
+	monsters: EncounterMonster[];
+	threatScale: EncounterThreatScale;
+	twist: string;
+	tactics: string;
+	scaling: { easier: string; harder: string };
+	rewards: string;
+};
+
+type EncounterBundle = {
+	id: string;
+	campaignId: string;
+	author: string;
+	createdAt: string;
+	seed: string;
+	intentMode: 'balanced' | 'kill';
+	overrideDifficulty: EncounterOption['difficulty'] | null;
+	partyStatus: PartyStatus;
+	options: EncounterOption[];
 };
 
 type CharacterClass = {
@@ -116,6 +395,16 @@ type Character = {
 			leveledSpells: string[];
 		};
 	};
+	// Progression is system-managed (never directly edited by the user).
+	progression?: {
+		level: number;
+		xp: number;
+		xpToNextLevel: number | null;
+		canLevelUp: boolean;
+		hp: { current: number; max: number };
+		manaSlots: { current: number; max: number };
+		updatedAt: string;
+	};
 	portraitUrl: string | null;
 	validation: {
 		isValid: boolean;
@@ -125,6 +414,135 @@ type Character = {
 	createdAt: string;
 	updatedAt: string;
 };
+
+const MAX_CHARACTER_LEVEL = 20;
+
+// D&D 5e XP thresholds (cumulative). Key is the level number.
+const XP_THRESHOLD_BY_LEVEL: Record<number, number> = {
+	1: 0,
+	2: 300,
+	3: 900,
+	4: 2700,
+	5: 6500,
+	6: 14000,
+	7: 23000,
+	8: 34000,
+	9: 48000,
+	10: 64000,
+	11: 85000,
+	12: 100000,
+	13: 120000,
+	14: 140000,
+	15: 165000,
+	16: 195000,
+	17: 225000,
+	18: 265000,
+	19: 305000,
+	20: 355000,
+};
+
+function clampLevel(level: number): number {
+	if (!Number.isFinite(level)) return 1;
+	return Math.max(1, Math.min(MAX_CHARACTER_LEVEL, Math.floor(level)));
+}
+
+function xpThresholdForLevel(level: number): number {
+	const lvl = clampLevel(level);
+	return XP_THRESHOLD_BY_LEVEL[lvl] ?? 0;
+}
+
+function xpThresholdForNextLevel(level: number): number | null {
+	const lvl = clampLevel(level);
+	if (lvl >= MAX_CHARACTER_LEVEL) return null;
+	return XP_THRESHOLD_BY_LEVEL[lvl + 1] ?? null;
+}
+
+function computeProficiencyBonusForLevel(totalLevel: number): number {
+	const lvl = clampLevel(totalLevel);
+	return 2 + Math.floor((lvl - 1) / 4);
+}
+
+function getTotalCharacterLevel(character: Character): number {
+	const classes = Array.isArray(character.concept?.classes) ? character.concept.classes : [];
+	const sum = classes.reduce((acc, c) => acc + (Number.isFinite(c?.level) ? Number(c.level) : 0), 0);
+	return clampLevel(sum || 1);
+}
+
+function computeManaSlotsMax(character: Character, totalLevel: number): number {
+	const castingStat = character.mechanics?.spells?.castingStat;
+	if (!castingStat) return 0;
+	const lvl = clampLevel(totalLevel);
+	// Simplified "mana slots" pool (not the full slot table): grows steadily.
+	return Math.min(24, Math.max(2, lvl * 2));
+}
+
+function ensureCharacterProgression(character: Character): Character {
+	const now = new Date().toISOString();
+	const totalLevel = getTotalCharacterLevel(character);
+	const xp = Number.isFinite(character.progression?.xp) ? Number(character.progression?.xp) : 0;
+	const hpMax = Number.isFinite(character.mechanics?.hitPoints) ? Number(character.mechanics.hitPoints) : 1;
+	const manaMax = computeManaSlotsMax(character, totalLevel);
+	const xpToNext = xpThresholdForNextLevel(totalLevel);
+	const canLevelUp = xpToNext != null ? xp >= xpToNext : false;
+
+	return {
+		...character,
+		progression: {
+			level: totalLevel,
+			xp,
+			xpToNextLevel: xpToNext,
+			canLevelUp,
+			hp: {
+				current: Number.isFinite(character.progression?.hp?.current)
+					? Math.max(0, Number(character.progression!.hp.current))
+					: hpMax,
+				max: hpMax,
+			},
+			manaSlots: {
+				current: Number.isFinite(character.progression?.manaSlots?.current)
+					? Math.max(0, Math.min(manaMax, Number(character.progression!.manaSlots.current)))
+					: manaMax,
+				max: manaMax,
+			},
+			updatedAt: now,
+		},
+	};
+}
+
+function xpAwardForCampaign(campaign: Campaign): number {
+	if (campaign.adventureId) {
+		const adv = ADVENTURES.find((a) => a.id === campaign.adventureId);
+		if (adv?.difficulty === 'Easy') return 250;
+		if (adv?.difficulty === 'Hard') return 600;
+		return 400;
+	}
+	return 300;
+}
+
+async function awardXpToCharacter(env: Env, characterId: string, xpAmount: number): Promise<Character | null> {
+	const stored = await env.ADA_DATA.get(`character:${characterId}`);
+	if (!stored) return null;
+	let character: Character;
+	try {
+		character = JSON.parse(stored) as Character;
+	} catch {
+		return null;
+	}
+	character = ensureCharacterProgression(character);
+	const currentXp = Number.isFinite(character.progression?.xp) ? Number(character.progression!.xp) : 0;
+	const updated: Character = {
+		...character,
+		progression: {
+			...character.progression!,
+			xp: Math.max(0, currentXp + Math.max(0, xpAmount)),
+			updatedAt: new Date().toISOString(),
+		},
+		updatedAt: new Date().toISOString(),
+	};
+	const normalized = ensureCharacterProgression(updated);
+	await env.ADA_DATA.put(`character:${characterId}`, JSON.stringify(normalized));
+	return normalized;
+}
 
 type JournalEntry = {
 	id: string;
@@ -152,6 +570,146 @@ type DialogueLog = {
 	snippet: string;
 	fullText: string;
 };
+
+type PartyMemberStatus = {
+	id: string;
+	owner: string;
+	name: string;
+	classSummary: string;
+	level: number;
+	hp: { current: number; max: number };
+	manaSlots: { current: number; max: number };
+};
+
+type PartyStatus = {
+	memberCount: number;
+	totalLevel: number;
+	averageLevel: number;
+	hp: { current: number; max: number };
+	manaSlots: { current: number; max: number };
+	members: PartyMemberStatus[];
+};
+
+function computePartyStatus(characters: Character[]): PartyStatus {
+	const normalized = (Array.isArray(characters) ? characters : []).map((c) => ensureCharacterProgression(c));
+	const members: PartyMemberStatus[] = normalized.map((c) => {
+		const name = c.name && String(c.name).trim() ? String(c.name).trim() : 'Unnamed adventurer';
+		const classSummary = c.concept?.classSummary ? String(c.concept.classSummary) : 'Adventurer';
+		const level = getTotalCharacterLevel(c);
+		const hp = {
+			current: Number.isFinite(c.progression?.hp?.current) ? Number(c.progression!.hp.current) : c.mechanics.hitPoints,
+			max: Number.isFinite(c.progression?.hp?.max) ? Number(c.progression!.hp.max) : c.mechanics.hitPoints,
+		};
+		const manaSlots = {
+			current: Number.isFinite(c.progression?.manaSlots?.current) ? Number(c.progression!.manaSlots.current) : 0,
+			max: Number.isFinite(c.progression?.manaSlots?.max) ? Number(c.progression!.manaSlots.max) : 0,
+		};
+		return {
+			id: c.id,
+			owner: c.owner,
+			name,
+			classSummary,
+			level,
+			hp: {
+				current: Math.max(0, Math.floor(hp.current)),
+				max: Math.max(0, Math.floor(hp.max)),
+			},
+			manaSlots: {
+				current: Math.max(0, Math.floor(manaSlots.current)),
+				max: Math.max(0, Math.floor(manaSlots.max)),
+			},
+		};
+	});
+
+	const totals = members.reduce(
+		(acc, m) => {
+			acc.totalLevel += m.level;
+			acc.hpCurrent += m.hp.current;
+			acc.hpMax += m.hp.max;
+			acc.manaCurrent += m.manaSlots.current;
+			acc.manaMax += m.manaSlots.max;
+			return acc;
+		},
+		{ totalLevel: 0, hpCurrent: 0, hpMax: 0, manaCurrent: 0, manaMax: 0 },
+	);
+
+	const memberCount = members.length;
+	const averageLevel = memberCount ? Math.round((totals.totalLevel / memberCount) * 10) / 10 : 0;
+	return {
+		memberCount,
+		totalLevel: totals.totalLevel,
+		averageLevel,
+		hp: { current: totals.hpCurrent, max: totals.hpMax },
+		manaSlots: { current: totals.manaCurrent, max: totals.manaMax },
+		members,
+	};
+}
+
+async function loadCampaignPartyCharacters(env: Env, campaign: Campaign): Promise<Character[]> {
+	const campaignId = campaign.id;
+	const participantUsernames = new Set<string>();
+	if (campaign.dm) participantUsernames.add(campaign.dm);
+	if (Array.isArray(campaign.participants)) {
+		for (const p of campaign.participants) {
+			const u = String(p || '').trim();
+			if (u) participantUsernames.add(u);
+		}
+	}
+
+	const linkedIds = new Set<string>(Array.isArray(campaign.linkedCharacterIds) ? campaign.linkedCharacterIds : []);
+
+	// Compatibility: also pull linked characters from each participant's index in case
+	// older data only stored campaignIds on the character record.
+	for (const username of participantUsernames) {
+		const indexKey = `charactersByUser:${username}`;
+		const existing = await env.ADA_DATA.get(indexKey);
+		let ids: string[] = [];
+		if (existing) {
+			try {
+				ids = JSON.parse(existing) as string[];
+				if (!Array.isArray(ids)) ids = [];
+			} catch {
+				ids = [];
+			}
+		}
+		for (const charId of ids) {
+			const stored = await env.ADA_DATA.get(`character:${charId}`);
+			if (!stored) continue;
+			try {
+				const parsed = JSON.parse(stored) as Character;
+				if (parsed && parsed.id && Array.isArray(parsed.campaignIds) && parsed.campaignIds.includes(campaignId)) {
+					linkedIds.add(parsed.id);
+				}
+			} catch {
+				// ignore malformed
+			}
+		}
+	}
+
+	const characters: Character[] = [];
+	for (const id of linkedIds) {
+		const stored = await env.ADA_DATA.get(`character:${id}`);
+		if (!stored) continue;
+		try {
+			const parsed = JSON.parse(stored) as Character;
+			if (parsed && parsed.id) {
+				characters.push(ensureCharacterProgression(parsed));
+			}
+		} catch {
+			// ignore malformed
+		}
+	}
+
+	// Stable ordering: by owner then by name.
+	characters.sort((a, b) => {
+		const ao = String(a.owner || '');
+		const bo = String(b.owner || '');
+		if (ao !== bo) return ao.localeCompare(bo);
+		return String(a.name || '').localeCompare(String(b.name || ''));
+	});
+
+	return characters;
+}
 
 type AdventureDifficulty = 'Easy' | 'Normal' | 'Hard';
 
@@ -182,10 +740,440 @@ type AIDMSessionState = {
 	summary: string;
 	checkpointIndex: number;
 	status: 'active' | 'completed' | 'failed';
+	pendingCheck?: {
+		checkDescription: string | null;
+		dc: number | null;
+		ability: string | null;
+		skill: string | null;
+		advantage: 'none' | 'advantage' | 'disadvantage' | null;
+	} | null;
 };
+
+function abilityModifier(score: number): number {
+	// D&D 5e modifier: floor((score - 10) / 2)
+	return Math.floor((score - 10) / 2);
+}
+
+function normalizeAbilityKey(ability: string | null): keyof Character['mechanics']['abilityScores'] | null {
+	const a = String(ability || '').trim().toUpperCase();
+	if (a === 'STR') return 'str';
+	if (a === 'DEX') return 'dex';
+	if (a === 'CON') return 'con';
+	if (a === 'INT') return 'int';
+	if (a === 'WIS') return 'wis';
+	if (a === 'CHA') return 'cha';
+	return null;
+}
+
+function rollD20(): number {
+	// Cryptographically strong-ish for Workers.
+	const bytes = new Uint32Array(1);
+	crypto.getRandomValues(bytes);
+	return (bytes[0] % 20) + 1;
+}
+
+function computeCheckTotal(character: Character, ability: string | null, skill: string | null, d20: number): {
+	modifier: number;
+	proficiency: number;
+	total: number;
+} {
+	const abilityKey = normalizeAbilityKey(ability);
+	const scores = character.mechanics?.abilityScores;
+	const score = abilityKey && scores ? scores[abilityKey] : 10;
+	const mod = abilityModifier(score);
+
+	// If the session requested a skill and the character is trained in it, add proficiency bonus.
+	const skillName = String(skill || '').trim().toLowerCase();
+	const trainedSkills = Array.isArray(character.mechanics?.skills)
+		? character.mechanics.skills.map((s) => String(s).trim().toLowerCase())
+		: [];
+	const isTrained = !!skillName && trainedSkills.includes(skillName);
+	let profBonus = isTrained && typeof character.mechanics?.proficiencyBonus === 'number'
+		? character.mechanics.proficiencyBonus
+		: 0;
+
+	// If no skill is specified, this may be a saving throw. If the character is proficient
+	// in that saving throw, add proficiency bonus.
+	if ((!skillName || skillName === 'none') && profBonus === 0) {
+		const saves = Array.isArray(character.mechanics?.savingThrows)
+			? character.mechanics.savingThrows.map((s) => String(s).trim().toLowerCase())
+			: [];
+		const aKey = abilityKey ? String(abilityKey).toLowerCase() : '';
+		const isSaveProficient = !!aKey && saves.includes(aKey);
+		if (isSaveProficient && typeof character.mechanics?.proficiencyBonus === 'number') {
+			profBonus = character.mechanics.proficiencyBonus;
+		}
+	}
+	return { modifier: mod, proficiency: profBonus, total: d20 + mod + profBonus };
+}
+
+function applyProgressDirective(
+	session: AIDMSessionState,
+	adventure: AdventureTemplate,
+	progress: 'stay' | 'advance' | 'complete' | 'fail' | null,
+): {
+	changed: boolean;
+	checkpointIndexBefore: number;
+	checkpointIndexAfter: number;
+	statusBefore: AIDMSessionState['status'];
+	statusAfter: AIDMSessionState['status'];
+} {
+	const checkpointIndexBefore = session.checkpointIndex;
+	const statusBefore = session.status;
+	let changed = false;
+
+	if (progress === 'advance') {
+		const maxIdx = adventure.checkpoints.length - 1;
+		if (session.checkpointIndex < maxIdx) {
+			session.checkpointIndex += 1;
+			changed = true;
+		}
+	}
+	if (progress === 'complete') {
+		session.status = 'completed';
+		changed = true;
+	}
+	if (progress === 'fail') {
+		session.status = 'failed';
+		changed = true;
+	}
+
+	return {
+		changed,
+		checkpointIndexBefore,
+		checkpointIndexAfter: session.checkpointIndex,
+		statusBefore,
+		statusAfter: session.status,
+	};
+}
+
+async function handleAIDMResolveCheck(request: Request, env: Env, origin: string | null): Promise<Response> {
+	let body: any;
+	try {
+		body = await request.json();
+	} catch {
+		return errorResponse('Invalid JSON body', 400, origin);
+	}
+
+	const username = String(body?.username ?? '').trim();
+	const campaignId = String(body?.campaignId ?? '').trim();
+	// Client may provide explicit dice for transparency, otherwise server rolls.
+	const roll1 = Number.isFinite(Number(body?.roll1)) ? Number(body.roll1) : null;
+	const roll2 = Number.isFinite(Number(body?.roll2)) ? Number(body.roll2) : null;
+
+	if (!username || !campaignId) {
+		return errorResponse('username and campaignId are required', 400, origin);
+	}
+
+	const storedCampaign = await env.ADA_DATA.get(`campaign:${campaignId}`);
+	if (!storedCampaign) {
+		return errorResponse('Campaign not found', 404, origin);
+	}
+	let campaign: Campaign;
+	try {
+		campaign = JSON.parse(storedCampaign) as Campaign;
+	} catch {
+		return errorResponse('Corrupted campaign record', 500, origin);
+	}
+
+	const isParticipant =
+		campaign.dm === username ||
+		(Array.isArray(campaign.participants) && campaign.participants.includes(username));
+	if (!isParticipant) {
+		return errorResponse('You are not a participant in this campaign', 403, origin);
+	}
+	if (!campaign.dmIsAI && campaign.mode !== 'ai-solo') {
+		return errorResponse('This campaign is not configured for AI-DM mode', 400, origin);
+	}
+
+	const sessionKey = `aiSession:${campaignId}`;
+	const storedSession = await env.ADA_DATA.get(sessionKey);
+	if (!storedSession) {
+		return errorResponse('AI-DM session not found', 404, origin);
+	}
+	let session: AIDMSessionState;
+	try {
+		session = JSON.parse(storedSession) as AIDMSessionState;
+	} catch {
+		return errorResponse('Corrupted AI-DM session record', 500, origin);
+	}
+
+	if (!session.pendingCheck || !session.pendingCheck.checkDescription) {
+		return errorResponse('No pending check to resolve', 400, origin);
+	}
+
+	const storedCharacter = await env.ADA_DATA.get(`character:${session.characterId}`);
+	if (!storedCharacter) {
+		return errorResponse('Linked character not found', 500, origin);
+	}
+	let character: Character;
+	try {
+		character = JSON.parse(storedCharacter) as Character;
+	} catch {
+		return errorResponse('Corrupted character record', 500, origin);
+	}
+	if (character.owner !== username && campaign.dm !== username) {
+		return errorResponse('You are not allowed to control this AI-DM session', 403, origin);
+	}
+
+	const adventureId = campaign.adventureId;
+	const adventure = ADVENTURES.find((a) => a.id === adventureId);
+	if (!adventure) {
+		return errorResponse('Adventure configuration not found for this campaign', 500, origin);
+	}
+
+	const dc = typeof session.pendingCheck.dc === 'number' ? session.pendingCheck.dc : 0;
+	const adv = session.pendingCheck.advantage || 'none';
+
+	const d1 = roll1 != null ? Math.max(1, Math.min(20, Math.floor(roll1))) : rollD20();
+	const d2 = roll2 != null ? Math.max(1, Math.min(20, Math.floor(roll2))) : rollD20();
+	let chosenD20 = d1;
+	if (adv === 'advantage') chosenD20 = Math.max(d1, d2);
+	if (adv === 'disadvantage') chosenD20 = Math.min(d1, d2);
+
+	const computed = computeCheckTotal(character, session.pendingCheck.ability, session.pendingCheck.skill, chosenD20);
+	const success = computed.total >= dc;
+
+	// Log the check result as a player turn so the AI can react.
+	const checkLine = session.pendingCheck.checkDescription || 'check';
+	const ability = session.pendingCheck.ability || 'none';
+	const skill = session.pendingCheck.skill || 'none';
+	const playerResultText =
+		`Check result: ${checkLine}. ` +
+		`Rolls: ${d1}${adv !== 'none' ? ` and ${d2} (${adv})` : ''}. ` +
+		`Used: ${ability}${skill && skill !== 'none' ? ` (${skill})` : ''}. ` +
+		`Total: ${computed.total} (d20 ${chosenD20} + mod ${computed.modifier} + prof ${computed.proficiency}). ` +
+		`DC ${dc}. Outcome: ${success ? 'SUCCESS' : 'FAILURE'}.`;
+
+	const now = new Date().toISOString();
+	session.log.push({ role: 'player', text: playerResultText, timestamp: now });
+	trimSessionLog(session);
+	// Clear pending check before asking DM to continue.
+	session.pendingCheck = null;
+
+	// Progress is DM-controlled via the MECHANICS.progress field (applied after the follow-up narration).
+	const beforeCheckpointIndex = session.checkpointIndex;
+
+	let dmNarrative: string;
+	let dmMechanics = {
+		checkDescription: null as string | null,
+		dc: null as number | null,
+		ability: null as string | null,
+		skill: null as string | null,
+		advantage: null as 'none' | 'advantage' | 'disadvantage' | null,
+		progress: null as 'stay' | 'advance' | 'complete' | 'fail' | null,
+	};
+	let completionJustOccurred = false;
+	try {
+		const rawResponse = await callAIDungeonMaster(env, adventure, session, character, playerResultText);
+		const parsed = parseAIDMResponse(rawResponse);
+		dmNarrative = parsed.narrative;
+		dmMechanics = parsed.mechanics;
+		// Apply DM-directed progress after narration.
+		const progressResult = applyProgressDirective(session, adventure, parsed.mechanics.progress);
+		completionJustOccurred = progressResult.statusBefore !== 'completed' && session.status === 'completed';
+		// Store next pending check only if it's a real check.
+		const nextCheck = parsed.mechanics.checkDescription;
+		const nextDc = typeof parsed.mechanics.dc === 'number' ? parsed.mechanics.dc : 0;
+		const nextAbility = (parsed.mechanics.ability || '').toUpperCase();
+		if (nextCheck && nextCheck.toLowerCase() !== 'none' && nextDc > 0 && nextAbility !== 'NONE') {
+			session.pendingCheck = {
+				checkDescription: parsed.mechanics.checkDescription,
+				dc: parsed.mechanics.dc,
+				ability: parsed.mechanics.ability,
+				skill: parsed.mechanics.skill,
+				advantage: parsed.mechanics.advantage,
+			};
+		} else {
+			session.pendingCheck = null;
+		}
+	} catch (err) {
+		console.error('AI-DM follow-up after check failed', err);
+		dmNarrative = success
+			? 'You steady your breath and push onward, the momentary tension easing as the path opens ahead.'
+			: 'A misstep sends a jolt of panic through you—something shifts in the brush, and the woods feel suddenly closer.';
+		session.pendingCheck = null;
+	}
+
+	if (completionJustOccurred) {
+		try {
+			const xpAmount = xpAwardForCampaign(campaign);
+			await awardXpToCharacter(env, session.characterId, xpAmount);
+		} catch (err) {
+			console.error('Failed to award XP on completion (resolve-check)', err);
+		}
+	}
+
+	session.log.push({ role: 'dm', text: dmNarrative, timestamp: new Date().toISOString() });
+	trimSessionLog(session);
+	await env.ADA_DATA.put(sessionKey, JSON.stringify(session));
+
+	return jsonResponse(
+		{
+			ok: true,
+			result: {
+				rolls: { roll1: d1, roll2: d2, chosen: chosenD20, mode: adv },
+				modifier: computed.modifier,
+				proficiency: computed.proficiency,
+				total: computed.total,
+				dc,
+				success,
+				checkpointIndexBefore: beforeCheckpointIndex,
+				checkpointIndexAfter: session.checkpointIndex,
+			},
+			narrative: dmNarrative,
+			mechanics: dmMechanics,
+			...(isDebugEnabled(env)
+				? {
+					debug: {
+						gemini: getGeminiDebugSnapshot(),
+					},
+				}
+				: {}),
+		},
+		{ status: 200 },
+		origin,
+	);
+}
 
 async function handleHealth(origin: string | null): Promise<Response> {
 	return jsonResponse({ status: 'ok' }, undefined, origin);
+}
+
+async function handleAIHealth(env: Env, origin: string | null): Promise<Response> {
+	const hasKey = typeof env.GEMINI_API_KEY === 'string' && env.GEMINI_API_KEY.trim().length > 0;
+	if (!hasKey) {
+		return jsonResponse(
+			{
+				ok: false,
+				status: 'missing_api_key',
+				message: 'GEMINI_API_KEY is not configured on this Worker.',
+			},
+			{ status: 200 },
+			origin,
+		);
+	}
+
+	const apiKey = env.GEMINI_API_KEY.trim();
+	const resolved = await resolveGeminiModelName(apiKey);
+	const url =
+		`https://generativelanguage.googleapis.com/${encodeURIComponent(GEMINI_API_VERSION)}/${resolved.modelName}:generateContent` +
+		`?key=${encodeURIComponent(apiKey)}`;
+
+	const body = JSON.stringify({
+		contents: [
+			{
+				role: 'user',
+				parts: [{ text: 'Respond with a single word: ok' }],
+			},
+		],
+		generationConfig: {
+			temperature: 0.0,
+			maxOutputTokens: 32,
+			// Avoid "thinking" consuming the entire tiny output budget.
+			thinkingConfig: { thinkingBudget: 0 },
+		},
+	});
+
+	let ok = false;
+	let snippet = '';
+	let error: string | null = null;
+	let upstreamStatus: number | null = null;
+	let upstreamBodySnippet: string | null = null;
+
+	try {
+		const res = await fetch(url, {
+			method: 'POST',
+			headers: { 'content-type': 'application/json; charset=utf-8' },
+			body,
+		});
+		upstreamStatus = res.status;
+		const rawText = await res.text().catch(() => '');
+		upstreamBodySnippet = rawText ? rawText.slice(0, 600) : null;
+		if (!res.ok) {
+			error = `Gemini health check failed with status ${res.status}`;
+		} else {
+			let data: any = null;
+			try {
+				data = rawText ? JSON.parse(rawText) : null;
+			} catch {
+				data = null;
+			}
+			const parts: string[] =
+				data?.candidates?.[0]?.content?.parts?.map((p: any) =>
+					p && typeof p.text === 'string' ? p.text : '',
+				) || [];
+			snippet = parts.join('').trim();
+			ok = snippet.length > 0;
+		}
+	} catch (err: any) {
+		error = err && typeof err.message === 'string' ? err.message : 'Unknown error calling Gemini';
+	}
+
+	return jsonResponse(
+		{
+			ok,
+			status: ok ? 'healthy' : 'error',
+			hasKey: true,
+			message: ok ? 'Gemini responded successfully.' : error || 'Gemini did not return a usable response.',
+			snippet,
+			apiVersion: GEMINI_API_VERSION,
+			model: resolved.modelName,
+			resolvedFrom: resolved.resolvedFrom,
+			upstreamStatus,
+			upstreamBodySnippet,
+		},
+		{ status: 200 },
+		origin,
+	);
+}
+
+async function handleAIModels(env: Env, origin: string | null): Promise<Response> {
+	const hasKey = typeof env.GEMINI_API_KEY === 'string' && env.GEMINI_API_KEY.trim().length > 0;
+	if (!hasKey) {
+		return jsonResponse(
+			{
+				ok: false,
+				status: 'missing_api_key',
+				message: 'GEMINI_API_KEY is not configured on this Worker.',
+			},
+			{ status: 200 },
+			origin,
+		);
+	}
+
+	const apiKey = env.GEMINI_API_KEY.trim();
+	const listed = await listGeminiModels(apiKey);
+	const models = listed.models
+		.map((m) => ({
+			name: m.name ?? null,
+			baseModelId: m.baseModelId ?? null,
+			version: m.version ?? null,
+			displayName: m.displayName ?? null,
+			supportedGenerationMethods: Array.isArray(m.supportedGenerationMethods)
+				? m.supportedGenerationMethods
+				: [],
+		}))
+		// Keep payload bounded.
+		.slice(0, 80);
+
+	const resolved = await resolveGeminiModelName(apiKey);
+
+	return jsonResponse(
+		{
+			ok: listed.ok,
+			apiVersion: GEMINI_API_VERSION,
+			count: listed.models.length,
+			returned: models.length,
+			resolvedModel: resolved.modelName,
+			resolvedFrom: resolved.resolvedFrom,
+			models,
+			upstreamStatus: listed.upstreamStatus,
+			upstreamBodySnippet: listed.upstreamBodySnippet,
+		},
+		{ status: 200 },
+		origin,
+	);
 }
 
 async function handleListAdventures(origin: string | null): Promise<Response> {
@@ -263,9 +1251,16 @@ function buildSessionHistory(log: TurnEntry[]): string {
 
 function buildAIDMSystemPrompt(): string {
 	return [
-		'You are ADA, an AI Dungeon Master for D&D 5e.',
+		'You are the Dungeon Master (DM) for a solo D&D 5e adventure.',
 		'You run tightly scoped, structured solo adventures for a single player.',
 		'Always respect D&D 5e tone and mechanics: low-level heroes are fragile, magic and powerful items are limited.',
+		'',
+		'Never mention that you are an AI, a model, or a system. Never refer to yourself as "ADA" in the narration.',
+		'Do not narrate about "ADA" speaking, her words, or anything meta about how the response was generated.',
+		'If the player asks who/what you are, answer in-world or as the DM in first person ("I"), not in third person.',
+		'',
+		'Never simply repeat the player\'s last input back to them as your narration.',
+		'Always advance the scene with new details: environment, NPC reactions, consequences, or new options.',
 		'',
 		'Your output MUST follow this exact structure:',
 		'[NARRATIVE]',
@@ -277,11 +1272,15 @@ function buildAIDMSystemPrompt(): string {
 		'- check: a short description of any roll the player should make, or "none"',
 		'- dc: the DC for the check, or 0 if none',
 		'- ability: STR, DEX, CON, INT, WIS, or CHA, or "none" if no check',
-		'- skill: the skill used, or "none" if no check',
+		'- skill: the skill used, or "none" if no check (for ability checks or saving throws)',
 		'- advantage: one of "none", "advantage", or "disadvantage"',
+		'- progress: one of "stay", "advance", "complete", or "fail"',
 		'[/MECHANICS]',
 		'',
-		'Do not include any other sections or markup. If no check is required, set check to "none" and dc to 0.',
+		'Do not include any other sections or markup.',
+		'If no check is required, set check to "none" and dc to 0 and progress to "stay".',
+		'Use progress="advance" only when the narration clearly transitions the player into the next checkpoint scene.',
+		'Use progress="complete" only when victory conditions are met. Use progress="fail" only on a clear defeat state.',
 	].join('\n');
 }
 
@@ -314,6 +1313,9 @@ function buildAIDMUserPrompt(
 		'Player character:',
 		characterSummary,
 		'',
+		'Longer-term session summary (may be truncated):',
+		session.summary || '(no prior summary; rely on recent log above)',
+		'',
 		'Recent conversation log (most recent last):',
 		history || '(no previous turns – this is the opening scene)',
 		'',
@@ -324,33 +1326,89 @@ function buildAIDMUserPrompt(
 }
 
 async function callAIDungeonMaster(
+	env: Env,
 	adventure: AdventureTemplate,
 	session: AIDMSessionState,
 	character: Character,
 	playerInput: string,
 ): Promise<string> {
-	// Use Pollinations simple text endpoint for robustness.
-	// We inline both the system and user prompts into a single text prompt and
-	// rely on the model to follow the requested [NARRATIVE]/[MECHANICS] format.
+	// Use Google Gemini 1.5 Flash via the Generative Language API.
+	// We send the system prompt as a system instruction and the adventure/user
+	// context as a single user message, and expect the model to follow the
+	// requested [NARRATIVE]/[MECHANICS] format.
 	const systemPrompt = buildAIDMSystemPrompt();
 	const userPrompt = buildAIDMUserPrompt(adventure, session, character, playerInput);
-	const combinedPrompt = `${systemPrompt}\n\n---\n\n${userPrompt}`;
-
-	const url = `https://text.pollinations.ai/${encodeURIComponent(combinedPrompt)}`;
-	const res = await fetch(url, { method: 'GET' });
-	if (!res.ok) {
-		throw new Error(`AI-DM request failed with status ${res.status}`);
+	const apiKey = env.GEMINI_API_KEY;
+	if (!apiKey) {
+		throw new Error('GEMINI_API_KEY is not configured');
 	}
-	return await res.text();
+	const resolved = await resolveGeminiModelName(apiKey.trim());
+
+	const url =
+		`https://generativelanguage.googleapis.com/${encodeURIComponent(GEMINI_API_VERSION)}/${resolved.modelName}:generateContent` +
+		`?key=${encodeURIComponent(apiKey.trim())}`;
+
+	const body = JSON.stringify({
+		systemInstruction: {
+			parts: [{ text: systemPrompt }],
+		},
+		contents: [
+			{
+				role: 'user',
+				parts: [{ text: userPrompt }],
+			},
+		],
+		generationConfig: {
+			temperature: 0.7,
+			maxOutputTokens: 800,
+		},
+	});
+
+	const res = await fetch(url, {
+		method: 'POST',
+		headers: {
+			'content-type': 'application/json; charset=utf-8',
+		},
+		body,
+	});
+
+	if (!res.ok) {
+		let detail = '';
+		try {
+			detail = (await res.text()).slice(0, 300);
+		} catch {
+			// ignore
+		}
+		throw new Error(`Gemini AI-DM request failed with status ${res.status}${detail ? `: ${detail}` : ''}`);
+	}
+
+	let data: any;
+	try {
+		data = await res.json();
+	} catch (err) {
+		throw new Error('Failed to parse Gemini response JSON');
+	}
+
+	const parts: string[] =
+		data?.candidates?.[0]?.content?.parts?.map((p: any) => (p && typeof p.text === 'string' ? p.text : '')) || [];
+	const text = parts.join('').trim();
+	if (!text) {
+		throw new Error('Gemini returned an empty response');
+	}
+	return text;
 }
 
-function parseAIDMResponse(raw: string): { narrative: string; mechanics: {
-	checkDescription: string | null;
-	dc: number | null;
-	ability: string | null;
-	skill: string | null;
-	advantage: 'none' | 'advantage' | 'disadvantage' | null;
-} } {
+function parseAIDMResponse(raw: string): {
+	narrative: string;
+	mechanics: {
+		checkDescription: string | null;
+		dc: number | null;
+		ability: string | null;
+		skill: string | null;
+		advantage: 'none' | 'advantage' | 'disadvantage' | null;
+		progress: 'stay' | 'advance' | 'complete' | 'fail' | null;
+	};
+} {
 	const text = String(raw || '');
 	const narrativeMatch = text.match(/\[NARRATIVE\]([\s\S]*?)\[\/NARRATIVE\]/i);
 	const mechanicsMatch = text.match(/\[MECHANICS\]([\s\S]*?)\[\/MECHANICS\]/i);
@@ -362,9 +1420,13 @@ function parseAIDMResponse(raw: string): { narrative: string; mechanics: {
 	let ability: string | null = null;
 	let skill: string | null = null;
 	let advantage: 'none' | 'advantage' | 'disadvantage' | null = null;
+	let progress: 'stay' | 'advance' | 'complete' | 'fail' | null = null;
 
 	if (mechanicsBlock) {
-		checkDescription = mechanicsBlock;
+		const checkMatch = mechanicsBlock.match(/check\s*[:\-]\s*([^\n]+)/i);
+		if (checkMatch) {
+			checkDescription = checkMatch[1].trim();
+		}
 		const dcMatch = mechanicsBlock.match(/dc\s*[:\-]\s*(\d+)/i);
 		if (dcMatch) {
 			dc = Number.parseInt(dcMatch[1], 10);
@@ -381,12 +1443,98 @@ function parseAIDMResponse(raw: string): { narrative: string; mechanics: {
 		if (advMatch) {
 			advantage = advMatch[1].toLowerCase() as 'none' | 'advantage' | 'disadvantage';
 		}
+		const progMatch = mechanicsBlock.match(/progress\s*[:\-]\s*(stay|advance|complete|fail)/i);
+		if (progMatch) {
+			progress = progMatch[1].toLowerCase() as 'stay' | 'advance' | 'complete' | 'fail';
+		}
 	}
 
 	return {
 		narrative,
-		mechanics: { checkDescription, dc, ability, skill, advantage },
+		mechanics: { checkDescription, dc, ability, skill, advantage, progress },
 	};
+}
+
+function isQuestionLikeInput(input: string): boolean {
+	const t = (input || '').trim();
+	if (!t) return false;
+	if (/[?？]\s*$/.test(t)) return true;
+	return /^(who|what|where|when|why|how)\b/i.test(t);
+}
+
+function formatPlayerAsActionOrSpeech(input: string): { kind: 'action' | 'question'; clause: string } {
+	const trimmed = (input || '').trim();
+	if (!trimmed) return { kind: 'action', clause: 'press on along the path' };
+	if (isQuestionLikeInput(trimmed)) {
+		return { kind: 'question', clause: trimmed };
+	}
+	// Strip a leading "I" so we can safely say "You ..."
+	let withoutI = trimmed.replace(/^i\b[\s,]*/i, '').trim();
+	if (!withoutI) withoutI = trimmed;
+	// Lowercase first char for smoother insertion after "You "
+	const clause = withoutI.charAt(0).toLowerCase() + withoutI.slice(1);
+	return { kind: 'action', clause };
+}
+
+function buildFallbackNarrativeFromInput(playerInput: string, adventure: AdventureTemplate): string {
+	const setting = adventure.title.toLowerCase().includes('whisper')
+		? 'Whispering Woods'
+		: adventure.title.toLowerCase().includes('forest')
+			? 'the forest'
+			: 'the road';
+	const parsed = formatPlayerAsActionOrSpeech(playerInput);
+
+	// Provide a clean, non-repetitive fallback that never mentions ADA in third person.
+	if (parsed.kind === 'question') {
+		const q = parsed.clause;
+		// Special-case the common meta question to avoid confusion.
+		if (/\b(what|who)\s+is\s+ada\b/i.test(q)) {
+			return [
+				`A calm presence seems to answer as you move through ${setting}.`,
+				`"I'm your Dungeon Master—think of me as the narrator of this world. Tell me what you do, and I'll describe what happens next."`,
+				`The air smells of wet bark and crushed pine needles. Somewhere deeper among the trees, something pads softly through the undergrowth.`,
+			].join(' ');
+		}
+		return [
+			`You ask, “${q.replace(/^[\s"“”]+|[\s"“”]+$/g, '')}”`,
+			`For a heartbeat, ${setting} offers only hints: the hush of leaves, the creak of boughs, and the feeling that you’re being watched.`,
+			`You can act, listen, or change course—what do you do next?`,
+		].join(' ');
+	}
+
+	return [
+		`You ${parsed.clause}.`,
+		`The world answers immediately: branches creak overhead, a cold draft slides between trunks, and the ground underfoot softens into damp loam.`,
+		`No clear howl follows—only the uneasy sense of movement somewhere just out of sight.`,
+	].join(' ');
+}
+
+function appendToSessionSummary(session: AIDMSessionState, entries: TurnEntry[]): void {
+	if (!Array.isArray(entries) || entries.length === 0) return;
+	const lines = entries.map((e) => {
+		const who = e.role === 'player' ? 'Player' : 'DM';
+		return `${who}: ${e.text}`;
+	});
+	const joined = lines.join('\n');
+	if (!session.summary) {
+		session.summary = joined;
+	} else {
+		session.summary = `${session.summary}\n${joined}`;
+	}
+	// Keep summary from growing without bound: trim to last ~4000 characters
+	if (session.summary.length > 4000) {
+		session.summary = session.summary.slice(session.summary.length - 4000);
+	}
+}
+
+function trimSessionLog(session: AIDMSessionState, maxEntries = 12): void {
+	if (!Array.isArray(session.log)) return;
+	if (session.log.length <= maxEntries) return;
+	const overflow = session.log.length - maxEntries;
+	if (overflow <= 0) return;
+	const removed = session.log.slice(0, overflow);
+	appendToSessionSummary(session, removed);
+	session.log = session.log.slice(-maxEntries);
 }
 
 async function handleRegister(request: Request, env: Env, origin: string | null): Promise<Response> {
@@ -625,6 +1773,7 @@ async function handleStartAICampaign(request: Request, env: Env, origin: string 
 		summary: '',
 		checkpointIndex: 0,
 		status: 'active',
+		pendingCheck: null,
 	};
 
 	await env.ADA_DATA.put(`aiSession:${id}`, JSON.stringify(session));
@@ -634,6 +1783,7 @@ async function handleStartAICampaign(request: Request, env: Env, origin: string 
 	let openingNarrative: string | null = null;
 	try {
 		const openingRaw = await callAIDungeonMaster(
+			env,
 			adventure,
 			session,
 			character,
@@ -649,15 +1799,39 @@ async function handleStartAICampaign(request: Request, env: Env, origin: string 
 		openingNarrative = `You tug your red cloak tighter against the whispering chill of the forest. Tonight, ${name} carries spirit-warding herbs along the lonely path to Grandmother's cottage. The trees lean close, shadows pooling between their roots, and far off you think you hear the low, hungry growl of something stalking the trail.`;
 	}
 
+	// Initialize the campaign transcript with the opening DM narration so the
+	// Dialogue tab has an immediate "what's going on" message even after the
+	// dashboard view reloads campaign details.
+	if (openingNarrative && openingNarrative.trim().length > 0) {
+		campaign.conversationTranscript = `ADA: ${openingNarrative.trim()}`;
+	} else {
+		campaign.conversationTranscript = campaign.conversationTranscript || '';
+	}
+	await env.ADA_DATA.put(`campaign:${id}`, JSON.stringify(campaign));
+
 	// Record this as the first DM entry in the session log.
 	const now = new Date().toISOString();
 	session.log.push({ role: 'dm', text: openingNarrative ?? '', timestamp: now });
-	if (session.log.length > 12) {
-		session.log = session.log.slice(-12);
-	}
+	trimSessionLog(session);
 	await env.ADA_DATA.put(`aiSession:${id}`, JSON.stringify(session));
 
-	return jsonResponse({ ok: true, campaign, session, openingNarrative }, { status: 201 }, origin);
+	return jsonResponse(
+		{
+			ok: true,
+			campaign,
+			session,
+			openingNarrative,
+			...(isDebugEnabled(env)
+				? {
+					debug: {
+						gemini: getGeminiDebugSnapshot(),
+					},
+				}
+				: {}),
+		},
+		{ status: 201 },
+		origin,
+	);
 }
 
 async function handleAIDMTurn(request: Request, env: Env, origin: string | null): Promise<Response> {
@@ -740,6 +1914,7 @@ async function handleAIDMTurn(request: Request, env: Env, origin: string | null)
 			summary: '',
 			checkpointIndex: 0,
 			status: 'active',
+			pendingCheck: null,
 		};
 	}
 
@@ -766,10 +1941,7 @@ async function handleAIDMTurn(request: Request, env: Env, origin: string | null)
 
 	const now = new Date().toISOString();
 	session.log.push({ role: 'player', text: playerInput, timestamp: now });
-	// Keep short-term memory bounded
-	if (session.log.length > 12) {
-		session.log = session.log.slice(-12);
-	}
+	trimSessionLog(session);
 
 	let parsedNarrative: string;
 	let parsedMechanics = {
@@ -778,23 +1950,50 @@ async function handleAIDMTurn(request: Request, env: Env, origin: string | null)
 		ability: null as string | null,
 		skill: null as string | null,
 		advantage: null as 'none' | 'advantage' | 'disadvantage' | null,
+		progress: null as 'stay' | 'advance' | 'complete' | 'fail' | null,
 	};
 	try {
-		const rawResponse = await callAIDungeonMaster(adventure, session, character, playerInput);
+		const rawResponse = await callAIDungeonMaster(env, adventure, session, character, playerInput);
 		const parsed = parseAIDMResponse(rawResponse);
 		parsedNarrative = parsed.narrative;
 		parsedMechanics = parsed.mechanics;
+		// Apply DM-directed progress (checkpoint advances/completion/failure).
+		const progressResult = applyProgressDirective(session, adventure, parsed.mechanics.progress);
+		// Remember the latest requested check so it can be resolved separately.
+		const nextCheck = parsed.mechanics.checkDescription;
+		const nextDc = typeof parsed.mechanics.dc === 'number' ? parsed.mechanics.dc : 0;
+		const nextAbility = (parsed.mechanics.ability || '').toUpperCase();
+		if (nextCheck && nextCheck.toLowerCase() !== 'none' && nextDc > 0 && nextAbility !== 'NONE') {
+			session.pendingCheck = {
+				checkDescription: parsed.mechanics.checkDescription,
+				dc: parsed.mechanics.dc,
+				ability: parsed.mechanics.ability,
+				skill: parsed.mechanics.skill,
+				advantage: parsed.mechanics.advantage,
+			};
+		} else {
+			session.pendingCheck = null;
+		}
+
+		// Award XP only on the transition into completed.
+		if (progressResult.statusBefore !== 'completed' && session.status === 'completed') {
+			const xpAmount = xpAwardForCampaign(campaign);
+			try {
+				await awardXpToCharacter(env, session.characterId, xpAmount);
+			} catch (err) {
+				console.error('Failed to award XP on completion', err);
+			}
+		}
 	} catch (err) {
 		console.error('AI-DM call failed', err);
 		// Fallback: generate a simple, deterministic DM response so play can
 		// continue even if the external AI service is down.
-		parsedNarrative = `ADA pauses for a moment, then narrates in a calm voice: "${playerInput}" plays out in the Whispering Woods. Imagine how your character moves, reacts, and feels — we will continue from there.`;
+		parsedNarrative = buildFallbackNarrativeFromInput(playerInput, adventure);
+		session.pendingCheck = null;
 	}
 
 	session.log.push({ role: 'dm', text: parsedNarrative, timestamp: new Date().toISOString() });
-	if (session.log.length > 12) {
-		session.log = session.log.slice(-12);
-	}
+	trimSessionLog(session);
 
 	await env.ADA_DATA.put(sessionKey, JSON.stringify(session));
 
@@ -803,6 +2002,13 @@ async function handleAIDMTurn(request: Request, env: Env, origin: string | null)
 			ok: true,
 			narrative: parsedNarrative,
 			mechanics: parsedMechanics,
+			...(isDebugEnabled(env)
+				? {
+					debug: {
+						gemini: getGeminiDebugSnapshot(),
+					},
+				}
+				: {}),
 		},
 		{ status: 200 },
 		origin,
@@ -851,6 +2057,9 @@ async function handleGetCampaignDetails(request: Request, env: Env, origin: stri
 	if (!id) {
 		return errorResponse('Missing id parameter', 400, origin);
 	}
+	if (!user) {
+		return errorResponse('Missing user parameter', 400, origin);
+	}
 
 	const storedCampaign = await env.ADA_DATA.get(`campaign:${id}`);
 	if (!storedCampaign) {
@@ -862,6 +2071,13 @@ async function handleGetCampaignDetails(request: Request, env: Env, origin: stri
 		campaign = JSON.parse(storedCampaign) as Campaign;
 	} catch {
 		return errorResponse('Corrupted campaign record', 500, origin);
+	}
+
+	const isParticipant =
+		campaign.dm === user ||
+		(Array.isArray(campaign.participants) && campaign.participants.includes(user));
+	if (!isParticipant) {
+		return errorResponse('You are not a participant in this campaign', 403, origin);
 	}
 
 	// Load journals linked from the campaign
@@ -892,38 +2108,26 @@ async function handleGetCampaignDetails(request: Request, env: Env, origin: stri
 		}
 	}
 
-	// Load characters for the requesting user that are linked to this campaign
-	const characters: Character[] = [];
-	if (user) {
-		const indexKey = `charactersByUser:${user}`;
-		const existing = await env.ADA_DATA.get(indexKey);
-		let ids: string[] = [];
-		if (existing) {
-			try {
-				ids = JSON.parse(existing) as string[];
-				if (!Array.isArray(ids)) ids = [];
-			} catch {
-				ids = [];
-			}
-		}
-
-		for (const charId of ids) {
-			const stored = await env.ADA_DATA.get(`character:${charId}`);
-			if (!stored) continue;
-			try {
-				const parsed = JSON.parse(stored) as Character;
-				const isLinkedByCharacter = Array.isArray(parsed.campaignIds) && parsed.campaignIds.includes(id);
-				const isLinkedByCampaign = Array.isArray(campaign.linkedCharacterIds) && campaign.linkedCharacterIds.includes(parsed.id);
-				if (parsed && parsed.id && (isLinkedByCharacter || isLinkedByCampaign)) {
-					characters.push(parsed);
-				}
-			} catch {
-				// ignore malformed
-			}
+	// Load encounter bundles linked from the campaign (archive for recall)
+	const encounters: EncounterBundle[] = [];
+	const encounterIds = Array.isArray(campaign.encounterIds) ? campaign.encounterIds : [];
+	// Return only the most recent 20 to keep payload reasonable.
+	const recentEncounterIds = encounterIds.slice(Math.max(0, encounterIds.length - 20));
+	for (const encounterId of recentEncounterIds) {
+		const stored = await env.ADA_DATA.get(`encounter:${encounterId}`);
+		if (!stored) continue;
+		try {
+			const parsed = JSON.parse(stored) as EncounterBundle;
+			if (parsed && parsed.id) encounters.push(parsed);
+		} catch {
+			// ignore malformed
 		}
 	}
 
-	return jsonResponse({ ok: true, campaign, characters, journals, scripts }, undefined, origin);
+	const characters = await loadCampaignPartyCharacters(env, campaign);
+	const partyStatus = computePartyStatus(characters);
+
+	return jsonResponse({ ok: true, campaign, characters, partyStatus, journals, scripts, encounters }, undefined, origin);
 }
 
 function basicPolishJournal(raw: string): string {
@@ -935,6 +2139,172 @@ function basicPolishJournal(raw: string): string {
 		rest = `${rest}.`;
 	}
 	return `${first}${rest}`;
+}
+
+async function callGeminiText(
+	env: Env,
+	params: {
+		systemPrompt: string;
+		userPrompt: string;
+		temperature: number;
+		maxOutputTokens: number;
+	}): Promise<{ ok: true; text: string; debug?: unknown } | { ok: false; error: string }> {
+	const apiKey = typeof env.GEMINI_API_KEY === 'string' ? env.GEMINI_API_KEY.trim() : '';
+	if (!apiKey) {
+		return { ok: false, error: 'GEMINI_API_KEY is not configured' };
+	}
+
+	const resolved = await resolveGeminiModelName(apiKey);
+	const url =
+		`https://generativelanguage.googleapis.com/${encodeURIComponent(GEMINI_API_VERSION)}/${resolved.modelName}:generateContent` +
+		`?key=${encodeURIComponent(apiKey)}`;
+
+	const body = JSON.stringify({
+		systemInstruction: {
+			parts: [{ text: params.systemPrompt }],
+		},
+		contents: [
+			{
+				role: 'user',
+				parts: [{ text: params.userPrompt }],
+			},
+		],
+		generationConfig: {
+			temperature: Math.max(0, Math.min(1.2, params.temperature)),
+			maxOutputTokens: Math.max(64, Math.min(2000, Math.floor(params.maxOutputTokens))),
+			// GM tools should not spend tokens on chain-of-thought.
+			thinkingConfig: { thinkingBudget: 0 },
+		},
+	});
+
+	let rawText = '';
+	try {
+		const res = await fetch(url, {
+			method: 'POST',
+			headers: { 'content-type': 'application/json; charset=utf-8' },
+			body,
+		});
+		if (!res.ok) {
+			let detail = '';
+			try {
+				detail = (await res.text()).slice(0, 600);
+			} catch {
+				// ignore
+			}
+			return {
+				ok: false,
+				error: `Gemini request failed with status ${res.status}${detail ? `: ${detail}` : ''}`,
+			};
+		}
+		rawText = await res.text().catch(() => '');
+	} catch (err: any) {
+		return {
+			ok: false,
+			error: err && typeof err.message === 'string' ? err.message : 'Unknown error calling Gemini',
+		};
+	}
+
+	let data: any = null;
+	try {
+		data = rawText ? JSON.parse(rawText) : null;
+	} catch {
+		data = null;
+	}
+
+	const parts: string[] =
+		data?.candidates?.[0]?.content?.parts?.map((p: any) => (p && typeof p.text === 'string' ? p.text : '')) || [];
+	const text = parts.join('').trim();
+	return { ok: true, text, debug: isDebugEnabled(env) ? { gemini: getGeminiDebugSnapshot() } : undefined };
+}
+
+async function generateCharacterJournalText(
+	env: Env,
+	params: {
+		campaignName: string;
+		characterName: string;
+		characterConcept: string;
+		rawTranscript: string;
+	},
+): Promise<string> {
+	const transcript = params.rawTranscript.trim();
+	if (!transcript) return '';
+
+	// If no AI key is available (local dev, misconfig, etc.), fall back to a simple
+	// first-person summary so the feature still works.
+	const apiKey = typeof env.GEMINI_API_KEY === 'string' ? env.GEMINI_API_KEY.trim() : '';
+	if (!apiKey) {
+		const seed = basicPolishJournal(transcript);
+		return `I keep turning this over in my mind. ${seed}`;
+	}
+
+	const resolved = await resolveGeminiModelName(apiKey);
+	const url =
+		`https://generativelanguage.googleapis.com/${encodeURIComponent(GEMINI_API_VERSION)}/${resolved.modelName}:generateContent` +
+		`?key=${encodeURIComponent(apiKey)}`;
+
+	const systemPrompt = [
+		'You are a D&D character writing a private journal entry.',
+		'Write in first person (I/me/my). Stay in character and keep it immersive.',
+		'Never mention being an AI/model/system.',
+		'Keep it to 2–5 short paragraphs. No headings, no bullet points.',
+		'Focus on emotions, sensory details, and what the character decided to do.',
+		'It must feel like the character personally experienced these events.',
+	].join('\n');
+
+	const userPrompt = [
+		`Campaign: ${params.campaignName}`,
+		`Character: ${params.characterName}`,
+		params.characterConcept ? `Character concept: ${params.characterConcept}` : '',
+		'',
+		'Here is the session transcript. Turn it into a private journal entry from this character\'s perspective:',
+		transcript,
+	].filter(Boolean).join('\n');
+
+	const body = JSON.stringify({
+		systemInstruction: {
+			parts: [{ text: systemPrompt }],
+		},
+		contents: [
+			{
+				role: 'user',
+				parts: [{ text: userPrompt }],
+			},
+		],
+		generationConfig: {
+			temperature: 0.7,
+			maxOutputTokens: 500,
+			// Journals shouldn't spend tokens "thinking".
+			thinkingConfig: { thinkingBudget: 0 },
+		},
+	});
+
+	const res = await fetch(url, {
+		method: 'POST',
+		headers: { 'content-type': 'application/json; charset=utf-8' },
+		body,
+	});
+
+	if (!res.ok) {
+		let detail = '';
+		try {
+			detail = (await res.text()).slice(0, 300);
+		} catch {
+			// ignore
+		}
+		throw new Error(`Gemini journal request failed with status ${res.status}${detail ? `: ${detail}` : ''}`);
+	}
+
+	let data: any;
+	try {
+		data = await res.json();
+	} catch {
+		throw new Error('Failed to parse Gemini journal response JSON');
+	}
+
+	const parts: string[] =
+		data?.candidates?.[0]?.content?.parts?.map((p: any) => (p && typeof p.text === 'string' ? p.text : '')) || [];
+	const text = parts.join('').trim();
+	return text || '';
 }
 
 function buildEncounterScriptBody(prompt: string, campaign: Campaign | null): string {
@@ -1096,6 +2466,110 @@ async function handlePostCampaignDetails(request: Request, env: Env, origin: str
 		return jsonResponse({ ok: true, campaign, journal: entry }, { status: 201 }, origin);
 	}
 
+	if (action === 'createPartyJournals') {
+		const username = String(body?.username ?? body?.user ?? '').trim();
+		if (!username) {
+			return errorResponse('username is required for createPartyJournals', 400, origin);
+		}
+
+		const isParticipant =
+			campaign.dm === username ||
+			(Array.isArray(campaign.participants) && campaign.participants.includes(username));
+		if (!isParticipant) {
+			return errorResponse('You are not a participant in this campaign', 403, origin);
+		}
+
+		const rawTranscript = typeof campaign.conversationTranscript === 'string'
+			? campaign.conversationTranscript.trim()
+			: '';
+		if (!rawTranscript) {
+			return errorResponse('No campaign transcript found. Record dialogue first, then create journals.', 400, origin);
+		}
+
+		const linkedIds = Array.isArray(campaign.linkedCharacterIds) ? campaign.linkedCharacterIds : [];
+		if (!linkedIds.length) {
+			return errorResponse('No characters are linked to this campaign yet.', 400, origin);
+		}
+
+		const created: JournalEntry[] = [];
+		for (const characterId of linkedIds) {
+			const storedCharacter = await env.ADA_DATA.get(`character:${characterId}`);
+			if (!storedCharacter) continue;
+			let character: Character | null = null;
+			try {
+				character = JSON.parse(storedCharacter) as Character;
+			} catch {
+				character = null;
+			}
+			if (!character) continue;
+
+			const characterName = character.name && String(character.name).trim()
+				? String(character.name).trim()
+				: 'Unknown adventurer';
+			const characterConcept = [
+				character.concept?.race ? `Race: ${character.concept.race}` : '',
+				character.concept?.classSummary ? `Class: ${character.concept.classSummary}` : '',
+				character.concept?.background ? `Background: ${character.concept.background}` : '',
+			].filter(Boolean).join(' | ');
+
+			let polishedText = '';
+			try {
+				polishedText = await generateCharacterJournalText(env, {
+					campaignName: campaign.name || 'Campaign',
+					characterName,
+					characterConcept,
+					rawTranscript,
+				});
+			} catch (err) {
+				console.error('createPartyJournals: AI journal generation failed', err);
+				polishedText = `I can still hear the echoes of it all. ${basicPolishJournal(rawTranscript)}`;
+			}
+
+			// Ensure a non-empty entry.
+			if (!polishedText || !polishedText.trim()) {
+				polishedText = `I can still hear the echoes of it all. ${basicPolishJournal(rawTranscript)}`;
+			}
+
+			const id = crypto.randomUUID();
+			const createdAt = new Date().toISOString();
+			const entry: JournalEntry = {
+				id,
+				campaignId,
+				author: characterName,
+				createdAt,
+				rawTranscript,
+				polishedText,
+			};
+
+			await env.ADA_DATA.put(`journal:${id}`, JSON.stringify(entry));
+			if (!Array.isArray(campaign.journalEntryIds)) campaign.journalEntryIds = [];
+			if (!campaign.journalEntryIds.includes(id)) campaign.journalEntryIds.push(id);
+			created.push(entry);
+		}
+
+		await env.ADA_DATA.put(`campaign:${campaignId}`, JSON.stringify(campaign));
+
+		// Return all journals for convenience
+		const journals: JournalEntry[] = [];
+		const journalIds = Array.isArray(campaign.journalEntryIds) ? campaign.journalEntryIds : [];
+		for (const journalId of journalIds) {
+			const stored = await env.ADA_DATA.get(`journal:${journalId}`);
+			if (!stored) continue;
+			try {
+				const parsed = JSON.parse(stored) as JournalEntry;
+				if (parsed && parsed.id) journals.push(parsed);
+			} catch {
+				// ignore
+			}
+		}
+
+		return jsonResponse(
+			{ ok: true, campaign, createdCount: created.length, created, journals },
+			{ status: 201 },
+			origin,
+		);
+	}
+
 	if (action === 'addScript') {
 		const author = String(body?.author ?? '').trim();
 		const prompt = String(body?.prompt ?? '').trim();
@@ -1125,6 +2599,46 @@ async function handlePostCampaignDetails(request: Request, env: Env, origin: str
 		await env.ADA_DATA.put(`campaign:${campaignId}`, JSON.stringify(campaign));
 
 		// Return all scripts for convenience
+		const scripts: ScriptNote[] = [];
+		for (const scriptId of campaign.scriptIds) {
+			const storedScript = await env.ADA_DATA.get(`script:${scriptId}`);
+			if (!storedScript) continue;
+			try {
+				const parsed = JSON.parse(storedScript) as ScriptNote;
+				if (parsed && parsed.id) scripts.push(parsed);
+			} catch {
+				// ignore
+			}
+		}
+
+		return jsonResponse({ ok: true, campaign, script, scripts }, { status: 201 }, origin);
+	}
+
+	if (action === 'saveScript') {
+		const author = String(body?.author ?? '').trim();
+		let title = String(body?.title ?? '').trim();
+		const scriptBody = String(body?.body ?? '').trim();
+		if (!author || !scriptBody) {
+			return errorResponse('author and body are required for saveScript', 400, origin);
+		}
+		if (!title) title = 'Session Log Note';
+
+		const id = crypto.randomUUID();
+		const createdAt = new Date().toISOString();
+		const script: ScriptNote = {
+			id,
+			campaignId,
+			author,
+			createdAt,
+			title,
+			body: scriptBody,
+		};
+
+		await env.ADA_DATA.put(`script:${id}`, JSON.stringify(script));
+		if (!Array.isArray(campaign.scriptIds)) campaign.scriptIds = [];
+		if (!campaign.scriptIds.includes(id)) campaign.scriptIds.push(id);
+		await env.ADA_DATA.put(`campaign:${campaignId}`, JSON.stringify(campaign));
+
 		const scripts: ScriptNote[] = [];
 		for (const scriptId of campaign.scriptIds) {
 			const storedScript = await env.ADA_DATA.get(`script:${scriptId}`);
@@ -1177,6 +2691,71 @@ async function handlePostCampaignDetails(request: Request, env: Env, origin: str
 		await env.ADA_DATA.put(indexKey, JSON.stringify(ids));
 
 		return jsonResponse({ ok: true }, { status: 201 }, origin);
+	}
+
+	if (action === 'updateTranscript') {
+		const username = String(body?.username ?? '').trim();
+		const transcriptRaw = body?.transcript;
+		const transcript = typeof transcriptRaw === 'string' ? transcriptRaw : '';
+		if (!username) {
+			return errorResponse('username is required for updateTranscript', 400, origin);
+		}
+
+		const isParticipant =
+			campaign.dm === username ||
+			(Array.isArray(campaign.participants) && campaign.participants.includes(username));
+		if (!isParticipant) {
+			return errorResponse('You are not a participant in this campaign', 403, origin);
+		}
+
+		campaign.conversationTranscript = transcript;
+		await env.ADA_DATA.put(`campaign:${campaignId}`, JSON.stringify(campaign));
+		return jsonResponse({ ok: true }, { status: 200 }, origin);
+	}
+
+	if (action === 'completeCampaign') {
+		const username = String(body?.username ?? '').trim();
+		if (!username) {
+			return errorResponse('username is required for completeCampaign', 400, origin);
+		}
+		// Only the DM can mark a (non-AI) campaign as completed.
+		if (campaign.dm !== username) {
+			return errorResponse('Only the DM can complete this campaign', 403, origin);
+		}
+		if (campaign.dmIsAI || campaign.mode === 'ai-solo') {
+			return errorResponse('AI-driven solo campaigns complete automatically', 400, origin);
+		}
+
+		if (campaign.status === 'completed') {
+			return errorResponse('Campaign is already completed', 400, origin);
+		}
+
+		const linkedIds = Array.isArray(campaign.linkedCharacterIds) ? campaign.linkedCharacterIds : [];
+		if (!linkedIds.length) {
+			return errorResponse('No linked characters to award XP to', 400, origin);
+		}
+
+		const xpAmount = xpAwardForCampaign(campaign);
+		const awardedTo: string[] = [];
+		for (const charId of linkedIds) {
+			try {
+				const updated = await awardXpToCharacter(env, charId, xpAmount);
+				if (updated) awardedTo.push(charId);
+			} catch (err) {
+				console.error('Failed to award XP during completeCampaign', err);
+			}
+		}
+
+		campaign.status = 'completed';
+		campaign.completedAt = new Date().toISOString();
+		campaign.xpAwardedToCharacterIds = awardedTo;
+		await env.ADA_DATA.put(`campaign:${campaignId}`, JSON.stringify(campaign));
+
+		return jsonResponse(
+			{ ok: true, campaign, xpAwarded: xpAmount, awardedTo },
+			{ status: 200 },
+			origin,
+		);
 	}
 
 	if (action === 'deleteCampaign') {
@@ -1320,6 +2899,479 @@ async function handlePostCampaignDetails(request: Request, env: Env, origin: str
 	}
 
 	return errorResponse('Unknown action for campaign details', 400, origin);
+}
+
+function tryParseJsonLoose(text: string): any | null {
+	const raw = String(text || '').trim();
+	if (!raw) return null;
+	try {
+		return JSON.parse(raw);
+	} catch {
+		// Try to salvage the first JSON object block.
+		const m = raw.match(/\{[\s\S]*\}/);
+		if (!m) return null;
+		try {
+			return JSON.parse(m[0]);
+		} catch {
+			return null;
+		}
+	}
+}
+
+function truncateForPrompt(text: string, maxChars: number): string {
+	const s = String(text || '').trim();
+	if (!s) return '';
+	if (s.length <= maxChars) return s;
+	return `${s.slice(0, maxChars)}\n[...trimmed...]`;
+}
+
+function parseArchitectIntent(seed: string): {
+	intentMode: 'balanced' | 'kill';
+	overrideDifficulty: EncounterOption['difficulty'] | null;
+	reason: string;
+} {
+	const s = String(seed || '').toLowerCase();
+	const has = (re: RegExp) => re.test(s);
+
+	// Kill Mode triggers (lethal intent language)
+	if (has(/\b(tpk|total party kill|wipe( them)?|kill( mode)?|slaughter|massacre|no mercy|lethal)\b/i)) {
+		return { intentMode: 'kill', overrideDifficulty: 'Deadly', reason: 'Detected lethal intent (Kill Mode).' };
+	}
+
+	// Explicit difficulty overrides
+	if (has(/\b(deadly)\b/i)) return { intentMode: 'kill', overrideDifficulty: 'Deadly', reason: 'Explicit deadly difficulty.' };
+	if (has(/\b(hard)\b/i)) return { intentMode: 'balanced', overrideDifficulty: 'Hard', reason: 'Explicit hard difficulty.' };
+	if (has(/\b(medium|moderate|standard|balanced)\b/i)) {
+		return { intentMode: 'balanced', overrideDifficulty: 'Medium', reason: 'Explicit medium/balanced difficulty.' };
+	}
+	if (has(/\b(easy|trivial|nuisance|cakewalk)\b/i)) {
+		return { intentMode: 'balanced', overrideDifficulty: 'Easy', reason: 'Explicit easy/trivial intent.' };
+	}
+
+	return { intentMode: 'balanced', overrideDifficulty: null, reason: 'No explicit override; using Easy/Medium/Hard tiers.' };
+}
+
+function clampCount(n: unknown, fallback: number): number {
+	const x = Number(n);
+	if (!Number.isFinite(x)) return fallback;
+	return Math.max(1, Math.min(99, Math.floor(x)));
+}
+
+function normalizeEncounterDifficulty(d: unknown): EncounterOption['difficulty'] {
+	const v = String(d || '').trim().toLowerCase();
+	if (v === 'easy') return 'Easy';
+	if (v === 'medium') return 'Medium';
+	if (v === 'hard') return 'Hard';
+	if (v === 'deadly') return 'Deadly';
+	// Default
+	return 'Medium';
+}
+
+function normalizeEncounterType(t: unknown): EncounterOption['type'] {
+	const v = String(t || '').trim().toLowerCase();
+	if (v === 'combat') return 'combat';
+	if (v === 'social') return 'social';
+	if (v === 'exploration') return 'exploration';
+	if (v === 'mixed') return 'mixed';
+	return 'mixed';
+}
+
+function normalizeEncounterOptions(raw: any, intent: ReturnType<typeof parseArchitectIntent>): EncounterOption[] | null {
+	const options = Array.isArray(raw?.options) ? raw.options : null;
+	if (!options) return null;
+
+	const ids: Array<'A' | 'B' | 'C'> = ['A', 'B', 'C'];
+	const defaultTiers: EncounterOption['difficulty'][] = ['Easy', 'Medium', 'Hard'];
+
+	const normalized: EncounterOption[] = [];
+	for (let i = 0; i < Math.min(3, options.length); i++) {
+		const o = options[i] || {};
+		const id = (String(o.id || ids[i]).toUpperCase() as 'A' | 'B' | 'C');
+		const forcedDifficulty = intent.overrideDifficulty ? intent.overrideDifficulty : defaultTiers[i];
+
+		const monstersRaw = Array.isArray(o.monsters) ? o.monsters : Array.isArray(o.opposition) ? o.opposition : [];
+		const monsters: EncounterMonster[] = monstersRaw
+			.map((m: any) => {
+				const name = m?.name ? String(m.name) : 'Unknown creature';
+				const count = clampCount(m?.count, 1);
+				const sb = m?.statBlock || m?.stat || {};
+				const ability = sb?.abilityScores || sb?.abilities || {};
+				const statBlock: EncounterStatBlock = {
+					name: sb?.name ? String(sb.name) : name,
+					size: sb?.size ? String(sb.size) : undefined,
+					type: sb?.type ? String(sb.type) : undefined,
+					alignment: sb?.alignment ? String(sb.alignment) : undefined,
+					ac: Number.isFinite(Number(sb?.ac)) ? Math.max(5, Math.min(30, Math.floor(Number(sb.ac)))) : 12,
+					hp: {
+						max: Number.isFinite(Number(sb?.hp?.max ?? sb?.hp))
+							? Math.max(1, Math.floor(Number(sb.hp?.max ?? sb.hp)))
+							: 11,
+					},
+					speed: sb?.speed ? String(sb.speed) : undefined,
+					abilityScores: {
+						str: Number.isFinite(Number(ability?.str)) ? Math.floor(Number(ability.str)) : 10,
+						dex: Number.isFinite(Number(ability?.dex)) ? Math.floor(Number(ability.dex)) : 10,
+						con: Number.isFinite(Number(ability?.con)) ? Math.floor(Number(ability.con)) : 10,
+						int: Number.isFinite(Number(ability?.int)) ? Math.floor(Number(ability.int)) : 10,
+						wis: Number.isFinite(Number(ability?.wis)) ? Math.floor(Number(ability.wis)) : 10,
+						cha: Number.isFinite(Number(ability?.cha)) ? Math.floor(Number(ability.cha)) : 10,
+					},
+					saves: sb?.saves ? String(sb.saves) : undefined,
+					skills: sb?.skills ? String(sb.skills) : undefined,
+					senses: sb?.senses ? String(sb.senses) : undefined,
+					languages: sb?.languages ? String(sb.languages) : undefined,
+					challenge: sb?.challenge ? String(sb.challenge) : undefined,
+					traits: Array.isArray(sb?.traits)
+						? sb.traits
+							.map((t: any) => ({ name: String(t?.name || 'Trait'), text: String(t?.text || '') }))
+							.filter((t: any) => t.text)
+						: [],
+					actions: Array.isArray(sb?.actions)
+						? sb.actions
+							.map((a: any) => ({ name: String(a?.name || 'Action'), text: String(a?.text || '') }))
+							.filter((a: any) => a.text)
+						: [],
+				};
+				return {
+					name,
+					count,
+					role: m?.role ? String(m.role) : undefined,
+					statBlock,
+				};
+			})
+			.filter((m: EncounterMonster) => m.name);
+
+		const threat = o.threatScale || {};
+		const threatScale: EncounterThreatScale = {
+			dialUp: Array.isArray(threat.dialUp) ? threat.dialUp.map((x: any) => String(x)).filter(Boolean) : [],
+			dialDown: Array.isArray(threat.dialDown) ? threat.dialDown.map((x: any) => String(x)).filter(Boolean) : [],
+		};
+
+		normalized.push({
+			id,
+			difficulty: forcedDifficulty,
+			intentMode: intent.intentMode,
+			title: o.title ? String(o.title) : `Encounter Option ${id}`,
+			type: normalizeEncounterType(o.type),
+			hook: o.hook ? String(o.hook) : '',
+			setup: o.setup ? String(o.setup) : '',
+			oppositionSummary: o.oppositionSummary ? String(o.oppositionSummary) : undefined,
+			monsters,
+			threatScale,
+			twist: o.twist ? String(o.twist) : '',
+			tactics: o.tactics ? String(o.tactics) : '',
+			scaling: {
+				easier: o.scaling?.easier ? String(o.scaling.easier) : 'Reduce monster count by 1/3 and remove one hazard.',
+				harder: o.scaling?.harder ? String(o.scaling.harder) : 'Increase monster count by 1/3 and add a hazard.',
+			},
+			rewards: o.rewards ? String(o.rewards) : '',
+		});
+	}
+
+	if (normalized.length !== 3) return null;
+	// Ensure A/B/C ordering.
+	normalized.sort((a, b) => a.id.localeCompare(b.id));
+
+	// Ensure each title is distinct (the UI uses the title as the primary label).
+	const seen = new Map<string, number>();
+	for (const opt of normalized) {
+		const k = String(opt.title || '').trim().toLowerCase();
+		if (!k) continue;
+		seen.set(k, (seen.get(k) || 0) + 1);
+	}
+	const dupKeys = new Set<string>([...seen.entries()].filter(([, n]) => n > 1).map(([k]) => k));
+	if (dupKeys.size) {
+		const used = new Set<string>();
+		for (const opt of normalized) {
+			let t = String(opt.title || '').trim();
+			if (!t) t = `Encounter ${opt.id}`;
+			const key = t.toLowerCase();
+			if (dupKeys.has(key) || used.has(key)) {
+				const suffix = `${opt.id}${opt.difficulty ? ` · ${opt.difficulty}` : ''}${opt.intentMode ? ` · ${opt.intentMode}` : ''}`;
+				t = `${t} — ${suffix}`;
+			}
+			opt.title = t;
+			used.add(String(opt.title).trim().toLowerCase());
+		}
+	}
+	return normalized;
+}
+
+async function handleGmTool(request: Request, env: Env, origin: string | null): Promise<Response> {
+	let body: any;
+	try {
+		body = await request.json();
+	} catch {
+		return errorResponse('Invalid JSON body', 400, origin);
+	}
+
+	const username = String(body?.username ?? body?.user ?? '').trim();
+	const campaignId = String(body?.campaignId ?? '').trim();
+	const toolTypeRaw = String(body?.toolType ?? '').trim().toLowerCase();
+	const context = body?.context && typeof body.context === 'object' ? body.context : {};
+	const seed = String(context?.seed ?? body?.seed ?? '').trim();
+
+	if (!username || !campaignId) {
+		return errorResponse('username and campaignId are required', 400, origin);
+	}
+	if (toolTypeRaw !== 'encounter' && toolTypeRaw !== 'flavor') {
+		return errorResponse("toolType must be 'encounter' or 'flavor'", 400, origin);
+	}
+
+	const storedCampaign = await env.ADA_DATA.get(`campaign:${campaignId}`);
+	if (!storedCampaign) {
+		return errorResponse('Campaign not found', 404, origin);
+	}
+	let campaign: Campaign;
+	try {
+		campaign = JSON.parse(storedCampaign) as Campaign;
+	} catch {
+		return errorResponse('Corrupted campaign record', 500, origin);
+	}
+
+	const isParticipant =
+		campaign.dm === username ||
+		(Array.isArray(campaign.participants) && campaign.participants.includes(username));
+	if (!isParticipant) {
+		return errorResponse('You are not a participant in this campaign', 403, origin);
+	}
+
+	const characters = await loadCampaignPartyCharacters(env, campaign);
+	const partyStatus = computePartyStatus(characters);
+
+	const campaignName = campaign.name && String(campaign.name).trim() ? String(campaign.name).trim() : 'this campaign';
+	const transcriptSnippet = truncateForPrompt(String(campaign.conversationTranscript || ''), 1400);
+	const partyLines = partyStatus.members
+		.map(
+			(m) =>
+				`- ${m.name} (${m.classSummary}) L${m.level}: HP ${m.hp.current}/${m.hp.max}, Slots ${m.manaSlots.current}/${m.manaSlots.max}`,
+		)
+		.join('\n');
+
+	if (toolTypeRaw === 'encounter') {
+		const intent = parseArchitectIntent(seed);
+		const overrideLabel = intent.overrideDifficulty ? intent.overrideDifficulty : null;
+
+		const systemPrompt = [
+			'You are “The Unfiltered Architect”: a high-powered D&D 5e tactical encounter engine.',
+			'You provide raw, table-ready tools. Default to a balanced advisor, but pivot to KILL MODE when the DM intent is lethal.',
+			'',
+			'ABSOLUTE RULES:',
+			'- Output MUST be STRICT JSON only. No markdown. No code fences. No extra commentary.',
+			'- You MUST invent ORIGINAL (homebrew) monsters and stat blocks. Do NOT copy official D&D monster text.',
+			'- Provide THREE options with ids A, B, C.',
+			'- If overrideDifficulty is provided, ALL THREE options MUST use that difficulty tier.',
+			'- If overrideDifficulty is NOT provided, the tiers MUST be: A=Easy, B=Medium, C=Hard.',
+			'- Each option MUST have a unique, evocative title. Do not reuse titles across options. Do not name them "Option A" etc.',
+			'- Each option MUST include:',
+			'  - distinct enemy set (monsters + counts),',
+			'  - threatScale with dialUp and dialDown factors (hazards/behaviors to change lethality live),',
+			'  - full statBlock for every monster type (AC, HP, abilities, traits, actions).',
+			'',
+			'Required schema:',
+			'{"options":[',
+			' {"id":"A","difficulty":"Easy|Medium|Hard|Deadly","intentMode":"balanced|kill","type":"combat|social|exploration|mixed",',
+			'  "title":"...","hook":"...","setup":"...","oppositionSummary":"...",',
+			'  "monsters":[{"name":"...","count":2,"role":"brute|skirmisher|controller|support|boss","statBlock":{',
+			'    "name":"...","size":"...","type":"...","alignment":"...",',
+			'    "ac":13,"hp":{"max":22},"speed":"30 ft",',
+			'    "abilityScores":{"str":12,"dex":14,"con":12,"int":10,"wis":10,"cha":8},',
+			'    "saves":"...","skills":"...","senses":"...","languages":"...","challenge":"...",',
+			'    "traits":[{"name":"...","text":"..."}],',
+			'    "actions":[{"name":"...","text":"..."}]',
+			'  }}],',
+			'  "threatScale":{"dialUp":["..."],"dialDown":["..."]},',
+			'  "twist":"...","tactics":"...","scaling":{"easier":"...","harder":"..."},"rewards":"..."}',
+			' ]}',
+		].join('\n');
+
+		const userPrompt = [
+			`Campaign: ${campaignName}`,
+			`Intent mode: ${intent.intentMode}`,
+			`Override difficulty: ${overrideLabel ?? '(none)'}`,
+			`Intent reason: ${intent.reason}`,
+			seed ? `DM seed: ${seed}` : 'DM seed: (none provided)',
+			'',
+			'Party status (baseline for tuning):',
+			partyLines || '(no linked party members)',
+			'',
+			transcriptSnippet ? 'Recent campaign transcript excerpt (context):\n' + transcriptSnippet : '',
+			'',
+			'Generate the three options now. Ensure each option is distinct in enemy set and play pattern.',
+		].filter(Boolean).join('\n');
+
+		const gem = await callGeminiText(env, {
+			systemPrompt,
+			userPrompt,
+			temperature: intent.intentMode === 'kill' ? 0.7 : 0.6,
+			maxOutputTokens: 1700,
+		});
+
+		let normalizedOptions: EncounterOption[] | null = null;
+		let rawText = '';
+		if (gem.ok) {
+			rawText = gem.text;
+			const parsed = tryParseJsonLoose(rawText);
+			normalizedOptions = normalizeEncounterOptions(parsed, intent);
+		}
+
+		if (!normalizedOptions) {
+			// Fallback: still produce structured, homebrew stat blocks.
+			const forced = intent.overrideDifficulty;
+			const tiers: EncounterOption['difficulty'][] = forced ? [forced, forced, forced] : ['Easy', 'Medium', 'Hard'];
+			const base = seed || 'a sudden pressure point in the current scene';
+			normalizedOptions = (['A', 'B', 'C'] as const).map((id, idx) => {
+				const difficulty = tiers[idx];
+				const mk = (name: string, count: number, ac: number, hp: number, str: number, dex: number, con: number, int: number, wis: number, cha: number): EncounterMonster => ({
+					name,
+					count,
+					role: id === 'C' ? 'boss' : 'skirmisher',
+					statBlock: {
+						name,
+						size: 'Medium',
+						type: 'humanoid',
+						alignment: 'any',
+						ac,
+						hp: { max: hp },
+						speed: '30 ft',
+						abilityScores: { str, dex, con, int, wis, cha },
+						traits: [{ name: 'Tactical Footing', text: 'Has advantage on its next attack roll if it moved at least 10 feet this turn.' }],
+						actions: [{ name: 'Blade', text: 'Melee Weapon Attack: +4 to hit, reach 5 ft., one target. Hit: 6 (1d8 + 2) slashing damage.' }],
+					},
+				});
+				const pack = idx === 0
+					? [mk('Ash-Scarf Cutthroat', 2, 12, 11, 10, 14, 10, 10, 10, 10)]
+					: idx === 1
+						? [
+							mk('Ash-Scarf Cutthroat', 3, 13, 14, 10, 15, 11, 10, 10, 10),
+							mk('Cinder Hexer', 1, 12, 18, 8, 12, 12, 14, 11, 12),
+						]
+						: [
+							mk('Ash-Scarf Cutthroat', 4, 13, 14, 10, 15, 11, 10, 10, 10),
+							mk('Cinder Hexer', 2, 12, 18, 8, 12, 12, 14, 11, 12),
+							mk('Wyrm-Brand Enforcer', 1, 15, 45, 16, 12, 14, 10, 12, 10),
+						];
+				return {
+					id,
+					difficulty,
+					intentMode: intent.intentMode,
+					title: `${difficulty} Pressure: ${base}`,
+					type: 'combat',
+					hook: `The party collides with ${base}.`,
+					setup: 'Use cover, a clear objective, and at least one retreat/surrender vector unless in Kill Mode.',
+					oppositionSummary: 'A disciplined cell tests the party\'s remaining resources.',
+					monsters: pack,
+					threatScale: {
+						dialUp: ['Add a second wave on round 3', 'Hazard: choking smoke reduces vision', 'Enemies focus-fire the weakest target'],
+						dialDown: ['Enemies break morale at 50% casualties', 'Remove the hazard', 'Give the party advantageous terrain'],
+					},
+					twist: 'A witness (or rival faction) arrives mid-fight and changes what “winning” means.',
+					tactics: 'Probe defenses first, then commit to a decisive push once a weakness is spotted.',
+					scaling: {
+						easier: 'Reduce one monster group by 1 and remove the hazard.',
+						harder: 'Add +1 elite and a lair-style hazard that triggers each round.',
+					},
+					rewards: 'A tangible clue, salvageable gear, and a forward-moving consequence.',
+				};
+			});
+		}
+
+		// Persist the generated bundle for recall.
+		const now = new Date().toISOString();
+		const bundleId = crypto.randomUUID();
+		const bundle: EncounterBundle = {
+			id: bundleId,
+			campaignId,
+			author: username,
+			createdAt: now,
+			seed,
+			intentMode: intent.intentMode,
+			overrideDifficulty: overrideLabel,
+			partyStatus,
+			options: normalizedOptions,
+		};
+		await env.ADA_DATA.put(`encounter:${bundleId}`, JSON.stringify(bundle));
+		if (!Array.isArray(campaign.encounterIds)) campaign.encounterIds = [];
+		campaign.encounterIds.push(bundleId);
+		// Keep archive bounded.
+		if (campaign.encounterIds.length > 50) {
+			campaign.encounterIds = campaign.encounterIds.slice(-50);
+		}
+		await env.ADA_DATA.put(`campaign:${campaignId}`, JSON.stringify(campaign));
+
+		return jsonResponse(
+			{
+				ok: true,
+				toolType: 'encounter',
+				partyStatus,
+				result: { options: normalizedOptions },
+				encounterBundle: bundle,
+				...(isDebugEnabled(env)
+					? {
+						debug: {
+							gemini: getGeminiDebugSnapshot(),
+							intent,
+							rawSnippet: rawText ? rawText.slice(0, 1200) : null,
+						},
+					}
+					: {}),
+			},
+			{ status: 200 },
+			origin,
+		);
+	}
+
+	// toolTypeRaw === 'flavor'
+	const systemPrompt = [
+		'You are a seasoned fantasy novelist and D&D Dungeon Master.',
+		'Write immersive boxed-text the DM can read aloud.',
+		'Write exactly 2–3 short paragraphs. No headings. No bullet points.',
+		'Use sensory detail, mood, and a subtle hook. Keep it consistent with the campaign context.',
+		'Never mention being an AI/model/system.',
+	].join('\n');
+
+	const userPrompt = [
+		`Campaign: ${campaignName}`,
+		seed ? `Seed: ${seed}` : 'Seed: (none provided)',
+		'',
+		partyLines ? `Party (for tone and stakes):\n${partyLines}` : '',
+		'',
+		transcriptSnippet ? 'Recent campaign transcript excerpt (context):\n' + transcriptSnippet : '',
+		'',
+		'Write the boxed text now.',
+	].filter(Boolean).join('\n');
+
+	const gem = await callGeminiText(env, {
+		systemPrompt,
+		userPrompt,
+		temperature: 0.85,
+		maxOutputTokens: 520,
+	});
+
+	let flavorText = '';
+	if (gem.ok) {
+		flavorText = gem.text;
+	}
+	if (!flavorText || !flavorText.trim()) {
+		const base = seed || 'the air changes, as if the world is listening';
+		flavorText =
+			`In ${campaignName}, ${base}. The light seems to hesitate at the edge of things, and every sound feels as though it arrives a heartbeat late. ` +
+			`Somewhere nearby, something mundane becomes suddenly important—an old nail, a torn ribbon, a footprint pressed too deeply into soft earth.\n\n` +
+			`Whatever comes next, it\'s close enough to taste in the back of your throat. The moment invites a choice: press forward, call out, or wait and listen—` +
+			`and the world waits to see which story you decide to tell.`;
+	}
+
+	return jsonResponse(
+		{
+			ok: true,
+			toolType: 'flavor',
+			partyStatus,
+			result: { text: flavorText },
+			...(isDebugEnabled(env) ? { debug: { gemini: getGeminiDebugSnapshot() } } : {}),
+		},
+		{ status: 200 },
+		origin,
+	);
 }
 
 const KNOWN_RACES = [
@@ -1558,7 +3610,7 @@ function forgeCharacterFromNarrative(owner: string, narrativeText: string, portr
 		updatedAt: now,
 	};
 
-	return character;
+	return ensureCharacterProgression(character);
 }
 
 async function handleForgeCharacter(request: Request, env: Env, origin: string | null): Promise<Response> {
@@ -1788,13 +3840,89 @@ async function handleListCharacters(request: Request, env: Env, origin: string |
 		if (!stored) continue;
 		try {
 			const parsed = JSON.parse(stored) as Character;
-			if (parsed && parsed.id) characters.push(parsed);
+			if (parsed && parsed.id) characters.push(ensureCharacterProgression(parsed));
 		} catch {
 			// ignore malformed
 		}
 	}
 
 	return jsonResponse({ ok: true, characters }, undefined, origin);
+}
+
+async function handleCharacterLevelUp(request: Request, env: Env, origin: string | null): Promise<Response> {
+	let body: any;
+	try {
+		body = await request.json();
+	} catch {
+		return errorResponse('Invalid JSON body', 400, origin);
+	}
+
+	const username = String(body?.username ?? '').trim();
+	const characterId = String(body?.characterId ?? '').trim();
+	if (!username || !characterId) {
+		return errorResponse('username and characterId are required', 400, origin);
+	}
+
+	const stored = await env.ADA_DATA.get(`character:${characterId}`);
+	if (!stored) {
+		return errorResponse('Character not found', 404, origin);
+	}
+
+	let character: Character;
+	try {
+		character = JSON.parse(stored) as Character;
+	} catch {
+		return errorResponse('Corrupted character record', 500, origin);
+	}
+
+	if (character.owner !== username) {
+		return errorResponse('You do not own this character', 403, origin);
+	}
+
+	character = ensureCharacterProgression(character);
+	if (!character.progression?.canLevelUp) {
+		return errorResponse('Not enough XP to level up yet', 400, origin);
+	}
+	if (character.progression.level >= MAX_CHARACTER_LEVEL) {
+		return errorResponse('Character is already at max level', 400, origin);
+	}
+
+	// Level up by increasing the first class level (simple single-class flow for now).
+	if (!Array.isArray(character.concept?.classes) || !character.concept.classes.length) {
+		character.concept.classes = [{ name: 'Fighter', level: 1 }];
+	}
+	character.concept.classes[0].level = (Number.isFinite(character.concept.classes[0].level)
+		? Number(character.concept.classes[0].level)
+		: 1) + 1;
+
+	const primaryClass = character.concept.classes[0].name || 'Fighter';
+	const totalLevel = getTotalCharacterLevel(character);
+	character.mechanics.proficiencyBonus = computeProficiencyBonusForLevel(totalLevel);
+
+	// Increase max HP: average hit die per level + CON modifier (minimum +1 per level).
+	const conScore = Number.isFinite(character.mechanics?.abilityScores?.con)
+		? Number(character.mechanics.abilityScores.con)
+		: 10;
+	const conMod = abilityModifier(conScore);
+	const hitDie = hitDieForClass(primaryClass);
+	const avgPerLevel = Math.floor(hitDie / 2) + 1;
+	const hpGain = Math.max(1, avgPerLevel + conMod);
+	character.mechanics.hitPoints = Math.max(1, Number(character.mechanics.hitPoints || 1) + hpGain);
+
+	// Recompute class summaries.
+	const rebuilt = buildClassAndLevelSummary(character.concept.classes);
+	character.concept.classSummary = rebuilt.classSummary;
+	character.concept.levelSummary = rebuilt.levelSummary;
+
+	// Normalize progression resources and refill HP/mana on level-up.
+	character = ensureCharacterProgression(character);
+	character.progression!.hp.current = character.progression!.hp.max;
+	character.progression!.manaSlots.current = character.progression!.manaSlots.max;
+	character.updatedAt = new Date().toISOString();
+	character.progression!.updatedAt = new Date().toISOString();
+
+	await env.ADA_DATA.put(`character:${characterId}`, JSON.stringify(character));
+	return jsonResponse({ ok: true, character }, { status: 200 }, origin);
 }
 
 /**
@@ -1930,6 +4058,14 @@ export default {
 			return handleHealth(origin);
 		}
 
+		if (pathname === '/api/health/ai' && method === 'GET') {
+			return handleAIHealth(env, origin);
+		}
+
+		if (pathname === '/api/health/ai/models' && method === 'GET') {
+			return handleAIModels(env, origin);
+		}
+
 		if (pathname === '/api/register' && method === 'POST') {
 			return handleRegister(request, env, origin);
 		}
@@ -1950,6 +4086,10 @@ export default {
 			return handleDeleteCharacter(request, env, origin);
 		}
 
+		if (pathname === '/api/characters/level-up' && method === 'POST') {
+			return handleCharacterLevelUp(request, env, origin);
+		}
+
 		if (pathname === '/api/characters' && method === 'GET') {
 			return handleListCharacters(request, env, origin);
 		}
@@ -1960,6 +4100,10 @@ export default {
 
 		if (pathname === '/api/ai-dm/turn' && method === 'POST') {
 			return handleAIDMTurn(request, env, origin);
+		}
+
+		if (pathname === '/api/ai-dm/resolve-check' && method === 'POST') {
+			return handleAIDMResolveCheck(request, env, origin);
 		}
 
 		if (pathname === '/api/campaigns' && method === 'POST') {
@@ -1976,6 +4120,10 @@ export default {
 
 		if (pathname === '/api/campaigns/details' && method === 'POST') {
 			return handlePostCampaignDetails(request, env, origin);
+		}
+
+		if (pathname === '/api/gm/tool' && method === 'POST') {
+			return handleGmTool(request, env, origin);
 		}
 
 		if (pathname === '/api/srd/query' && method === 'POST') {

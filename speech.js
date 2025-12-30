@@ -19,6 +19,13 @@
 
   const authSection = document.getElementById("authSection");
   const homeSection = document.getElementById("homeSection");
+  const viewForge = document.getElementById("viewForge");
+  const viewHud = document.getElementById("viewHud");
+  const switchToForgeBtn = document.getElementById("switchToForgeBtn");
+  const switchToHudBtn = document.getElementById("switchToHudBtn");
+  const extractionFeedEl = document.getElementById("extractionFeed");
+  const autoPortraitsToggle = document.getElementById("autoPortraitsToggle");
+
   const profileSection = document.getElementById("profileSection");
   const campaignsSection = document.getElementById("campaignsSection");
   const vaultSection = document.getElementById("vaultSection");
@@ -49,6 +56,7 @@
   const campaignDetailMeta = document.getElementById("campaignDetailMeta");
   const campaignDeleteBtn = document.getElementById("campaignDeleteBtn");
   const campaignLeaveBtn = document.getElementById("campaignLeaveBtn");
+  const campaignCompleteBtn = document.getElementById("campaignCompleteBtn");
   const campaignActionStatusEl = document.getElementById("campaignActionStatus");
   const campaignTabButtons = Array.from(
     document.querySelectorAll(".campaign-tab-button")
@@ -59,18 +67,36 @@
   const campaignCharactersGrid = document.getElementById("campaignCharactersGrid");
   const campaignJournalsList = document.getElementById("campaignJournalsList");
   const campaignScriptsList = document.getElementById("campaignScriptsList");
+  const campaignCreateJournalsBtn = document.getElementById("campaignCreateJournalsBtn");
+  const campaignJournalsStatusEl = document.getElementById("campaignJournalsStatus");
   const campaignScriptPromptInput = document.getElementById("campaignScriptPrompt");
   const campaignScriptGenerateBtn = document.getElementById("campaignScriptGenerateBtn");
   const campaignScriptStatusEl = document.getElementById("campaignScriptStatus");
+
+  // GM Tactical Dashboard (Campaigns -> Script tab)
+  const gmPartySummaryEl = document.getElementById("gmPartySummary");
+  const gmPartyMembersEl = document.getElementById("gmPartyMembers");
+  const gmEncounterSeedInput = document.getElementById("gmEncounterSeed");
+  const gmEncounterGenerateBtn = document.getElementById("gmEncounterGenerateBtn");
+  const gmEncounterStatusEl = document.getElementById("gmEncounterStatus");
+  const gmEncounterResultsEl = document.getElementById("gmEncounterResults");
+  const gmEncounterArchiveEl = document.getElementById("gmEncounterArchive");
+  const gmFlavorSeedInput = document.getElementById("gmFlavorSeed");
+  const gmFlavorGenerateBtn = document.getElementById("gmFlavorGenerateBtn");
+  const gmFlavorSendToLogBtn = document.getElementById("gmFlavorSendToLogBtn");
+  const gmFlavorStatusEl = document.getElementById("gmFlavorStatus");
+  const gmFlavorOutputEl = document.getElementById("gmFlavorOutput");
   const campaignDialogueStartBtn = document.getElementById("campaignDialogueStartBtn");
   const campaignDialogueStopBtn = document.getElementById("campaignDialogueStopBtn");
   const campaignDialogueStatusEl = document.getElementById("campaignDialogueStatus");
   const campaignDialogueTranscriptEl = document.getElementById("campaignDialogueTranscript");
+  const dialogueContainerEl = document.getElementById("dialogueContainer");
+  const dialogueComposerEl = document.getElementById("dialogueComposer");
+  const dialogueTextInputEl = document.getElementById("dialogueTextInput");
+  const dialogueSendBtn = document.getElementById("dialogueSendBtn");
 
   const aiDmNoticeEl = document.getElementById("aiDmNotice");
   const aiDmPanelEl = document.getElementById("aiDmPanel");
-  const aiDmInputEl = document.getElementById("aiDmInput");
-  const aiDmSendBtn = document.getElementById("aiDmSendBtn");
   const aiDmRollBtn = document.getElementById("aiDmRollBtn");
   const aiDmMechanicsEl = document.getElementById("aiDmMechanics");
 
@@ -88,6 +114,9 @@
   const vaultDetailPrompt = document.getElementById("vaultDetailPrompt");
   const vaultDetailAbilities = document.getElementById("vaultDetailAbilities");
   const vaultDetailMechanics = document.getElementById("vaultDetailMechanics");
+  const vaultDetailResources = document.getElementById("vaultDetailResources");
+  const vaultLevelUpBtn = document.getElementById("vaultLevelUpBtn");
+  const vaultLevelUpStatus = document.getElementById("vaultLevelUpStatus");
   const vaultCampaignSelect = document.getElementById("vaultCampaignSelect");
   const vaultLinkBtn = document.getElementById("vaultLinkBtn");
   const vaultLinkStatus = document.getElementById("vaultLinkStatus");
@@ -106,31 +135,108 @@
     document.querySelectorAll(".portrait-card__select-btn")
   );
 
-  // Rules Lookup Elements
-  const rulesLookupInput = document.getElementById("rulesLookupInput");
-  const rulesLookupBtn = document.getElementById("rulesLookupBtn");
-  const rulesLookupResults = document.getElementById("rulesLookupResults");
-  const rulesResultTitle = document.getElementById("rulesResultTitle");
-  const rulesResultText = document.getElementById("rulesResultText");
-  const rulesResultSource = document.getElementById("rulesResultSource");
-  const rulesLookupPrevBtn = document.getElementById("rulesLookupPrevBtn");
-  const rulesLookupNextBtn = document.getElementById("rulesLookupNextBtn");
-  const rulesLookupCounter = document.getElementById("rulesLookupCounter");
-  const rulesLookupMessage = document.getElementById("rulesLookupMessage");
-
-  // Rules Lookup State
-  let rulesLookupState = {
-    results: [],
-    currentIndex: 0,
-  };
-
   const PORTRAIT_STORAGE_KEY = "adaCurrentCharacterPortraitUrl";
   const CURRENT_USER_STORAGE_KEY = "adaCurrentUser";
   const ACTIVE_CAMPAIGN_STORAGE_KEY = "adaActiveCampaignId";
+  const ACTIVE_CHARACTER_STORAGE_KEY = "adaActiveCharacterId";
+  const POST_SELECT_TARGET_STORAGE_KEY = "adaPostSelectTarget";
+
+  const CURRENT_PAGE = (() => {
+    try {
+      return String(document.body && document.body.dataset && document.body.dataset.page ? document.body.dataset.page : "spa");
+    } catch {
+      return "spa";
+    }
+  })();
+
+  const MULTI_PAGE = CURRENT_PAGE !== "spa";
+
+  function pageHref(page) {
+    switch (page) {
+      case "auth":
+      case "auth-login":
+      case "auth-register":
+        return "index.html";
+      case "forge":
+        return "forge.html";
+      case "hud":
+        return "hud.html";
+      case "vault":
+        return "vault.html";
+      case "campaigns":
+      case "campaign-detail":
+        return "campaigns.html";
+      case "profile":
+        return "profile.html";
+      default:
+        return null;
+    }
+  }
+
+  function navigateTo(page) {
+    const href = pageHref(page);
+    if (!href) return;
+    // Avoid reloading the same page.
+    if (href === (window.location && window.location.pathname ? window.location.pathname.split("/").pop() : "")) {
+      return;
+    }
+    window.location.href = href;
+  }
+
+  function setPostSelectTarget(targetPage) {
+    try {
+      if (targetPage) {
+        localStorage.setItem(POST_SELECT_TARGET_STORAGE_KEY, String(targetPage));
+      } else {
+        localStorage.removeItem(POST_SELECT_TARGET_STORAGE_KEY);
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  function consumePostSelectTarget() {
+    try {
+      const t = localStorage.getItem(POST_SELECT_TARGET_STORAGE_KEY);
+      if (t) localStorage.removeItem(POST_SELECT_TARGET_STORAGE_KEY);
+      return t ? String(t) : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function emitAdaEvent(name, detail) {
+    try {
+      window.dispatchEvent(new CustomEvent(name, { detail }));
+    } catch {
+      // ignore
+    }
+  }
+
+  function notifyActiveCharacterChanged() {
+    emitAdaEvent("ada:active-character-changed", { character: activeCharacter || null });
+  }
+
+  function notifyActiveCampaignChanged() {
+    emitAdaEvent("ada:active-campaign-changed", {
+      campaignId: activeCampaignId || null,
+      campaign: activeCampaign || null,
+    });
+  }
 
   let activeCampaignId = null;
   let activeCampaign = null;
   let activeCharacter = null;
+  let activeCampaignCharacters = [];
+  let activeCampaignPartyStatus = null;
+  let activeCampaignEncounters = [];
+  let cachedPlayerSpeakerLabel = "You";
+
+  let currentWorkspaceView = "forge"; // "forge" | "hud"
+  let awaitingHudCharacterSelect = false;
+  let lastAutoPortraitAt = 0;
+  let lastAutoPortraitSignature = "";
+  let extractionUpdateTimer = null;
   // Backend API base URL (Cloudflare Worker)
   // Automatically use localhost for development, production URL otherwise
   const isDevelopment = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' || window.location.hostname === '0.0.0.0';
@@ -139,15 +245,23 @@
     : "https://backend.ada-assistante.workers.dev";
   let cachedAdventures = [];
   let cachedAdventureCharacters = [];
+  let cachedUserCampaigns = [];
+  let cachedVaultCharacters = [];
   let lastAiMechanics = null;
   let pendingForgedCharacter = null;
   let pendingNarrativeText = "";
   let pendingCharacterName = "";
+  let storedActiveCharacterId = null;
 
   try {
     const storedCampaignId = localStorage.getItem(ACTIVE_CAMPAIGN_STORAGE_KEY);
     if (storedCampaignId) {
       activeCampaignId = storedCampaignId;
+    }
+
+    const storedCharId = localStorage.getItem(ACTIVE_CHARACTER_STORAGE_KEY);
+    if (storedCharId) {
+      storedActiveCharacterId = String(storedCharId);
     }
   } catch {
     // ignore storage issues
@@ -185,6 +299,24 @@
     const el = activeTranscriptStatusEl || statusEl;
     if (!el) return;
     el.textContent = text;
+  }
+
+  function computePlayerSpeakerLabel({ characters, username }) {
+    const u = (username || "").trim();
+    const list = Array.isArray(characters) ? characters : [];
+    const owned = u ? list.filter((c) => c && c.owner === u) : [];
+    const candidate = owned.length ? owned[0] : null;
+    const name = candidate && candidate.name ? String(candidate.name).trim() : "";
+    if (name) return name;
+
+    // If no owned character is linked (e.g., DM-only), fall back gracefully.
+    return u || "You";
+  }
+
+  function refreshDialogueComposerLabel() {
+    if (!dialogueTextInputEl) return;
+    const label = cachedPlayerSpeakerLabel || "You";
+    dialogueTextInputEl.placeholder = `Type as ${label}…`;
   }
 
   function setPortraitStatus(text) {
@@ -226,6 +358,162 @@
     setStatus(listening ? "Listening..." : "Idle");
   }
 
+  function setWorkspaceView(next) {
+    const view = next === "hud" ? "hud" : "forge";
+    currentWorkspaceView = view;
+
+    if (viewForge) viewForge.hidden = view !== "forge";
+    if (viewHud) viewHud.hidden = view !== "hud";
+
+    if (switchToForgeBtn) {
+      const selected = view === "forge";
+      switchToForgeBtn.setAttribute("aria-selected", selected ? "true" : "false");
+    }
+    if (switchToHudBtn) {
+      const selected = view === "hud";
+      switchToHudBtn.setAttribute("aria-selected", selected ? "true" : "false");
+    }
+  }
+
+  function setActiveCharacter(character, { persist = true } = {}) {
+    activeCharacter = character || null;
+    notifyActiveCharacterChanged();
+    if (!persist) return;
+    try {
+      if (activeCharacter && activeCharacter.id) {
+        localStorage.setItem(ACTIVE_CHARACTER_STORAGE_KEY, String(activeCharacter.id));
+      } else {
+        localStorage.removeItem(ACTIVE_CHARACTER_STORAGE_KEY);
+      }
+    } catch {
+      // ignore storage issues
+    }
+  }
+
+  function requestHudCharacterSelection(message) {
+    awaitingHudCharacterSelect = true;
+    if (message) {
+      emitAdaEvent("ada:hud-message", { message: String(message) });
+    }
+    if (MULTI_PAGE) {
+      setPostSelectTarget("hud");
+    }
+    showView("vault");
+  }
+
+  function hashStringToInt(str) {
+    // small deterministic hash for auto-portrait seeds
+    const s = String(str || "");
+    let h = 2166136261;
+    for (let i = 0; i < s.length; i++) {
+      h ^= s.charCodeAt(i);
+      h = Math.imul(h, 16777619);
+    }
+    return Math.abs(h);
+  }
+
+  function generatePortraits({ mode: generationMode } = {}) {
+    const prompt = buildPortraitPrompt();
+    if (!prompt) {
+      setPortraitStatus("Add some transcript text first, then we can generate portraits from it.");
+      return;
+    }
+
+    const modeLabel = generationMode === "auto" ? "Updating" : "Generating";
+    setPortraitStatus(`${modeLabel} portraits…`);
+
+    const baseSeed = generationMode === "auto"
+      ? hashStringToInt(prompt) % 1_000_000_000
+      : Math.floor(Math.random() * 1_000_000_000);
+
+    portraitImgs.forEach((img, index) => {
+      if (!img) return;
+      const seed = baseSeed + index;
+      const url = buildPortraitImageUrl(prompt, seed);
+      img.hidden = false;
+      img.src = url;
+    });
+
+    enablePortraitSelection();
+  }
+
+  function extractNarrativeGems(text) {
+    const raw = String(text || "");
+    const t = raw.toLowerCase();
+    const gems = [];
+
+    const classes = [
+      "barbarian","bard","cleric","druid","fighter","monk","paladin","ranger","rogue","sorcerer","warlock","wizard","artificer"
+    ];
+    const races = [
+      "human","elf","dwarf","halfling","gnome","half-elf","half elf","half-orc","half orc","tiefling","dragonborn","orc","goblin","goliath","aasimar"
+    ];
+    const backgrounds = [
+      "acolyte","criminal","folk hero","noble","sage","soldier","urchin","entertainer","hermit","outlander","charlatan","guild artisan","sailor"
+    ];
+
+    const foundClass = classes.find((c) => t.includes(c));
+    if (foundClass) gems.push({ kind: "Class", value: foundClass });
+
+    const foundRace = races.find((r) => t.includes(r));
+    if (foundRace) gems.push({ kind: "Race", value: foundRace.replace(/\b\w/g, (m) => m.toUpperCase()) });
+
+    const foundBg = backgrounds.find((b) => t.includes(b));
+    if (foundBg) gems.push({ kind: "Background", value: foundBg.replace(/\b\w/g, (m) => m.toUpperCase()) });
+
+    // Alignment hint
+    const align = t.match(/\b(lawful|neutral|chaotic)\s+(good|neutral|evil)\b/);
+    if (align) {
+      gems.push({ kind: "Alignment", value: `${align[1]} ${align[2]}`.replace(/\b\w/g, (m) => m.toUpperCase()) });
+    }
+
+    // A couple of narrative motifs that help the vibe feel "alive"
+    const motifs = [
+      { k: "Theme", rx: /\b(vengeance|redemption|oath|destiny|prophecy)\b/i },
+      { k: "Gear", rx: /\b(dagger|rapier|longsword|bow|spellbook|staff|cloak)\b/i },
+    ];
+    motifs.forEach((m) => {
+      const match = raw.match(m.rx);
+      if (match) gems.push({ kind: m.k, value: match[1] });
+    });
+
+    // Dedupe by kind and value
+    const seen = new Set();
+    return gems
+      .map((g) => ({ ...g, value: String(g.value || "").trim() }))
+      .filter((g) => g.value)
+      .filter((g) => {
+        const key = `${g.kind}:${g.value.toLowerCase()}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      })
+      .slice(0, 8);
+  }
+
+  function renderExtractionFeed(text) {
+    if (!extractionFeedEl) return;
+    const gems = extractNarrativeGems(text);
+    extractionFeedEl.innerHTML = "";
+    gems.forEach((g) => {
+      const li = document.createElement("li");
+      li.className = "extraction__item";
+      const span = document.createElement("span");
+      span.className = "extraction__tag";
+      span.innerHTML = `<b>Detected ${g.kind}:</b> ${String(g.value)}`;
+      li.appendChild(span);
+      extractionFeedEl.appendChild(li);
+    });
+  }
+
+  function scheduleExtractionUpdate(text) {
+    if (!extractionFeedEl) return;
+    if (extractionUpdateTimer) window.clearTimeout(extractionUpdateTimer);
+    extractionUpdateTimer = window.setTimeout(() => {
+      renderExtractionFeed(text);
+    }, 160);
+  }
+
   function updateTranscript(text, updateMode) {
     const target = activeTranscriptEl || transcriptEl;
     if (!target) return;
@@ -236,6 +524,143 @@
       target.value = prefix ? prefix + " " + text : text;
     }
     target.scrollTop = target.scrollHeight;
+
+    // If we're in the campaign dialogue view, keep the chat-style thread in sync.
+    if (target === campaignDialogueTranscriptEl) {
+      scheduleRenderCampaignDialogueThread(target.value || "");
+    }
+
+    // Forge extras: extraction feed + auto portraits.
+    if (target === transcriptEl) {
+      scheduleExtractionUpdate(target.value || "");
+
+      const wantsAuto = !!(autoPortraitsToggle && autoPortraitsToggle.checked);
+      if (wantsAuto && isListening) {
+        const signature = (target.value || "").trim().slice(0, 280);
+        const now = Date.now();
+        // Throttle auto-portrait refreshes so we don't hammer the image endpoint.
+        if (
+          signature.length >= 40 &&
+          (now - lastAutoPortraitAt) > 6500 &&
+          signature !== lastAutoPortraitSignature
+        ) {
+          lastAutoPortraitAt = now;
+          lastAutoPortraitSignature = signature;
+          generatePortraits({ mode: "auto" });
+        }
+      }
+    }
+  }
+
+  // Public-ish API for the dialogue UI.
+  // sender: "dm" | "player" | "system" | string
+  function appendMessage(sender, text) {
+    const trimmed = (text || "").trim();
+    if (!trimmed) return;
+
+    const s = String(sender || "").toLowerCase();
+    if (s === "dm" || s === "ada" || s === "ai") {
+      appendAiDmLog("dm", trimmed);
+      return;
+    }
+    if (s === "player" || s === "you") {
+      appendAiDmLog("player", trimmed);
+      return;
+    }
+
+    // Unknown sender: keep transcript consistent for parsing.
+    if (!campaignDialogueTranscriptEl) return;
+    const current = campaignDialogueTranscriptEl.value.trim();
+    const label = sender ? String(sender).trim() : "Transcript";
+    const entry = `${label}: ${trimmed}`;
+    const updated = current ? `${current}\n\n${entry}` : entry;
+    campaignDialogueTranscriptEl.value = updated;
+    campaignDialogueTranscriptEl.scrollTop = campaignDialogueTranscriptEl.scrollHeight;
+    renderCampaignDialogueThread(updated);
+    scheduleSaveCampaignTranscript();
+  }
+
+  function parseCampaignDialogueTranscript(transcript, currentUser, playerLabel) {
+    const raw = typeof transcript === "string" ? transcript : "";
+    const chunks = raw
+      .split(/\n\s*\n+/g)
+      .map((c) => c.trim())
+      .filter(Boolean);
+
+    const messages = [];
+    chunks.forEach((chunk) => {
+      const m = chunk.match(/^([A-Za-z0-9_\-\s]{1,40}):\s*([\s\S]+)$/);
+      if (m) {
+        const speaker = String(m[1] || "").trim();
+        const body = String(m[2] || "").trim();
+        const speakerLower = speaker.toLowerCase();
+        const currentUserLower = (currentUser || "").toLowerCase();
+        const playerLabelLower = (playerLabel || "").toLowerCase();
+
+        let role = "other";
+        if (speakerLower === "ada" || speakerLower === "dm" || speakerLower === "dungeon master") {
+          role = "dm";
+        } else if (
+          speakerLower === "you" ||
+          (playerLabelLower && speakerLower === playerLabelLower) ||
+          (currentUserLower && speakerLower === currentUserLower)
+        ) {
+          role = "player";
+        }
+
+        messages.push({ role, speaker, text: body });
+        return;
+      }
+
+      // Untagged transcript chunks (e.g., raw voice capture) are shown as a neutral system message.
+      messages.push({ role: "system", speaker: "Transcript", text: chunk });
+    });
+
+    return messages;
+  }
+
+  function renderCampaignDialogueThread(transcript) {
+    if (!dialogueContainerEl) return;
+    const currentUser = getCurrentUser();
+    const messages = parseCampaignDialogueTranscript(transcript, currentUser, cachedPlayerSpeakerLabel);
+    dialogueContainerEl.innerHTML = "";
+
+    if (messages.length === 0) {
+      const empty = document.createElement("p");
+      empty.className = "text-muted";
+      empty.textContent = "No dialogue yet. Start session capture or talk to ADA-DM.";
+      dialogueContainerEl.appendChild(empty);
+      return;
+    }
+
+    messages.forEach((msg) => {
+      const bubble = document.createElement("div");
+      bubble.className = `chat-msg chat-msg--${msg.role}`;
+
+      const meta = document.createElement("div");
+      meta.className = "chat-msg__meta";
+      meta.textContent = msg.speaker;
+
+      const body = document.createElement("div");
+      body.className = "chat-msg__body";
+      body.textContent = msg.text;
+
+      bubble.appendChild(meta);
+      bubble.appendChild(body);
+      dialogueContainerEl.appendChild(bubble);
+    });
+
+    dialogueContainerEl.scrollTop = dialogueContainerEl.scrollHeight;
+  }
+
+  let renderCampaignDialogueTimer = null;
+
+  function scheduleRenderCampaignDialogueThread(transcript) {
+    if (!dialogueContainerEl) return;
+    if (renderCampaignDialogueTimer) window.clearTimeout(renderCampaignDialogueTimer);
+    renderCampaignDialogueTimer = window.setTimeout(() => {
+      renderCampaignDialogueThread(transcript);
+    }, 120);
   }
 
   async function apiPost(path, payload) {
@@ -284,17 +709,44 @@
   }
 
   function showView(view) {
-    // view: "auth-login" | "auth-register" | "home" | "profile" | "campaigns" | "campaign-detail" | "vault"
-    const isAuthView = view === "auth-login" || view === "auth-register";
-    const isCampaignView = view === "campaigns" || view === "campaign-detail";
-    const isVaultView = view === "vault";
+    // view: "auth-login" | "auth-register" | "forge" | "hud" | "home" | "profile" | "campaigns" | "campaign-detail" | "vault"
+    // ("home" is kept as a backwards-compatible alias for "forge")
+    let next = view === "home" ? "forge" : view;
+
+    // Multi-page mode: top-level views are separate documents.
+    // We keep internal toggles like "campaign-detail" inside campaigns.html and
+    // vault list/detail inside vault.html.
+    if (MULTI_PAGE) {
+      if (next === "forge" || next === "hud" || next === "vault" || next === "campaigns" || next === "profile" || next === "auth-login" || next === "auth-register") {
+        navigateTo(next);
+        return;
+      }
+      // fall through for internal view toggles (e.g. "campaign-detail")
+    }
+
+    if (next === "hud" && !activeCharacter) {
+      awaitingHudCharacterSelect = true;
+      next = "vault";
+    }
+
+    const isAuthView = next === "auth-login" || next === "auth-register";
+    const isWorkspaceView = next === "forge" || next === "hud";
+    const isCampaignView = next === "campaigns" || next === "campaign-detail";
+    const isVaultView = next === "vault";
 
     if (authSection) authSection.hidden = !isAuthView;
-    if (loginView) loginView.hidden = view !== "auth-login";
-    if (registerView) registerView.hidden = view !== "auth-register";
-    if (homeSection) homeSection.hidden = view !== "home";
-    if (profileSection) profileSection.hidden = view !== "profile";
+    if (loginView) loginView.hidden = next !== "auth-login";
+    if (registerView) registerView.hidden = next !== "auth-register";
+    if (homeSection) homeSection.hidden = !isWorkspaceView;
+    if (profileSection) profileSection.hidden = next !== "profile";
     if (campaignsSection) campaignsSection.hidden = !isCampaignView;
+
+    if (isWorkspaceView) {
+      setWorkspaceView(next);
+      if (next === "hud") {
+        notifyActiveCharacterChanged();
+      }
+    }
     if (vaultSection) {
       vaultSection.hidden = !isVaultView;
       if (isVaultView) {
@@ -307,10 +759,10 @@
     }
 
     if (campaignsListView && campaignDetailView) {
-      if (view === "campaigns") {
+      if (next === "campaigns") {
         campaignsListView.hidden = false;
         campaignDetailView.hidden = true;
-      } else if (view === "campaign-detail") {
+      } else if (next === "campaign-detail") {
         campaignsListView.hidden = true;
         campaignDetailView.hidden = false;
       }
@@ -444,13 +896,19 @@
       }
     }
 
+    if (activeTranscriptContext === "dialogue") {
+      // In campaign dialogue mode, treat each final chunk as a message.
+      if (final) {
+        handleDialoguePlayerInput(final.trim(), { source: "speech" });
+      }
+      // We intentionally ignore interim results in chat mode to avoid spammy bubbles.
+      return;
+    }
+
     if (final) {
       lastFinal += final;
       const combinedFinal = lastFinal.trim();
       updateTranscript(combinedFinal, TranscriptMode.REPLACE);
-      if (activeTranscriptContext === "dialogue") {
-        logDialogueSnippet(final.trim(), combinedFinal);
-      }
     } else if (interim) {
       const combined = (lastFinal + " " + interim).trim();
       updateTranscript(combined, TranscriptMode.REPLACE);
@@ -570,28 +1028,7 @@
    // Portrait generation wiring
   if (generatePortraitsBtn) {
     generatePortraitsBtn.addEventListener("click", () => {
-      const prompt = buildPortraitPrompt();
-      if (!prompt) {
-        setPortraitStatus(
-          "Add some transcript text first, then we'll generate portraits from it."
-        );
-        return;
-      }
-
-      setPortraitStatus(
-        "Generating portraits... this may take a few seconds on the first request."
-      );
-
-      const baseSeed = Math.floor(Math.random() * 1_000_000_000);
-      portraitImgs.forEach((img, index) => {
-        if (!img) return;
-        const seed = baseSeed + index;
-        const url = buildPortraitImageUrl(prompt, seed);
-        img.hidden = false;
-        img.src = url;
-      });
-
-      enablePortraitSelection();
+      generatePortraits({ mode: "manual" });
     });
   }
 
@@ -826,6 +1263,13 @@
             : "You don't have any characters in the required level range.";
           return;
         }
+        // Starting a fresh AI-solo run; clear any previous dialogue UI state
+        if (campaignDialogueTranscriptEl) {
+          campaignDialogueTranscriptEl.value = "";
+        }
+        if (aiDmMechanicsEl) {
+          aiDmMechanicsEl.textContent = "";
+        }
         status.textContent = "Starting solo run...";
         const currentUser = getCurrentUser();
         apiPost("/api/ai-campaigns/start", {
@@ -893,44 +1337,79 @@
   }
 
   function appendAiDmLog(role, text) {
-    if (!campaignDialogueTranscriptEl || !text) return;
-    const prefix = role === "dm" ? "ADA: " : "You: ";
-    const current = campaignDialogueTranscriptEl.value.trim();
+    if (!text) return;
+    const playerLabel = cachedPlayerSpeakerLabel || "You";
+    const prefix = role === "dm" ? "ADA: " : `${playerLabel}: `;
+    const current = campaignDialogueTranscriptEl
+      ? campaignDialogueTranscriptEl.value.trim()
+      : "";
     const entry = `${prefix}${text.trim()}`;
-    campaignDialogueTranscriptEl.value = current
-      ? `${current}\n\n${entry}`
-      : entry;
-    campaignDialogueTranscriptEl.scrollTop =
-      campaignDialogueTranscriptEl.scrollHeight;
+    const updated = current ? `${current}\n\n${entry}` : entry;
+
+    if (campaignDialogueTranscriptEl) {
+      campaignDialogueTranscriptEl.value = updated;
+      campaignDialogueTranscriptEl.scrollTop =
+        campaignDialogueTranscriptEl.scrollHeight;
+    }
+
+    renderCampaignDialogueThread(updated);
+    scheduleSaveCampaignTranscript();
+  }
+
+  let saveTranscriptTimer = null;
+
+  function scheduleSaveCampaignTranscript() {
+    if (!campaignDialogueTranscriptEl) return;
+    if (!activeCampaignId) return;
+    const username = getCurrentUser();
+    if (!username) return;
+
+    const text = campaignDialogueTranscriptEl.value || "";
+    if (saveTranscriptTimer) window.clearTimeout(saveTranscriptTimer);
+    saveTranscriptTimer = window.setTimeout(() => {
+      apiPost("/api/campaigns/details", {
+        action: "updateTranscript",
+        campaignId: activeCampaignId,
+        username,
+        transcript: text,
+      }).catch((e) => {
+        console.warn("[ADA] Failed to save campaign transcript", e);
+      });
+    }, 800);
   }
 
   async function sendAiDmTurn() {
-    if (!activeCampaign || !isAIDmCampaign(activeCampaign)) {
-      return;
-    }
+    // Backwards-compatible wrapper for old button wiring.
+    const text = dialogueTextInputEl ? dialogueTextInputEl.value.trim() : "";
+    if (!text) return;
+    await handleDialoguePlayerInput(text, { source: "typing" });
+  }
+
+  let aiDmTurnQueue = Promise.resolve();
+
+  async function sendAiDmTurnWithText(text) {
+    if (!activeCampaign || !isAIDmCampaign(activeCampaign)) return;
     const username = getCurrentUser();
     if (!username) {
       if (aiDmMechanicsEl)
         aiDmMechanicsEl.textContent = "Log in to talk to ADA as DM.";
       return;
     }
-    if (!aiDmInputEl || !aiDmSendBtn) return;
-    const text = aiDmInputEl.value.trim();
-    if (!text) return;
 
-    aiDmSendBtn.disabled = true;
-    if (aiDmMechanicsEl)
-      aiDmMechanicsEl.textContent = "Talking to ADA...";
+    const trimmed = (text || "").trim();
+    if (!trimmed) return;
 
-    appendAiDmLog("player", text);
-    aiDmInputEl.value = "";
+    if (dialogueSendBtn) dialogueSendBtn.disabled = true;
+    if (aiDmMechanicsEl) aiDmMechanicsEl.textContent = "Talking to ADA...";
 
-    try {
+    // Ensure we serialize turns so responses stay in order.
+    aiDmTurnQueue = aiDmTurnQueue.then(async () => {
       const result = await apiPost("/api/ai-dm/turn", {
         username,
         campaignId: activeCampaignId,
-        text,
+        text: trimmed,
       });
+
       if (!result.ok) {
         const msg =
           (result.data && (result.data.error || result.data.message)) ||
@@ -942,35 +1421,74 @@
       const payload = result.data || {};
       const narrative = payload.narrative || payload.text || "";
       const mechanics = payload.mechanics || null;
+      const debug = payload.debug || null;
       lastAiMechanics = mechanics;
+
       if (narrative) {
-        appendAiDmLog("dm", narrative);
+        appendMessage("dm", narrative);
       }
+
       if (mechanics && aiDmMechanicsEl) {
         const dc = mechanics.dc;
         const ability = mechanics.ability;
         const skill = mechanics.skill;
         const advantage = mechanics.advantage;
+        const checkDescription = mechanics.checkDescription;
         const pieces = [];
+        if (checkDescription && String(checkDescription).trim()) {
+          pieces.push(String(checkDescription).trim());
+        }
         if (dc != null) pieces.push(`DC ${dc}`);
         if (ability) pieces.push(ability.toUpperCase());
         if (skill) pieces.push(skill);
-        if (advantage === true) pieces.push("(advantage)");
-        if (advantage === false) pieces.push("(disadvantage)");
+        if (advantage === "advantage") pieces.push("(advantage)");
+        if (advantage === "disadvantage") pieces.push("(disadvantage)");
         aiDmMechanicsEl.textContent =
-          pieces.length > 0
-            ? `Check requested: ${pieces.join(" ")}`
-            : "";
+          pieces.length > 0 ? `Check requested: ${pieces.join(" ")}` : "";
       } else if (aiDmMechanicsEl) {
         aiDmMechanicsEl.textContent = "";
       }
-    } catch (e) {
+
+      // If backend debug is enabled, show which model is being used.
+      const modelName =
+        debug && debug.gemini && debug.gemini.model
+          ? String(debug.gemini.model)
+          : "";
+      if (modelName && aiDmNoticeEl) {
+        aiDmNoticeEl.hidden = false;
+        aiDmNoticeEl.textContent =
+          `ADA is acting as the Dungeon Master for this campaign. ` +
+          `Type what your character does next and send it to continue the story. ` +
+          `AI model: ${modelName}`;
+      }
+    }).catch((e) => {
       console.error("[ADA] AI-DM turn failed", e);
-      if (aiDmMechanicsEl)
-        aiDmMechanicsEl.textContent = "Error talking to ADA.";
-    } finally {
-      if (aiDmSendBtn) aiDmSendBtn.disabled = false;
+      if (aiDmMechanicsEl) aiDmMechanicsEl.textContent = "Error talking to ADA.";
+    }).finally(() => {
+      if (dialogueSendBtn) dialogueSendBtn.disabled = false;
+    });
+
+    return aiDmTurnQueue;
+  }
+
+  async function handleDialoguePlayerInput(text, { source } = {}) {
+    const trimmed = (text || "").trim();
+    if (!trimmed) return;
+
+    // Echo the player's message to the chat.
+    appendMessage("player", trimmed);
+    if (dialogueTextInputEl) dialogueTextInputEl.value = "";
+
+    // For journals and future mechanics, keep the transcript log action for speech captures.
+    if (source === "speech") {
+      logDialogueSnippet(trimmed, campaignDialogueTranscriptEl ? campaignDialogueTranscriptEl.value : trimmed);
     }
+
+    // If this is an AI-DM campaign, request the AI's reply.
+    if (activeCampaign && isAIDmCampaign(activeCampaign)) {
+      await sendAiDmTurnWithText(trimmed);
+    }
+
   }
 
   function renderCampaignCharacters(characters) {
@@ -1083,7 +1601,7 @@
       const empty = document.createElement("p");
       empty.className = "text-muted";
       empty.textContent =
-        "No scripts saved yet. Use the prompt above to generate an encounter script.";
+        "Session Log is empty. Generate encounters or flavor above, then send your favorites here.";
       campaignScriptsList.appendChild(empty);
       return;
     }
@@ -1120,6 +1638,374 @@
     });
   }
 
+  function renderGmPartyStatus(partyStatus) {
+    if (!gmPartySummaryEl && !gmPartyMembersEl) return;
+
+    if (!partyStatus || typeof partyStatus !== "object") {
+      if (gmPartySummaryEl) gmPartySummaryEl.textContent = "Party status unavailable.";
+      if (gmPartyMembersEl) gmPartyMembersEl.innerHTML = "";
+      return;
+    }
+
+    const memberCount = Number(partyStatus.memberCount) || 0;
+    const totalLevel = Number(partyStatus.totalLevel) || 0;
+    const avgLevel = typeof partyStatus.averageLevel === "number" ? partyStatus.averageLevel : Number(partyStatus.averageLevel) || 0;
+    const hpCur = Number(partyStatus.hp && partyStatus.hp.current) || 0;
+    const hpMax = Number(partyStatus.hp && partyStatus.hp.max) || 0;
+    const manaCur = Number(partyStatus.manaSlots && partyStatus.manaSlots.current) || 0;
+    const manaMax = Number(partyStatus.manaSlots && partyStatus.manaSlots.max) || 0;
+
+    if (gmPartySummaryEl) {
+      gmPartySummaryEl.textContent =
+        memberCount === 0
+          ? "No linked party members yet. Link characters from My Characters."
+          : `Party: ${memberCount} members · Total level ${totalLevel} (avg ${avgLevel}) · HP ${hpCur}/${hpMax} · Slots ${manaCur}/${manaMax}`;
+    }
+
+    if (gmPartyMembersEl) {
+      gmPartyMembersEl.innerHTML = "";
+      const members = Array.isArray(partyStatus.members) ? partyStatus.members : [];
+      members.forEach((m) => {
+        const chip = document.createElement("span");
+        chip.className = "gm-chip";
+        const name = m && m.name ? String(m.name) : "Adventurer";
+        const cls = m && m.classSummary ? String(m.classSummary) : "";
+        const lvl = m && Number.isFinite(Number(m.level)) ? Number(m.level) : 0;
+        const hp = m && m.hp ? `${m.hp.current}/${m.hp.max}` : "?/?";
+        const slots = m && m.manaSlots ? `${m.manaSlots.current}/${m.manaSlots.max}` : "?/?";
+        chip.textContent = `${name}${cls ? ` (${cls})` : ""} · L${lvl} · HP ${hp} · Slots ${slots}`;
+        gmPartyMembersEl.appendChild(chip);
+      });
+    }
+  }
+
+  function buildEncounterOptionText(option) {
+    const id = option && option.id ? String(option.id).trim() : "?";
+    const title = option && option.title ? String(option.title).trim() : "Encounter";
+    const difficulty = option && option.difficulty ? String(option.difficulty).trim() : "";
+    const type = option && option.type ? String(option.type).trim() : "";
+
+    const opposition = Array.isArray(option && option.opposition)
+      ? option.opposition
+          .map((o) => {
+            const name = o && o.name ? String(o.name) : "Opposition";
+            const count = Number.isFinite(Number(o && o.count)) ? Number(o.count) : null;
+            const notes = o && o.notes ? String(o.notes) : "";
+            return `- ${name}${count != null ? ` x${count}` : ""}${notes ? ` — ${notes}` : ""}`;
+          })
+          .join("\n")
+      : "";
+
+    const scaling = option && option.scaling ? option.scaling : null;
+    const easier = scaling && scaling.easier ? String(scaling.easier) : "";
+    const harder = scaling && scaling.harder ? String(scaling.harder) : "";
+
+    const lines = [
+      `${id}. ${title}${difficulty ? ` (${difficulty}${type ? ` · ${type}` : ""})` : type ? ` (${type})` : ""}`,
+      option && option.hook ? `\nHook: ${String(option.hook)}` : "",
+      option && option.setup ? `\nSetup: ${String(option.setup)}` : "",
+      opposition ? `\nOpposition:\n${opposition}` : "",
+      option && option.twist ? `\nTwist: ${String(option.twist)}` : "",
+      option && option.tactics ? `\nTactics: ${String(option.tactics)}` : "",
+      easier || harder ? `\nScaling:\n- Easier: ${easier || "(n/a)"}\n- Harder: ${harder || "(n/a)"}` : "",
+      option && option.rewards ? `\nRewards: ${String(option.rewards)}` : "",
+    ].filter(Boolean);
+
+    return lines.join("\n");
+  }
+
+  function buildEncounterQuickViewText({ option, monster }) {
+    const sb = monster && monster.statBlock ? monster.statBlock : null;
+    if (!sb) return "";
+
+    const header = [
+      sb.name ? String(sb.name) : (monster.name ? String(monster.name) : "Creature"),
+      sb.size && sb.type ? `${sb.size} ${sb.type}` : (sb.type ? String(sb.type) : ""),
+      sb.alignment ? String(sb.alignment) : "",
+    ].filter(Boolean).join(" · ");
+
+    const ac = sb.ac != null ? `AC ${sb.ac}` : "";
+    const hp = sb.hp && (sb.hp.max != null || sb.hp.current != null)
+      ? `HP ${sb.hp.max != null ? sb.hp.max : "?"}`
+      : (sb.hp != null ? `HP ${sb.hp}` : "");
+    const speed = sb.speed ? `Speed ${String(sb.speed)}` : "";
+    const basics = [ac, hp, speed].filter(Boolean).join(" · ");
+
+    const ability = sb.abilityScores && typeof sb.abilityScores === "object" ? sb.abilityScores : null;
+    const abilityLine = ability
+      ? `STR ${ability.str ?? "?"}  DEX ${ability.dex ?? "?"}  CON ${ability.con ?? "?"}  INT ${ability.int ?? "?"}  WIS ${ability.wis ?? "?"}  CHA ${ability.cha ?? "?"}`
+      : "";
+
+    const traits = Array.isArray(sb.traits) ? sb.traits.map((t) => `• ${t.name}: ${t.text}`).join("\n") : "";
+    const actions = Array.isArray(sb.actions) ? sb.actions.map((a) => `• ${a.name}: ${a.text}`).join("\n") : "";
+
+    return [
+      header,
+      basics,
+      abilityLine,
+      traits ? `\nTraits:\n${traits}` : "",
+      actions ? `\nActions:\n${actions}` : "",
+    ].filter(Boolean).join("\n");
+  }
+
+  function renderEncounterResults(options) {
+    if (!gmEncounterResultsEl) return;
+    gmEncounterResultsEl.innerHTML = "";
+
+    if (!Array.isArray(options) || options.length === 0) {
+      const empty = document.createElement("p");
+      empty.className = "text-muted";
+      empty.textContent = "No encounters generated yet.";
+      gmEncounterResultsEl.appendChild(empty);
+      return;
+    }
+
+    options.forEach((opt) => {
+      const card = document.createElement("article");
+      card.className = "gm-option-card";
+
+      const header = document.createElement("div");
+      header.className = "gm-option-card__header";
+
+      const title = document.createElement("h4");
+      title.className = "gm-option-card__title";
+      const label = opt && opt.id ? String(opt.id).trim() : "?";
+      const t = opt && opt.title ? String(opt.title).trim() : `Encounter ${label}`;
+      title.textContent = t;
+
+      const meta = document.createElement("div");
+      meta.className = "gm-option-card__meta";
+      const diff = opt && opt.difficulty ? String(opt.difficulty).trim() : "";
+      const kind = opt && opt.type ? String(opt.type).trim() : "";
+      const mode = opt && opt.intentMode ? String(opt.intentMode).trim() : "";
+      meta.textContent = [`Option ${label}`, diff, kind, mode ? `Mode: ${mode}` : ""].filter(Boolean).join(" · ");
+
+      header.appendChild(title);
+      header.appendChild(meta);
+
+      const body = document.createElement("div");
+      body.className = "gm-option-card__body";
+      // Keep the main body concise (the full sheet lives in Quick View).
+      const shortLines = [];
+      if (opt && opt.hook) shortLines.push(`Hook: ${String(opt.hook)}`);
+      if (opt && opt.setup) shortLines.push(`Setup: ${String(opt.setup)}`);
+      if (opt && opt.oppositionSummary) shortLines.push(`Opposition: ${String(opt.oppositionSummary)}`);
+      body.textContent = shortLines.length ? shortLines.join("\n\n") : buildEncounterOptionText(opt);
+
+      const gmNotes = document.createElement("details");
+      const gmNotesSummary = document.createElement("summary");
+      gmNotesSummary.textContent = "GM Notes";
+      gmNotes.appendChild(gmNotesSummary);
+      const notesBlock = document.createElement("div");
+      notesBlock.className = "gm-statblock";
+      const notesTitle = document.createElement("div");
+      notesTitle.className = "gm-statblock__title";
+      notesTitle.textContent = "Notes";
+      const notesLine = document.createElement("div");
+      notesLine.className = "gm-statblock__line";
+      const lines = [];
+      if (opt && opt.twist) lines.push(`Twist: ${String(opt.twist)}`);
+      if (opt && opt.tactics) lines.push(`Tactics: ${String(opt.tactics)}`);
+      if (opt && opt.scaling) {
+        if (opt.scaling.easier) lines.push(`Scaling (easier): ${String(opt.scaling.easier)}`);
+        if (opt.scaling.harder) lines.push(`Scaling (harder): ${String(opt.scaling.harder)}`);
+      }
+      if (opt && opt.rewards) lines.push(`Rewards: ${String(opt.rewards)}`);
+      notesLine.textContent = lines.join("\n\n");
+      notesBlock.appendChild(notesTitle);
+      notesBlock.appendChild(notesLine);
+      gmNotes.appendChild(notesBlock);
+
+      const quickView = document.createElement("details");
+      const quickSummary = document.createElement("summary");
+      quickSummary.textContent = "Quick View: Threat Scale + Monster Sheets";
+      quickView.appendChild(quickSummary);
+
+      const threatScale = opt && opt.threatScale ? opt.threatScale : null;
+      if (threatScale && (Array.isArray(threatScale.dialUp) || Array.isArray(threatScale.dialDown))) {
+        const ts = document.createElement("div");
+        ts.className = "gm-statblock";
+        const titleEl = document.createElement("div");
+        titleEl.className = "gm-statblock__title";
+        titleEl.textContent = "Threat Scale";
+        const lineEl = document.createElement("div");
+        lineEl.className = "gm-statblock__line";
+        const up = Array.isArray(threatScale.dialUp) ? threatScale.dialUp.map((s) => `+ ${s}`).join("\n") : "";
+        const down = Array.isArray(threatScale.dialDown) ? threatScale.dialDown.map((s) => `- ${s}`).join("\n") : "";
+        lineEl.textContent = [up ? `Dial Up:\n${up}` : "", down ? `Dial Down:\n${down}` : ""].filter(Boolean).join("\n\n");
+        ts.appendChild(titleEl);
+        ts.appendChild(lineEl);
+        quickView.appendChild(ts);
+      }
+
+      const monsters = Array.isArray(opt && opt.monsters) ? opt.monsters : [];
+      monsters.forEach((m) => {
+        const monsterDetails = document.createElement("details");
+        const monsterSummary = document.createElement("summary");
+        const name = m && m.name ? String(m.name) : "Monster";
+        const count = Number.isFinite(Number(m && m.count)) ? Number(m.count) : null;
+        monsterSummary.textContent = `${name}${count != null ? ` x${count}` : ""}`;
+        monsterDetails.appendChild(monsterSummary);
+
+        const sbWrap = document.createElement("div");
+        sbWrap.className = "gm-statblock";
+
+        const sbTitle = document.createElement("div");
+        sbTitle.className = "gm-statblock__title";
+        sbTitle.textContent = name;
+
+        const meta = document.createElement("div");
+        meta.className = "gm-statblock__meta";
+        const tier = opt && opt.difficulty ? String(opt.difficulty) : "";
+        meta.textContent = [tier ? `Tier: ${tier}` : "", m && m.role ? `Role: ${m.role}` : ""].filter(Boolean).join(" · ");
+
+        const line = document.createElement("div");
+        line.className = "gm-statblock__line";
+        line.textContent = buildEncounterQuickViewText({ option: opt, monster: m });
+
+        sbWrap.appendChild(sbTitle);
+        if (meta.textContent) sbWrap.appendChild(meta);
+        sbWrap.appendChild(line);
+        monsterDetails.appendChild(sbWrap);
+        quickView.appendChild(monsterDetails);
+      });
+
+      const actions = document.createElement("div");
+      actions.className = "gm-option-card__actions";
+
+      const sendBtn = document.createElement("button");
+      sendBtn.type = "button";
+      sendBtn.className = "btn btn--primary btn--small";
+      sendBtn.textContent = "Send to Session Log";
+      sendBtn.addEventListener("click", () => {
+        const currentUser = getCurrentUser();
+        if (!activeCampaignId || !currentUser) return;
+
+        const scriptTitle = `${t} (${label}${diff ? ` · ${diff}` : ""})`;
+        const scriptBody = buildEncounterOptionText(opt);
+        saveCampaignScript({ author: currentUser, title: scriptTitle, body: scriptBody });
+      });
+
+      actions.appendChild(sendBtn);
+
+      card.appendChild(header);
+      card.appendChild(body);
+      card.appendChild(gmNotes);
+      card.appendChild(quickView);
+      card.appendChild(actions);
+
+      gmEncounterResultsEl.appendChild(card);
+    });
+  }
+
+  function renderEncounterArchive(encounters) {
+    if (!gmEncounterArchiveEl) return;
+    gmEncounterArchiveEl.innerHTML = "";
+
+    if (!Array.isArray(encounters) || encounters.length === 0) {
+      const empty = document.createElement("p");
+      empty.className = "text-muted";
+      empty.textContent = "No archived encounter bundles yet.";
+      gmEncounterArchiveEl.appendChild(empty);
+      return;
+    }
+
+    const sorted = encounters.slice().sort((a, b) => {
+      const ad = Date.parse(a && a.createdAt ? a.createdAt : "");
+      const bd = Date.parse(b && b.createdAt ? b.createdAt : "");
+      return (bd || 0) - (ad || 0);
+    });
+
+    sorted.forEach((bundle) => {
+      const card = document.createElement("div");
+      card.className = "gm-archive-card";
+
+      const seed = bundle && bundle.seed ? String(bundle.seed) : "";
+      const createdAt = new Date(bundle && bundle.createdAt ? bundle.createdAt : Date.now()).toLocaleString();
+      const mode = bundle && bundle.intentMode ? String(bundle.intentMode) : "balanced";
+      const meta = document.createElement("div");
+      meta.className = "gm-archive-card__meta";
+      meta.textContent = `${createdAt} · Mode: ${mode}${seed ? ` · Seed: ${seed}` : ""}`;
+
+      const actions = document.createElement("div");
+      actions.className = "gm-archive-card__actions";
+
+      const loadBtn = document.createElement("button");
+      loadBtn.type = "button";
+      loadBtn.className = "btn btn--secondary btn--small";
+      loadBtn.textContent = "Load options";
+      loadBtn.addEventListener("click", () => {
+        const options = bundle && Array.isArray(bundle.options) ? bundle.options : [];
+        renderEncounterResults(options);
+        if (gmEncounterStatusEl) gmEncounterStatusEl.textContent = "Loaded archived bundle.";
+      });
+
+      actions.appendChild(loadBtn);
+
+      card.appendChild(meta);
+      card.appendChild(actions);
+      gmEncounterArchiveEl.appendChild(card);
+    });
+  }
+
+  function renderFlavorOutput(text) {
+    if (!gmFlavorOutputEl) return;
+    const t = text && String(text).trim() ? String(text).trim() : "";
+    gmFlavorOutputEl.textContent = t;
+
+    if (gmFlavorSendToLogBtn) {
+      gmFlavorSendToLogBtn.disabled = !t;
+    }
+  }
+
+  function saveCampaignScript({ author, title, body }) {
+    if (!activeCampaignId) return;
+
+    return apiPost("/api/campaigns/details", {
+      action: "saveScript",
+      campaignId: activeCampaignId,
+      author,
+      title,
+      body,
+    }).then((result) => {
+      if (!result.ok) {
+        const msg = (result.data && (result.data.error || result.data.message)) || "Could not save to Session Log.";
+        if (gmEncounterStatusEl) gmEncounterStatusEl.textContent = msg;
+        if (gmFlavorStatusEl) gmFlavorStatusEl.textContent = msg;
+        return;
+      }
+
+      const data = result.data || {};
+      const scripts = Array.isArray(data.scripts) ? data.scripts : data.script ? [data.script] : [];
+      renderCampaignScripts(scripts);
+
+      if (gmEncounterStatusEl) gmEncounterStatusEl.textContent = "Saved to Session Log.";
+      if (gmFlavorStatusEl) gmFlavorStatusEl.textContent = "Saved to Session Log.";
+    });
+  }
+
+  async function callGmTool(toolType, context) {
+    const currentUser = getCurrentUser();
+    if (!currentUser) {
+      return { ok: false, status: 401, data: { error: "You need to be logged in." } };
+    }
+    if (!activeCampaignId) {
+      return { ok: false, status: 400, data: { error: "Open a campaign dashboard first." } };
+    }
+
+    const safeTool = String(toolType || "").trim().toLowerCase();
+    if (safeTool !== "encounter" && safeTool !== "flavor") {
+      return { ok: false, status: 400, data: { error: "Unknown GM tool." } };
+    }
+
+    return apiPost("/api/gm/tool", {
+      username: currentUser,
+      campaignId: activeCampaignId,
+      toolType: safeTool,
+      context: context && typeof context === "object" ? context : {},
+    });
+  }
+
   async function loadCampaignDetail(campaignId) {
     const currentUser = getCurrentUser();
     if (!currentUser) {
@@ -1133,6 +2019,7 @@
     if (campaignCharactersGrid) campaignCharactersGrid.innerHTML = "";
     if (campaignJournalsList) campaignJournalsList.innerHTML = "";
     if (campaignScriptsList) campaignScriptsList.innerHTML = "";
+    if (campaignDialogueTranscriptEl) campaignDialogueTranscriptEl.value = "";
 
     const result = await apiGet(
       `/api/campaigns/details?id=${encodeURIComponent(
@@ -1150,8 +2037,18 @@
     const data = result.data || {};
     const campaign = data.campaign;
     const characters = Array.isArray(data.characters) ? data.characters : [];
+    const partyStatus = data.partyStatus || null;
+    const encounters = Array.isArray(data.encounters) ? data.encounters : [];
     const journals = Array.isArray(data.journals) ? data.journals : [];
     const scripts = Array.isArray(data.scripts) ? data.scripts : [];
+
+    activeCampaignCharacters = characters;
+    activeCampaignPartyStatus = partyStatus;
+    activeCampaignEncounters = encounters;
+    renderGmPartyStatus(partyStatus);
+    renderEncounterArchive(encounters);
+    cachedPlayerSpeakerLabel = computePlayerSpeakerLabel({ characters, username: currentUser });
+    refreshDialogueComposerLabel();
 
     if (campaign) {
       activeCampaign = campaign;
@@ -1172,8 +2069,8 @@
       const isAi = isAIDmCampaign(campaign);
       if (aiDmNoticeEl) aiDmNoticeEl.hidden = !isAi;
       if (aiDmPanelEl) aiDmPanelEl.hidden = !isAi;
-      if (aiDmInputEl) aiDmInputEl.disabled = !isAi;
-      if (aiDmSendBtn) aiDmSendBtn.disabled = !isAi;
+      if (dialogueTextInputEl) dialogueTextInputEl.disabled = false;
+      if (dialogueSendBtn) dialogueSendBtn.disabled = false;
       if (aiDmMechanicsEl) aiDmMechanicsEl.textContent = "";
 
       // Configure delete/leave buttons based on campaign type and user role
@@ -1194,7 +2091,27 @@
         campaignLeaveBtn.disabled = !canLeave;
       }
 
+      if (campaignCompleteBtn) {
+        const alreadyCompleted = campaign.status === "completed";
+        const canComplete = !isAi && isDm && isParticipant && !alreadyCompleted;
+        campaignCompleteBtn.hidden = !canComplete;
+        campaignCompleteBtn.disabled = !canComplete;
+      }
+
       if (campaignActionStatusEl) campaignActionStatusEl.textContent = "";
+
+      if (campaignDialogueTranscriptEl) {
+        const transcript =
+          typeof campaign.conversationTranscript === "string"
+            ? campaign.conversationTranscript
+            : "";
+        campaignDialogueTranscriptEl.value = transcript;
+        campaignDialogueTranscriptEl.scrollTop =
+          campaignDialogueTranscriptEl.scrollHeight;
+        renderCampaignDialogueThread(transcript);
+      } else {
+        renderCampaignDialogueThread("");
+      }
     }
 
     renderCampaignCharacters(characters);
@@ -1206,6 +2123,21 @@
     if (!campaign) return;
     activeCampaignId = campaign.id;
     activeCampaign = campaign;
+
+    // Chronicle notes are handled by the HUD module.
+    notifyActiveCampaignChanged();
+
+    // Reset dialogue transcript when switching to a different campaign
+    if (campaignDialogueTranscriptEl) {
+      campaignDialogueTranscriptEl.value = "";
+    }
+    if (dialogueContainerEl) {
+      dialogueContainerEl.innerHTML = "";
+    }
+
+    activeCampaignCharacters = [];
+    cachedPlayerSpeakerLabel = computePlayerSpeakerLabel({ characters: [], username: getCurrentUser() });
+    refreshDialogueComposerLabel();
 
     try {
       localStorage.setItem(ACTIVE_CAMPAIGN_STORAGE_KEY, String(campaign.id));
@@ -1334,11 +2266,13 @@
     renderCampaigns(campaigns, filter, currentUser);
   }
 
-  async function loadVaultCharacters() {
+  async function loadVaultCharacters({ silent = false } = {}) {
     const user = getCurrentUser();
     if (!user) return;
-    vaultMessage.textContent = "Loading your characters...";
-    vaultCharactersGrid.innerHTML = "";
+    if (!silent) {
+      vaultMessage.textContent = "Loading your characters...";
+      vaultCharactersGrid.innerHTML = "";
+    }
     try {
       const result = await apiGet(`/api/characters?user=${encodeURIComponent(user)}`);
       if (!result.ok) {
@@ -1347,8 +2281,20 @@
       const data = result.data || {};
       const characters = Array.isArray(data.characters) ? data.characters : [];
       cachedVaultCharacters = characters;
+
+      // If we have a persisted active character, restore it as soon as the vault list is known.
+      if (!activeCharacter && storedActiveCharacterId && characters.length) {
+        const restored = characters.find((c) => String(c.id) === String(storedActiveCharacterId));
+        if (restored) {
+          setActiveCharacter(restored, { persist: false });
+        }
+      }
+
+      if (silent) {
+        return;
+      }
       if (!characters.length) {
-        vaultMessage.textContent = "No characters yet. Forge one from the Home tab to get started.";
+        vaultMessage.textContent = "No characters yet. Forge one from the Character Forge to get started.";
         return;
       }
       vaultMessage.textContent = "";
@@ -1369,7 +2315,9 @@
       });
     } catch (err) {
       console.error("Failed to load characters", err);
-      vaultMessage.textContent = err.message || "Error loading characters.";
+      if (!silent) {
+        vaultMessage.textContent = err.message || "Error loading characters.";
+      }
     }
   }
 
@@ -1418,7 +2366,7 @@
   }
 
   function renderVaultDetail(character) {
-    activeCharacter = character;
+    setActiveCharacter(character);
     vaultDetailName.textContent = character.name || "Unnamed Adventurer";
     const race = character.concept?.race || "";
     const mainClass = Array.isArray(character.concept?.classes) && character.concept.classes.length
@@ -1472,10 +2420,146 @@
     if (savesArr.length) lines.push(`Saves: ${savesArr.map((s) => s.toUpperCase()).join(", ")}`);
     vaultDetailMechanics.innerHTML = lines.map((l) => `<div>${l}</div>`).join("");
 
+    // Progression + resources (system-managed; not directly editable)
+    const XP_THRESHOLD_BY_LEVEL = {
+      1: 0,
+      2: 300,
+      3: 900,
+      4: 2700,
+      5: 6500,
+      6: 14000,
+      7: 23000,
+      8: 34000,
+      9: 48000,
+      10: 64000,
+      11: 85000,
+      12: 100000,
+      13: 120000,
+      14: 140000,
+      15: 165000,
+      16: 195000,
+      17: 225000,
+      18: 265000,
+      19: 305000,
+      20: 355000,
+    };
+
+    const prog = character.progression || null;
+    const levelFromProg = prog && typeof prog.level === "number" ? prog.level : null;
+    const levelFromConcept =
+      Array.isArray(character.concept?.classes) && character.concept.classes.length
+        ? Number(character.concept.classes[0].level)
+        : 1;
+    const levelEffective = levelFromProg || (Number.isFinite(levelFromConcept) ? levelFromConcept : 1);
+
+    const xp = prog && typeof prog.xp === "number" ? prog.xp : 0;
+    const xpToNext = prog && typeof prog.xpToNextLevel === "number" ? prog.xpToNextLevel : null;
+    const xpBase = XP_THRESHOLD_BY_LEVEL[levelEffective] || 0;
+    const xpCeil = xpToNext != null ? xpToNext : (XP_THRESHOLD_BY_LEVEL[20] || 355000);
+    const xpInto = Math.max(0, xp - xpBase);
+    const xpSpan = Math.max(1, xpCeil - xpBase);
+    const xpIntoClamped = Math.max(0, Math.min(xpSpan, xpInto));
+
+    const hpMax = prog && prog.hp && typeof prog.hp.max === "number" ? prog.hp.max : (m.hitPoints != null ? m.hitPoints : 0);
+    const hpCur = prog && prog.hp && typeof prog.hp.current === "number" ? prog.hp.current : hpMax;
+    const manaMax = prog && prog.manaSlots && typeof prog.manaSlots.max === "number" ? prog.manaSlots.max : 0;
+    const manaCur = prog && prog.manaSlots && typeof prog.manaSlots.current === "number" ? prog.manaSlots.current : manaMax;
+
+    if (vaultDetailResources) {
+      const rows = [];
+      rows.push(
+        `<div class="vault-resource__row">
+          <div class="vault-resource__label">HP</div>
+          <div class="vault-resource__value">
+            <div>${hpCur} / ${hpMax}</div>
+            <progress value="${Math.max(0, Math.min(hpMax, hpCur))}" max="${Math.max(1, hpMax)}"></progress>
+          </div>
+        </div>`
+      );
+
+      if (manaMax > 0) {
+        rows.push(
+          `<div class="vault-resource__row">
+            <div class="vault-resource__label">Mana slots</div>
+            <div class="vault-resource__value">
+              <div>${manaCur} / ${manaMax}</div>
+              <progress value="${Math.max(0, Math.min(manaMax, manaCur))}" max="${Math.max(1, manaMax)}"></progress>
+            </div>
+          </div>`
+        );
+      }
+
+      rows.push(
+        `<div class="vault-resource__row">
+          <div class="vault-resource__label">XP</div>
+          <div class="vault-resource__value">
+            <div>Level ${levelEffective} · ${xp} XP</div>
+            <progress value="${xpIntoClamped}" max="${xpSpan}"></progress>
+          </div>
+        </div>`
+      );
+
+      vaultDetailResources.innerHTML = rows.join("");
+    }
+
+    if (vaultLevelUpBtn) {
+      const canLevelUp = !!(prog && prog.canLevelUp);
+      vaultLevelUpBtn.hidden = !canLevelUp;
+      vaultLevelUpBtn.disabled = !canLevelUp;
+    }
+    if (vaultLevelUpStatus) vaultLevelUpStatus.textContent = "";
+
     populateVaultCampaignSelect(character);
 
     vaultListView.hidden = true;
     vaultDetailView.hidden = false;
+
+    // If the user was trying to enter the Session HUD, selecting a character
+    // should return them there.
+    if (MULTI_PAGE) {
+      const target = consumePostSelectTarget();
+      if (target === "hud") {
+        navigateTo("hud");
+        return;
+      }
+    }
+
+    if (awaitingHudCharacterSelect) {
+      awaitingHudCharacterSelect = false;
+      showView("hud");
+    }
+  }
+
+  if (vaultLevelUpBtn) {
+    vaultLevelUpBtn.addEventListener("click", async () => {
+      const currentUser = getCurrentUser();
+      if (!currentUser || !activeCharacter) return;
+      if (vaultLevelUpStatus) vaultLevelUpStatus.textContent = "Leveling up...";
+      try {
+        const res = await fetch(`${BACKEND_BASE_URL}/api/characters/level-up`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ username: currentUser, characterId: activeCharacter.id }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || data.ok === false) {
+          throw new Error(data.error || data.message || "Failed to level up.");
+        }
+
+        const updated = data.character;
+        if (updated && updated.id) {
+          // Update cache and rerender immediately.
+          cachedVaultCharacters = cachedVaultCharacters.map((c) =>
+            c.id === updated.id ? updated : c
+          );
+          renderVaultDetail(updated);
+        }
+        if (vaultLevelUpStatus) vaultLevelUpStatus.textContent = "Level up complete.";
+      } catch (err) {
+        console.error("Failed to level up", err);
+        if (vaultLevelUpStatus) vaultLevelUpStatus.textContent = err.message || "Error leveling up.";
+      }
+    });
   }
 
   function openVaultDetail(characterId) {
@@ -1486,13 +2570,82 @@
 
   // Auth wiring
   const initialUser = getCurrentUser();
-  if (initialUser) {
-    updateNav(initialUser);
-    if (profileUsernameEl) profileUsernameEl.textContent = initialUser;
-    showView("home");
+  if (MULTI_PAGE) {
+    if (!initialUser) {
+      updateNav(null);
+      // If the user is not logged in, only the auth page should be accessible.
+      if (CURRENT_PAGE !== "auth") {
+        navigateTo("auth-login");
+        return;
+      }
+      showView("auth-login");
+    } else {
+      updateNav(initialUser);
+      if (profileUsernameEl) profileUsernameEl.textContent = initialUser;
+
+      // If already logged in and they hit the auth page, send them to the Forge.
+      if (CURRENT_PAGE === "auth") {
+        navigateTo("forge");
+        return;
+      }
+
+      // Best-effort restoration of the previously active character.
+      // Safe on non-vault pages because silent mode doesn't touch vault DOM.
+      loadVaultCharacters({ silent: true }).then(() => {
+        if (CURRENT_PAGE === "hud") {
+          notifyActiveCharacterChanged();
+          notifyActiveCampaignChanged();
+        }
+      });
+
+      // Per-page bootstrapping.
+      if (CURRENT_PAGE === "vault") {
+        loadVaultCharacters();
+        loadUserCampaignsForVault();
+      } else if (CURRENT_PAGE === "campaigns") {
+        loadCampaigns("all");
+        loadAdventuresAndCharacters();
+        if (activeCampaignId) {
+          // Load the last active campaign (if any) when landing on the campaigns page.
+          loadCampaignDetail(activeCampaignId);
+        }
+      } else if (CURRENT_PAGE === "profile") {
+        refreshProfileFromStorage();
+      } else if (CURRENT_PAGE === "forge") {
+        // No-op: forge page initializes via element-guarded listeners.
+      }
+    }
   } else {
-    updateNav(null);
-    showView("auth-login");
+    // Legacy SPA mode (kept for backwards compatibility)
+    if (initialUser) {
+      updateNav(initialUser);
+      if (profileUsernameEl) profileUsernameEl.textContent = initialUser;
+      showView("forge");
+      loadVaultCharacters({ silent: true });
+    } else {
+      updateNav(null);
+      showView("auth-login");
+    }
+  }
+
+  if (switchToForgeBtn) {
+    switchToForgeBtn.addEventListener("click", () => {
+      showView("forge");
+    });
+  }
+
+  if (switchToHudBtn) {
+    switchToHudBtn.addEventListener("click", () => {
+      showView("hud");
+    });
+  }
+
+  if (transcriptEl) {
+    transcriptEl.addEventListener("input", () => {
+      scheduleExtractionUpdate(transcriptEl.value || "");
+    });
+    // Initial render
+    scheduleExtractionUpdate(transcriptEl.value || "");
   }
 
   if (showRegisterBtn) {
@@ -1729,12 +2882,23 @@
 
   if (appNav) {
     appNav.addEventListener("click", (event) => {
-      const target = event.target;
-      if (!(target instanceof HTMLElement)) return;
-      const view = target.getAttribute("data-view");
+      const rawTarget = event.target;
+      if (!(rawTarget instanceof Element)) return;
+
+      // Use event delegation so clicks work even if the user clicks on nested
+      // elements inside the nav button (icons, spans, etc.).
+      const btn = rawTarget.closest("[data-view]");
+      if (!(btn instanceof HTMLElement)) return;
+      const view = btn.getAttribute("data-view");
       if (!view) return;
-      if (view === "home") {
-        showView("home");
+      if (view === "forge") {
+        showView("forge");
+      } else if (view === "hud") {
+        // If no active character is set yet, showView will route to the vault.
+        showView("hud");
+      } else if (view === "home") {
+        // legacy
+        showView("forge");
       } else if (view === "profile") {
         showView("profile");
       } else if (view === "campaigns") {
@@ -1745,6 +2909,7 @@
         } catch {
           // ignore
         }
+        notifyActiveCampaignChanged();
         showView("campaigns");
         loadCampaigns("all");
         loadAdventuresAndCharacters();
@@ -1804,6 +2969,7 @@
       } catch {
         // ignore
       }
+      notifyActiveCampaignChanged();
       showView("campaigns");
       loadCampaigns("all");
     });
@@ -1845,6 +3011,46 @@
         }
         showView("campaigns");
         loadCampaigns("all");
+      });
+    });
+  }
+
+  if (campaignCompleteBtn) {
+    campaignCompleteBtn.addEventListener("click", () => {
+      if (!activeCampaignId || !activeCampaign) return;
+      const currentUser = getCurrentUser();
+      if (!currentUser) return;
+      const confirmed = window.confirm(
+        "Mark this campaign as completed? This will award XP to all linked characters.",
+      );
+      if (!confirmed) return;
+
+      if (campaignActionStatusEl)
+        campaignActionStatusEl.textContent = "Completing campaign and awarding XP...";
+
+      apiPost("/api/campaigns/details", {
+        action: "completeCampaign",
+        campaignId: activeCampaignId,
+        username: currentUser,
+      }).then((result) => {
+        if (!result.ok) {
+          const msg =
+            (result.data && (result.data.error || result.data.message)) ||
+            "Could not complete campaign.";
+          if (campaignActionStatusEl) campaignActionStatusEl.textContent = msg;
+          return;
+        }
+
+        const xp = result.data && typeof result.data.xpAwarded === "number"
+          ? result.data.xpAwarded
+          : null;
+        if (campaignActionStatusEl)
+          campaignActionStatusEl.textContent = xp != null
+            ? `Campaign completed. Awarded ${xp} XP.`
+            : "Campaign completed.";
+
+        // Refresh dashboard to update buttons + show any new state
+        loadCampaignDetail(activeCampaignId);
       });
     });
   }
@@ -1897,9 +3103,101 @@
     });
   });
 
-  if (aiDmSendBtn) {
-    aiDmSendBtn.addEventListener("click", () => {
-      sendAiDmTurn();
+  if (dialogueComposerEl) {
+    dialogueComposerEl.addEventListener("submit", (e) => {
+      e.preventDefault();
+      const text = dialogueTextInputEl ? dialogueTextInputEl.value.trim() : "";
+      if (!text) return;
+      handleDialoguePlayerInput(text, { source: "typing" });
+    });
+  }
+
+  // Note: sending is now handled by the dialogue composer.
+
+  if (gmEncounterGenerateBtn) {
+    gmEncounterGenerateBtn.addEventListener("click", async () => {
+      if (gmEncounterStatusEl) gmEncounterStatusEl.textContent = "Consulting the oracle...";
+      if (gmEncounterResultsEl) gmEncounterResultsEl.innerHTML = "";
+
+      const seed = gmEncounterSeedInput ? gmEncounterSeedInput.value.trim() : "";
+
+      const result = await callGmTool("encounter", {
+        seed,
+        // The backend computes partyStatus authoritatively, but this can help prompt continuity.
+        partyStatus: activeCampaignPartyStatus,
+      });
+
+      if (!result.ok) {
+        const msg = (result.data && (result.data.error || result.data.message)) || "Could not generate encounters.";
+        if (gmEncounterStatusEl) gmEncounterStatusEl.textContent = msg;
+        return;
+      }
+
+      const data = result.data || {};
+      if (data.partyStatus) {
+        activeCampaignPartyStatus = data.partyStatus;
+        renderGmPartyStatus(data.partyStatus);
+      }
+      if (data.encounterBundle) {
+        // Optimistically add to archive without reloading campaign details.
+        activeCampaignEncounters = Array.isArray(activeCampaignEncounters)
+          ? [data.encounterBundle, ...activeCampaignEncounters]
+          : [data.encounterBundle];
+        renderEncounterArchive(activeCampaignEncounters);
+      }
+      const options = data.result && Array.isArray(data.result.options) ? data.result.options : [];
+      renderEncounterResults(options);
+      if (gmEncounterStatusEl) gmEncounterStatusEl.textContent = options.length ? "Three options ready." : "No options returned.";
+    });
+  }
+
+  if (gmFlavorGenerateBtn) {
+    gmFlavorGenerateBtn.addEventListener("click", async () => {
+      const seed = gmFlavorSeedInput ? gmFlavorSeedInput.value.trim() : "";
+      if (!seed) {
+        if (gmFlavorStatusEl) gmFlavorStatusEl.textContent = "Add a seed first (place, NPC, object, omen, etc.).";
+        return;
+      }
+
+      if (gmFlavorStatusEl) gmFlavorStatusEl.textContent = "Weaving flavor...";
+      renderFlavorOutput("");
+
+      const result = await callGmTool("flavor", { seed });
+      if (!result.ok) {
+        const msg = (result.data && (result.data.error || result.data.message)) || "Could not generate flavor.";
+        if (gmFlavorStatusEl) gmFlavorStatusEl.textContent = msg;
+        return;
+      }
+
+      const data = result.data || {};
+      if (data.partyStatus) {
+        activeCampaignPartyStatus = data.partyStatus;
+        renderGmPartyStatus(data.partyStatus);
+      }
+      const text = data.result && typeof data.result.text === "string" ? data.result.text : "";
+      renderFlavorOutput(text);
+      if (gmFlavorStatusEl) gmFlavorStatusEl.textContent = text ? "Flavor ready." : "No text returned.";
+    });
+  }
+
+  if (gmFlavorSendToLogBtn) {
+    gmFlavorSendToLogBtn.addEventListener("click", () => {
+      const currentUser = getCurrentUser();
+      if (!currentUser || !activeCampaignId) return;
+      const seed = gmFlavorSeedInput ? gmFlavorSeedInput.value.trim() : "";
+      const body = gmFlavorOutputEl ? gmFlavorOutputEl.textContent : "";
+      const cleanBody = body && String(body).trim() ? String(body).trim() : "";
+      if (!cleanBody) {
+        if (gmFlavorStatusEl) gmFlavorStatusEl.textContent = "Nothing to send yet.";
+        return;
+      }
+
+      if (gmFlavorStatusEl) gmFlavorStatusEl.textContent = "Saving to Session Log...";
+      saveCampaignScript({
+        author: currentUser,
+        title: seed ? `Flavor: ${seed}` : "Flavor snippet",
+        body: cleanBody,
+      });
     });
   }
 
@@ -1962,26 +3260,176 @@
     });
   }
 
-  if (aiDmSendBtn) {
-    aiDmSendBtn.addEventListener("click", () => {
-      sendAiDmTurn();
+  if (campaignCreateJournalsBtn) {
+    campaignCreateJournalsBtn.addEventListener("click", () => {
+      if (!activeCampaignId || !activeCampaign) return;
+      const currentUser = getCurrentUser();
+      if (!currentUser) {
+        if (campaignJournalsStatusEl)
+          campaignJournalsStatusEl.textContent = "You need to be logged in to create journals.";
+        return;
+      }
+
+      if (campaignJournalsStatusEl)
+        campaignJournalsStatusEl.textContent = "Creating journals for each character...";
+
+      apiPost("/api/campaigns/details", {
+        action: "createPartyJournals",
+        campaignId: activeCampaignId,
+        username: currentUser,
+      }).then((result) => {
+        if (!result.ok) {
+          const msg =
+            (result.data && (result.data.error || result.data.message)) ||
+            "Could not create journals.";
+          if (campaignJournalsStatusEl) campaignJournalsStatusEl.textContent = msg;
+          return;
+        }
+
+        const data = result.data || {};
+        const journals = Array.isArray(data.journals)
+          ? data.journals
+          : data.journal
+          ? [data.journal]
+          : [];
+
+        renderCampaignJournals(journals);
+        if (campaignJournalsStatusEl)
+          campaignJournalsStatusEl.textContent =
+            journals.length ? "Journals created." : "No journals were created.";
+      });
     });
   }
 
   if (aiDmRollBtn) {
     aiDmRollBtn.addEventListener("click", () => {
       if (!activeCampaign || !isAIDmCampaign(activeCampaign)) return;
-      const roll = Math.floor(Math.random() * 20) + 1;
-      if (aiDmMechanicsEl) {
-        const base = aiDmMechanicsEl.textContent || "";
-        const note = `Roll: d20 = ${roll}`;
-        aiDmMechanicsEl.textContent = base ? `${base} — ${note}` : note;
+
+      const username = getCurrentUser();
+      if (!username) {
+        if (aiDmMechanicsEl) aiDmMechanicsEl.textContent = "Log in to roll.";
+        return;
       }
+
+      // Only resolve a roll if ADA actually requested a check.
+      const checkDescription = lastAiMechanics && lastAiMechanics.checkDescription
+        ? String(lastAiMechanics.checkDescription).trim()
+        : "";
+      const dc = lastAiMechanics ? lastAiMechanics.dc : null;
+      if (!checkDescription || checkDescription.toLowerCase() === "none" || !dc) {
+        if (aiDmMechanicsEl)
+          aiDmMechanicsEl.textContent = "No check to roll right now. Ask ADA what you do next.";
+        return;
+      }
+
+      // Roll locally for transparency; send both dice so backend can pick based on adv/disadv.
+      const r1 = Math.floor(Math.random() * 20) + 1;
+      const r2 = Math.floor(Math.random() * 20) + 1;
+
+      if (aiDmMechanicsEl) aiDmMechanicsEl.textContent = "Resolving roll...";
+
+      apiPost("/api/ai-dm/resolve-check", {
+        username,
+        campaignId: activeCampaignId,
+        roll1: r1,
+        roll2: r2,
+      }).then((result) => {
+        if (!result.ok) {
+          const msg = (result.data && result.data.error) || "Could not resolve check.";
+          if (aiDmMechanicsEl) aiDmMechanicsEl.textContent = msg;
+          return;
+        }
+
+        const payload = result.data || {};
+        const resolved = payload.result || {};
+        const narrative = payload.narrative || "";
+        const mechanics = payload.mechanics || null;
+        const debug = payload.debug || null;
+
+        const chosen = resolved.rolls && resolved.rolls.chosen ? resolved.rolls.chosen : r1;
+        const total = typeof resolved.total === "number" ? resolved.total : null;
+        const mode = resolved.rolls && resolved.rolls.mode ? resolved.rolls.mode : "none";
+        const outcome = resolved.success ? "SUCCESS" : "FAILURE";
+        const rollModeText = mode !== "none" ? ` (${mode})` : "";
+        const rollLine =
+          total != null
+            ? `I attempt ${checkDescription} — roll${rollModeText}: ${chosen} (total ${total} vs DC ${dc}) → ${outcome}.`
+            : `I attempt ${checkDescription} — roll${rollModeText}: ${chosen} → ${outcome}.`;
+
+        appendAiDmLog("player", rollLine);
+
+        if (narrative) appendAiDmLog("dm", narrative);
+
+        lastAiMechanics = mechanics;
+
+        if (mechanics && aiDmMechanicsEl) {
+          const mDc = mechanics.dc;
+          const mAbility = mechanics.ability;
+          const mSkill = mechanics.skill;
+          const mAdv = mechanics.advantage;
+          const mDesc = mechanics.checkDescription;
+          const mProgress = mechanics.progress;
+          const pieces = [];
+          if (mDesc && String(mDesc).trim()) pieces.push(String(mDesc).trim());
+          if (mDc != null) pieces.push(`DC ${mDc}`);
+          if (mAbility) pieces.push(String(mAbility).toUpperCase());
+          if (mSkill) pieces.push(String(mSkill));
+          if (mAdv === "advantage") pieces.push("(advantage)");
+          if (mAdv === "disadvantage") pieces.push("(disadvantage)");
+          if (mProgress && mProgress !== "stay") pieces.push(`(progress: ${mProgress})`);
+          aiDmMechanicsEl.textContent =
+            pieces.length ? `Check requested: ${pieces.join(" ")}` : "";
+        } else if (aiDmMechanicsEl) {
+          aiDmMechanicsEl.textContent = "";
+        }
+
+        const modelName =
+          debug && debug.gemini && debug.gemini.model
+            ? String(debug.gemini.model)
+            : "";
+        if (modelName && aiDmNoticeEl) {
+          aiDmNoticeEl.hidden = false;
+          aiDmNoticeEl.textContent =
+            `ADA is acting as the Dungeon Master for this campaign. ` +
+            `Type what your character does next and send it to continue the story. ` +
+            `AI model: ${modelName}`;
+        }
+      }).catch((e) => {
+        console.error("[ADA] resolve-check failed", e);
+        if (aiDmMechanicsEl) aiDmMechanicsEl.textContent = "Error resolving check.";
+      });
     });
   }
 
   if (logoutBtn) {
     logoutBtn.addEventListener("click", () => {
+      // Best-effort: stop any active speech capture so we don't keep updating UI after logout.
+      try {
+        isListening = false;
+        if (recognition) recognition.stop();
+      } catch {
+        // ignore
+      }
+
+      // Clear app state that is tied to a logged-in user.
+      activeCampaignId = null;
+      activeCampaign = null;
+      activeCharacter = null;
+      activeCampaignCharacters = [];
+      cachedPlayerSpeakerLabel = "You";
+
+      try {
+        localStorage.removeItem(ACTIVE_CAMPAIGN_STORAGE_KEY);
+      } catch {
+        // ignore
+      }
+
+      // Clear user-facing text areas / chat thread.
+      if (transcriptEl) transcriptEl.value = "";
+      if (campaignDialogueTranscriptEl) campaignDialogueTranscriptEl.value = "";
+      if (dialogueContainerEl) dialogueContainerEl.innerHTML = "";
+      if (dialogueTextInputEl) dialogueTextInputEl.value = "";
+
       clearCurrentUser();
       updateNav(null);
       setAuthMessage("");
@@ -2067,123 +3515,30 @@
     });
   }
 
-  // Rules Lookup Event Listeners
-  if (rulesLookupBtn) {
-    rulesLookupBtn.addEventListener("click", performRulesLookup);
-  }
+  // Expose a small, stable API for page modules (e.g., HUD).
+  (function exposeAdaApi() {
+    const root = window;
+    const ada = root.ADA && typeof root.ADA === "object" ? root.ADA : {};
 
-  if (rulesLookupInput) {
-    rulesLookupInput.addEventListener("keypress", (event) => {
-      if (event.key === "Enter") {
-        performRulesLookup();
-      }
-    });
-  }
+    ada.config = ada.config && typeof ada.config === "object" ? ada.config : {};
+    ada.config.BACKEND_BASE_URL = BACKEND_BASE_URL;
 
-  if (rulesLookupNextBtn) {
-    rulesLookupNextBtn.addEventListener("click", () => {
-      if (rulesLookupState.currentIndex < rulesLookupState.results.length - 1) {
-        rulesLookupState.currentIndex++;
-        displayRulesResult();
-      }
-    });
-  }
+    ada.storageKeys = {
+      CURRENT_USER: CURRENT_USER_STORAGE_KEY,
+      ACTIVE_CAMPAIGN_ID: ACTIVE_CAMPAIGN_STORAGE_KEY,
+      ACTIVE_CHARACTER_ID: ACTIVE_CHARACTER_STORAGE_KEY,
+      POST_SELECT_TARGET: POST_SELECT_TARGET_STORAGE_KEY,
+    };
 
-  if (rulesLookupPrevBtn) {
-    rulesLookupPrevBtn.addEventListener("click", () => {
-      if (rulesLookupState.currentIndex > 0) {
-        rulesLookupState.currentIndex--;
-        displayRulesResult();
-      }
-    });
-  }
+    ada.getCurrentUser = getCurrentUser;
+    ada.getActiveCampaignId = () => activeCampaignId;
+    ada.getActiveCharacter = () => activeCharacter;
+    ada.setActiveCharacter = setActiveCharacter;
+    ada.requestHudCharacterSelection = requestHudCharacterSelection;
+    ada.navigateTo = navigateTo;
+    ada.showView = showView;
+    ada.callGmTool = callGmTool;
 
-  /**
-   * Perform rules lookup by querying the backend
-   */
-  function performRulesLookup() {
-    const query = rulesLookupInput.value.trim();
-
-    if (!query) {
-      if (rulesLookupMessage) {
-        rulesLookupMessage.textContent = "Please enter a search query.";
-      }
-      return;
-    }
-
-    if (rulesLookupMessage) {
-      rulesLookupMessage.textContent = "Searching...";
-    }
-
-    // Query the backend API
-    apiPost("/api/srd/query", { query, k: 5 }).then((result) => {
-      if (!result.ok) {
-        if (rulesLookupMessage) {
-          rulesLookupMessage.textContent =
-            "Could not search rules. Please try again.";
-        }
-        return;
-      }
-
-      const data = result.data;
-      rulesLookupState.results = data.results || [];
-      rulesLookupState.currentIndex = 0;
-
-      if (rulesLookupState.results.length === 0) {
-        if (rulesLookupMessage) {
-          rulesLookupMessage.textContent = "No results found for that query.";
-        }
-        rulesLookupResults.hidden = true;
-        return;
-      }
-
-      displayRulesResult();
-      if (rulesLookupMessage) {
-        rulesLookupMessage.textContent = "";
-      }
-    });
-  }
-
-  /**
-   * Display the current rules result
-   */
-  function displayRulesResult() {
-    const result = rulesLookupState.results[rulesLookupState.currentIndex];
-
-    if (!result) return;
-
-    // Update title
-    if (rulesResultTitle) {
-      rulesResultTitle.textContent = result.title || "Unknown";
-    }
-
-    // Update text
-    if (rulesResultText) {
-      rulesResultText.textContent = result.text || "No content available.";
-    }
-
-    // Update source
-    if (rulesResultSource) {
-      const path = Array.isArray(result.path) ? result.path.join(" > ") : "";
-      rulesResultSource.textContent = `Source: ${path || "D&D 5e SRD"}`;
-    }
-
-    // Update counter
-    if (rulesLookupCounter) {
-      rulesLookupCounter.textContent = `${rulesLookupState.currentIndex + 1} / ${rulesLookupState.results.length}`;
-    }
-
-    // Update navigation buttons
-    if (rulesLookupPrevBtn) {
-      rulesLookupPrevBtn.hidden = rulesLookupState.currentIndex === 0;
-    }
-    if (rulesLookupNextBtn) {
-      rulesLookupNextBtn.hidden =
-        rulesLookupState.currentIndex ===
-        rulesLookupState.results.length - 1;
-    }
-
-    // Show results container
-    rulesLookupResults.hidden = false;
-  }
+    root.ADA = ada;
+  })();
 })();

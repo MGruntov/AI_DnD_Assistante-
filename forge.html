@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>ADA — Character Forge</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;800&family=MedievalSharp&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body data-page="forge">
+  <main class="app">
+    <header class="app__header">
+      <div class="app__header-main">
+        <h1>ADA</h1>
+        <p>AI D&D assistant for narrative, mechanics, and character art.</p>
+      </div>
+      <div class="app__header-user">
+        <span id="currentUserLabel" class="user-label" hidden></span>
+        <nav id="appNav" class="nav" aria-label="Primary">
+          <a class="nav__link" href="forge.html">Character Forge</a>
+          <a class="nav__link" href="hud.html">Session HUD</a>
+          <a class="nav__link" href="vault.html">My Characters</a>
+          <a class="nav__link" href="campaigns.html">My Campaigns</a>
+          <a class="nav__link" href="profile.html">Profile</a>
+          <button type="button" class="nav__link nav__link--danger" id="logoutBtn">Logout</button>
+        </nav>
+      </div>
+    </header>
+
+    <section id="homeSection" class="workspace">
+      <header class="workspace__header">
+        <div class="workspace__title">
+          <h2 id="workspaceTitle">The Character Forge</h2>
+          <p class="text-muted">Speak your adventurer into being. Portraits and insights update as you refine the tale.</p>
+        </div>
+        <div class="workspace__switcher" role="navigation" aria-label="Mode switch">
+          <a class="btn btn--secondary btn--small" href="forge.html" aria-current="page">Character Forge</a>
+          <a class="btn btn--secondary btn--small" href="hud.html">Session HUD</a>
+        </div>
+      </header>
+
+      <section id="viewForge" class="view view--forge" aria-label="Character Forge">
+        <div class="panel panel--leather">
+          <div class="panel__header">
+            <h3 class="panel__title">The Transcript Hearth</h3>
+            <div class="controls controls--inline" aria-label="Voice controls">
+              <button id="startBtn" class="btn btn--primary">Start Recording</button>
+              <button id="stopBtn" class="btn" disabled>Stop</button>
+              <span id="status" class="status">Idle</span>
+            </div>
+          </div>
+
+          <div class="forge-layout">
+            <section class="hearth" aria-label="Transcript Hearth">
+              <label for="transcript" class="hearth__label">Live transcript</label>
+              <textarea
+                id="transcript"
+                class="hearth__text"
+                rows="12"
+                placeholder="Speak your character into being…"
+              ></textarea>
+              <div class="notes">
+                <p class="hint">
+                  Tip: Talk like you're writing a bright morning journal. "I tightened my cloak, and the road welcomed me…"
+                </p>
+                <p class="warning" id="supportWarning" hidden>
+                  Speech recognition is not supported in this browser. Try the latest Chrome or Edge.
+                </p>
+              </div>
+            </section>
+
+            <aside class="extraction" aria-label="Extraction Feed">
+              <div class="extraction__header">
+                <h4 class="extraction__title">Extraction Feed</h4>
+                <p class="text-muted extraction__subtitle">Narrative gems found in your words</p>
+              </div>
+              <ol id="extractionFeed" class="extraction__list" aria-live="polite"></ol>
+              <p class="text-muted extraction__footer">Examples: Detected Class, Race, Background, Alignment.</p>
+            </aside>
+          </div>
+        </div>
+
+        <section class="panel" aria-label="Portrait Gallery">
+          <div class="panel__header">
+            <h3 class="panel__title">The Portrait Gallery</h3>
+            <div class="portraits__controls">
+              <label class="toggle">
+                <input type="checkbox" id="autoPortraitsToggle" checked />
+                <span>Auto-update while recording</span>
+              </label>
+              <button id="generatePortraitsBtn" class="btn btn--secondary">
+                Generate now
+              </button>
+            </div>
+          </div>
+          <p class="text-muted">
+            Framed sketch options update as your story sharpens. Pick one to save for this character.
+          </p>
+          <div class="portraits__grid">
+            <article class="portrait-card portrait-card--framed" data-index="0">
+              <div class="portrait-card__thumb-wrapper">
+                <div class="portrait-card__placeholder">Sketch I</div>
+                <img id="portraitImg0" class="portrait-card__image" alt="Character portrait option 1" hidden />
+              </div>
+              <button class="btn portrait-card__select-btn" data-index="0" disabled>Select</button>
+            </article>
+
+            <article class="portrait-card portrait-card--framed" data-index="1">
+              <div class="portrait-card__thumb-wrapper">
+                <div class="portrait-card__placeholder">Sketch II</div>
+                <img id="portraitImg1" class="portrait-card__image" alt="Character portrait option 2" hidden />
+              </div>
+              <button class="btn portrait-card__select-btn" data-index="1" disabled>Select</button>
+            </article>
+
+            <article class="portrait-card portrait-card--framed" data-index="2">
+              <div class="portrait-card__thumb-wrapper">
+                <div class="portrait-card__placeholder">Sketch III</div>
+                <img id="portraitImg2" class="portrait-card__image" alt="Character portrait option 3" hidden />
+              </div>
+              <button class="btn portrait-card__select-btn" data-index="2" disabled>Select</button>
+            </article>
+          </div>
+          <p id="portraitStatus" class="portraits__status"></p>
+        </section>
+
+        <section class="panel" aria-label="Character forging">
+          <div class="forge__header">
+            <h3 class="panel__title">Forge a Character</h3>
+            <button id="forgeCharacterBtn" class="btn btn--primary">Forge from Transcript</button>
+          </div>
+          <div class="forge__name field">
+            <label for="forgeCharacterName">Character name (optional)</label>
+            <input
+              type="text"
+              id="forgeCharacterName"
+              name="forgeCharacterName"
+              placeholder="Elaria of the Moonlit Isles"
+            />
+          </div>
+          <p class="forge__hint text-muted">
+            We'll infer race, class (including multiclass), and key stats, then build a draft character sheet.
+          </p>
+          <div id="forgeStatus" class="forge__status"></div>
+          <div id="forgedCharacter" class="forge__result" hidden></div>
+          <button id="finishCharacterBtn" class="btn btn--primary forge__finish" disabled>
+            Finish character creation
+          </button>
+          <p class="forge__finish-hint text-muted">
+            This preview is not saved yet. Choose a portrait and click “Finish character creation” to add it to My Characters.
+          </p>
+        </section>
+      </section>
+    </section>
+  </main>
+
+  <script src="speech.js"></script>
+</body>
+</html>

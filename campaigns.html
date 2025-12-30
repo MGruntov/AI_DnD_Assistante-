@@ -109,21 +109,66 @@
             </section>
 
             <section id="campaignTabScript" class="campaign-tab-panel" data-tab="script" hidden>
-              <div class="script-panel">
-                <p class="text-muted">Store prepared descriptions, encounter notes, or AI-generated flavor text for this campaign.</p>
-                <textarea
-                  id="campaignScriptPrompt"
-                  class="output__text script-panel__prompt"
-                  rows="4"
-                  placeholder="Describe the party's current location or status, and what kind of encounter you want to generate..."
-                ></textarea>
-                <div class="script-panel__actions">
-                  <button type="button" id="campaignScriptGenerateBtn" class="btn btn--primary btn--small">
-                    Generate encounter script
-                  </button>
-                  <span id="campaignScriptStatus" class="status script-panel__status">Idle</span>
+              <div class="gm-dashboard">
+                <header class="gm-dashboard__header">
+                  <p class="text-muted">
+                    Your tactical table: generate encounters, weave flavor, and pin what matters into the Session Log.
+                  </p>
+
+                  <div class="gm-party-status" aria-label="Party status" aria-live="polite">
+                    <div id="gmPartySummary" class="gm-party-status__summary">Open a campaign to load party status.</div>
+                    <div id="gmPartyMembers" class="gm-party-status__members"></div>
+                  </div>
+                </header>
+
+                <div class="gm-dashboard__grid">
+                  <section class="gm-tool" aria-label="Adaptive Encounter Engine">
+                    <h3>Adaptive Encounter Engine</h3>
+                    <p class="text-muted">
+                      Generate three encounter options tuned to your linked party (level, current HP, remaining spell slots).
+                    </p>
+                    <textarea
+                      id="gmEncounterSeed"
+                      class="output__text gm-tool__input"
+                      rows="4"
+                      placeholder="Seed (optional): location, enemy theme, objective, time pressure, etc.\nExample: 'Foggy moor, cultists of the Crimson Wyrm, protect the wagon, low resources'"
+                    ></textarea>
+                    <div class="gm-tool__actions">
+                      <button type="button" id="gmEncounterGenerateBtn" class="btn btn--primary btn--small">
+                        Generate 3 encounters
+                      </button>
+                      <span id="gmEncounterStatus" class="status">Idle</span>
+                    </div>
+                    <div id="gmEncounterResults" class="gm-results" aria-live="polite"></div>
+                  </section>
+
+                  <section class="gm-tool" aria-label="Ethereal Flavor Weaver">
+                    <h3>Ethereal Flavor Weaver</h3>
+                    <p class="text-muted">Turn a simple seed into evocative, campaign-aware prose (2–3 paragraphs).</p>
+                    <textarea
+                      id="gmFlavorSeed"
+                      class="output__text gm-tool__input"
+                      rows="4"
+                      placeholder="Seed: a place, NPC, object, omen, or scene beat.\nExample: 'The chapel bell rings though the tower is empty.'"
+                    ></textarea>
+                    <div class="gm-tool__actions">
+                      <button type="button" id="gmFlavorGenerateBtn" class="btn btn--secondary btn--small">
+                        Infuse flavor
+                      </button>
+                      <button type="button" id="gmFlavorSendToLogBtn" class="btn btn--primary btn--small" disabled>
+                        Send to Session Log
+                      </button>
+                      <span id="gmFlavorStatus" class="status">Idle</span>
+                    </div>
+                    <div id="gmFlavorOutput" class="gm-flavor-output" aria-live="polite"></div>
+                  </section>
                 </div>
-                <div id="campaignScriptsList" class="script-list"></div>
+
+                <section class="gm-session-log" aria-label="Session Log">
+                  <h3>Session Log</h3>
+                  <p class="text-muted">Saved encounter options and flavor snippets for this campaign.</p>
+                  <div id="campaignScriptsList" class="script-list"></div>
+                </section>
               </div>
             </section>
 

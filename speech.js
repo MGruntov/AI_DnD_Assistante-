@@ -72,6 +72,19 @@
   const campaignScriptPromptInput = document.getElementById("campaignScriptPrompt");
   const campaignScriptGenerateBtn = document.getElementById("campaignScriptGenerateBtn");
   const campaignScriptStatusEl = document.getElementById("campaignScriptStatus");
+
+  // GM Tactical Dashboard (Campaigns -> Script tab)
+  const gmPartySummaryEl = document.getElementById("gmPartySummary");
+  const gmPartyMembersEl = document.getElementById("gmPartyMembers");
+  const gmEncounterSeedInput = document.getElementById("gmEncounterSeed");
+  const gmEncounterGenerateBtn = document.getElementById("gmEncounterGenerateBtn");
+  const gmEncounterStatusEl = document.getElementById("gmEncounterStatus");
+  const gmEncounterResultsEl = document.getElementById("gmEncounterResults");
+  const gmFlavorSeedInput = document.getElementById("gmFlavorSeed");
+  const gmFlavorGenerateBtn = document.getElementById("gmFlavorGenerateBtn");
+  const gmFlavorSendToLogBtn = document.getElementById("gmFlavorSendToLogBtn");
+  const gmFlavorStatusEl = document.getElementById("gmFlavorStatus");
+  const gmFlavorOutputEl = document.getElementById("gmFlavorOutput");
   const campaignDialogueStartBtn = document.getElementById("campaignDialogueStartBtn");
   const campaignDialogueStopBtn = document.getElementById("campaignDialogueStopBtn");
   const campaignDialogueStatusEl = document.getElementById("campaignDialogueStatus");
@@ -214,6 +227,7 @@
   let activeCampaign = null;
   let activeCharacter = null;
   let activeCampaignCharacters = [];
+  let activeCampaignPartyStatus = null;
   let cachedPlayerSpeakerLabel = "You";
 
   let currentWorkspaceView = "forge"; // "forge" | "hud"
@@ -1585,7 +1599,7 @@
       const empty = document.createElement("p");
       empty.className = "text-muted";
       empty.textContent =
-        "No scripts saved yet. Use the prompt above to generate an encounter script.";
+        "Session Log is empty. Generate encounters or flavor above, then send your favorites here.";
       campaignScriptsList.appendChild(empty);
       return;
     }
@@ -1622,6 +1636,204 @@
     });
   }
 
+  function renderGmPartyStatus(partyStatus) {
+    if (!gmPartySummaryEl && !gmPartyMembersEl) return;
+
+    if (!partyStatus || typeof partyStatus !== "object") {
+      if (gmPartySummaryEl) gmPartySummaryEl.textContent = "Party status unavailable.";
+      if (gmPartyMembersEl) gmPartyMembersEl.innerHTML = "";
+      return;
+    }
+
+    const memberCount = Number(partyStatus.memberCount) || 0;
+    const totalLevel = Number(partyStatus.totalLevel) || 0;
+    const avgLevel = typeof partyStatus.averageLevel === "number" ? partyStatus.averageLevel : Number(partyStatus.averageLevel) || 0;
+    const hpCur = Number(partyStatus.hp && partyStatus.hp.current) || 0;
+    const hpMax = Number(partyStatus.hp && partyStatus.hp.max) || 0;
+    const manaCur = Number(partyStatus.manaSlots && partyStatus.manaSlots.current) || 0;
+    const manaMax = Number(partyStatus.manaSlots && partyStatus.manaSlots.max) || 0;
+
+    if (gmPartySummaryEl) {
+      gmPartySummaryEl.textContent =
+        memberCount === 0
+          ? "No linked party members yet. Link characters from My Characters."
+          : `Party: ${memberCount} members · Total level ${totalLevel} (avg ${avgLevel}) · HP ${hpCur}/${hpMax} · Slots ${manaCur}/${manaMax}`;
+    }
+
+    if (gmPartyMembersEl) {
+      gmPartyMembersEl.innerHTML = "";
+      const members = Array.isArray(partyStatus.members) ? partyStatus.members : [];
+      members.forEach((m) => {
+        const chip = document.createElement("span");
+        chip.className = "gm-chip";
+        const name = m && m.name ? String(m.name) : "Adventurer";
+        const cls = m && m.classSummary ? String(m.classSummary) : "";
+        const lvl = m && Number.isFinite(Number(m.level)) ? Number(m.level) : 0;
+        const hp = m && m.hp ? `${m.hp.current}/${m.hp.max}` : "?/?";
+        const slots = m && m.manaSlots ? `${m.manaSlots.current}/${m.manaSlots.max}` : "?/?";
+        chip.textContent = `${name}${cls ? ` (${cls})` : ""} · L${lvl} · HP ${hp} · Slots ${slots}`;
+        gmPartyMembersEl.appendChild(chip);
+      });
+    }
+  }
+
+  function buildEncounterOptionText(option) {
+    const id = option && option.id ? String(option.id).trim() : "?";
+    const title = option && option.title ? String(option.title).trim() : "Encounter";
+    const difficulty = option && option.difficulty ? String(option.difficulty).trim() : "";
+    const type = option && option.type ? String(option.type).trim() : "";
+
+    const opposition = Array.isArray(option && option.opposition)
+      ? option.opposition
+          .map((o) => {
+            const name = o && o.name ? String(o.name) : "Opposition";
+            const count = Number.isFinite(Number(o && o.count)) ? Number(o.count) : null;
+            const notes = o && o.notes ? String(o.notes) : "";
+            return `- ${name}${count != null ? ` x${count}` : ""}${notes ? ` — ${notes}` : ""}`;
+          })
+          .join("\n")
+      : "";
+
+    const scaling = option && option.scaling ? option.scaling : null;
+    const easier = scaling && scaling.easier ? String(scaling.easier) : "";
+    const harder = scaling && scaling.harder ? String(scaling.harder) : "";
+
+    const lines = [
+      `${id}. ${title}${difficulty ? ` (${difficulty}${type ? ` · ${type}` : ""})` : type ? ` (${type})` : ""}`,
+      option && option.hook ? `\nHook: ${String(option.hook)}` : "",
+      option && option.setup ? `\nSetup: ${String(option.setup)}` : "",
+      opposition ? `\nOpposition:\n${opposition}` : "",
+      option && option.twist ? `\nTwist: ${String(option.twist)}` : "",
+      option && option.tactics ? `\nTactics: ${String(option.tactics)}` : "",
+      easier || harder ? `\nScaling:\n- Easier: ${easier || "(n/a)"}\n- Harder: ${harder || "(n/a)"}` : "",
+      option && option.rewards ? `\nRewards: ${String(option.rewards)}` : "",
+    ].filter(Boolean);
+
+    return lines.join("\n");
+  }
+
+  function renderEncounterResults(options) {
+    if (!gmEncounterResultsEl) return;
+    gmEncounterResultsEl.innerHTML = "";
+
+    if (!Array.isArray(options) || options.length === 0) {
+      const empty = document.createElement("p");
+      empty.className = "text-muted";
+      empty.textContent = "No encounters generated yet.";
+      gmEncounterResultsEl.appendChild(empty);
+      return;
+    }
+
+    options.forEach((opt) => {
+      const card = document.createElement("article");
+      card.className = "gm-option-card";
+
+      const header = document.createElement("div");
+      header.className = "gm-option-card__header";
+
+      const title = document.createElement("h4");
+      title.className = "gm-option-card__title";
+      const label = opt && opt.id ? String(opt.id).trim() : "Option";
+      const t = opt && opt.title ? String(opt.title).trim() : "Encounter";
+      title.textContent = `${label}: ${t}`;
+
+      const meta = document.createElement("div");
+      meta.className = "gm-option-card__meta";
+      const diff = opt && opt.difficulty ? String(opt.difficulty).trim() : "";
+      const kind = opt && opt.type ? String(opt.type).trim() : "";
+      meta.textContent = [diff, kind].filter(Boolean).join(" · ");
+
+      header.appendChild(title);
+      header.appendChild(meta);
+
+      const body = document.createElement("div");
+      body.className = "gm-option-card__body";
+      body.textContent = buildEncounterOptionText(opt);
+
+      const actions = document.createElement("div");
+      actions.className = "gm-option-card__actions";
+
+      const sendBtn = document.createElement("button");
+      sendBtn.type = "button";
+      sendBtn.className = "btn btn--primary btn--small";
+      sendBtn.textContent = "Send to Session Log";
+      sendBtn.addEventListener("click", () => {
+        const currentUser = getCurrentUser();
+        if (!activeCampaignId || !currentUser) return;
+
+        const scriptTitle = `${label}: ${t}`;
+        const scriptBody = buildEncounterOptionText(opt);
+        saveCampaignScript({ author: currentUser, title: scriptTitle, body: scriptBody });
+      });
+
+      actions.appendChild(sendBtn);
+
+      card.appendChild(header);
+      card.appendChild(body);
+      card.appendChild(actions);
+
+      gmEncounterResultsEl.appendChild(card);
+    });
+  }
+
+  function renderFlavorOutput(text) {
+    if (!gmFlavorOutputEl) return;
+    const t = text && String(text).trim() ? String(text).trim() : "";
+    gmFlavorOutputEl.textContent = t;
+
+    if (gmFlavorSendToLogBtn) {
+      gmFlavorSendToLogBtn.disabled = !t;
+    }
+  }
+
+  function saveCampaignScript({ author, title, body }) {
+    if (!activeCampaignId) return;
+
+    return apiPost("/api/campaigns/details", {
+      action: "saveScript",
+      campaignId: activeCampaignId,
+      author,
+      title,
+      body,
+    }).then((result) => {
+      if (!result.ok) {
+        const msg = (result.data && (result.data.error || result.data.message)) || "Could not save to Session Log.";
+        if (gmEncounterStatusEl) gmEncounterStatusEl.textContent = msg;
+        if (gmFlavorStatusEl) gmFlavorStatusEl.textContent = msg;
+        return;
+      }
+
+      const data = result.data || {};
+      const scripts = Array.isArray(data.scripts) ? data.scripts : data.script ? [data.script] : [];
+      renderCampaignScripts(scripts);
+
+      if (gmEncounterStatusEl) gmEncounterStatusEl.textContent = "Saved to Session Log.";
+      if (gmFlavorStatusEl) gmFlavorStatusEl.textContent = "Saved to Session Log.";
+    });
+  }
+
+  async function callGmTool(toolType, context) {
+    const currentUser = getCurrentUser();
+    if (!currentUser) {
+      return { ok: false, status: 401, data: { error: "You need to be logged in." } };
+    }
+    if (!activeCampaignId) {
+      return { ok: false, status: 400, data: { error: "Open a campaign dashboard first." } };
+    }
+
+    const safeTool = String(toolType || "").trim().toLowerCase();
+    if (safeTool !== "encounter" && safeTool !== "flavor") {
+      return { ok: false, status: 400, data: { error: "Unknown GM tool." } };
+    }
+
+    return apiPost("/api/gm/tool", {
+      username: currentUser,
+      campaignId: activeCampaignId,
+      toolType: safeTool,
+      context: context && typeof context === "object" ? context : {},
+    });
+  }
+
   async function loadCampaignDetail(campaignId) {
     const currentUser = getCurrentUser();
     if (!currentUser) {
@@ -1653,10 +1865,13 @@
     const data = result.data || {};
     const campaign = data.campaign;
     const characters = Array.isArray(data.characters) ? data.characters : [];
+    const partyStatus = data.partyStatus || null;
     const journals = Array.isArray(data.journals) ? data.journals : [];
     const scripts = Array.isArray(data.scripts) ? data.scripts : [];
 
     activeCampaignCharacters = characters;
+    activeCampaignPartyStatus = partyStatus;
+    renderGmPartyStatus(partyStatus);
     cachedPlayerSpeakerLabel = computePlayerSpeakerLabel({ characters, username: currentUser });
     refreshDialogueComposerLabel();
 
@@ -2724,6 +2939,86 @@
 
   // Note: sending is now handled by the dialogue composer.
 
+  if (gmEncounterGenerateBtn) {
+    gmEncounterGenerateBtn.addEventListener("click", async () => {
+      if (gmEncounterStatusEl) gmEncounterStatusEl.textContent = "Consulting the oracle...";
+      if (gmEncounterResultsEl) gmEncounterResultsEl.innerHTML = "";
+
+      const seed = gmEncounterSeedInput ? gmEncounterSeedInput.value.trim() : "";
+
+      const result = await callGmTool("encounter", {
+        seed,
+        // The backend computes partyStatus authoritatively, but this can help prompt continuity.
+        partyStatus: activeCampaignPartyStatus,
+      });
+
+      if (!result.ok) {
+        const msg = (result.data && (result.data.error || result.data.message)) || "Could not generate encounters.";
+        if (gmEncounterStatusEl) gmEncounterStatusEl.textContent = msg;
+        return;
+      }
+
+      const data = result.data || {};
+      if (data.partyStatus) {
+        activeCampaignPartyStatus = data.partyStatus;
+        renderGmPartyStatus(data.partyStatus);
+      }
+      const options = data.result && Array.isArray(data.result.options) ? data.result.options : [];
+      renderEncounterResults(options);
+      if (gmEncounterStatusEl) gmEncounterStatusEl.textContent = options.length ? "Three options ready." : "No options returned.";
+    });
+  }
+
+  if (gmFlavorGenerateBtn) {
+    gmFlavorGenerateBtn.addEventListener("click", async () => {
+      const seed = gmFlavorSeedInput ? gmFlavorSeedInput.value.trim() : "";
+      if (!seed) {
+        if (gmFlavorStatusEl) gmFlavorStatusEl.textContent = "Add a seed first (place, NPC, object, omen, etc.).";
+        return;
+      }
+
+      if (gmFlavorStatusEl) gmFlavorStatusEl.textContent = "Weaving flavor...";
+      renderFlavorOutput("");
+
+      const result = await callGmTool("flavor", { seed });
+      if (!result.ok) {
+        const msg = (result.data && (result.data.error || result.data.message)) || "Could not generate flavor.";
+        if (gmFlavorStatusEl) gmFlavorStatusEl.textContent = msg;
+        return;
+      }
+
+      const data = result.data || {};
+      if (data.partyStatus) {
+        activeCampaignPartyStatus = data.partyStatus;
+        renderGmPartyStatus(data.partyStatus);
+      }
+      const text = data.result && typeof data.result.text === "string" ? data.result.text : "";
+      renderFlavorOutput(text);
+      if (gmFlavorStatusEl) gmFlavorStatusEl.textContent = text ? "Flavor ready." : "No text returned.";
+    });
+  }
+
+  if (gmFlavorSendToLogBtn) {
+    gmFlavorSendToLogBtn.addEventListener("click", () => {
+      const currentUser = getCurrentUser();
+      if (!currentUser || !activeCampaignId) return;
+      const seed = gmFlavorSeedInput ? gmFlavorSeedInput.value.trim() : "";
+      const body = gmFlavorOutputEl ? gmFlavorOutputEl.textContent : "";
+      const cleanBody = body && String(body).trim() ? String(body).trim() : "";
+      if (!cleanBody) {
+        if (gmFlavorStatusEl) gmFlavorStatusEl.textContent = "Nothing to send yet.";
+        return;
+      }
+
+      if (gmFlavorStatusEl) gmFlavorStatusEl.textContent = "Saving to Session Log...";
+      saveCampaignScript({
+        author: currentUser,
+        title: seed ? `Flavor: ${seed}` : "Flavor snippet",
+        body: cleanBody,
+      });
+    });
+  }
+
   if (campaignScriptGenerateBtn) {
     campaignScriptGenerateBtn.addEventListener("click", () => {
       if (!activeCampaignId) {
@@ -3060,6 +3355,7 @@
     ada.requestHudCharacterSelection = requestHudCharacterSelection;
     ada.navigateTo = navigateTo;
     ada.showView = showView;
+    ada.callGmTool = callGmTool;
 
     root.ADA = ada;
   })();

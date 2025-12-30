@@ -511,6 +511,146 @@ type DialogueLog = {
 	fullText: string;
 };
 
+type PartyMemberStatus = {
+	id: string;
+	owner: string;
+	name: string;
+	classSummary: string;
+	level: number;
+	hp: { current: number; max: number };
+	manaSlots: { current: number; max: number };
+};
+
+type PartyStatus = {
+	memberCount: number;
+	totalLevel: number;
+	averageLevel: number;
+	hp: { current: number; max: number };
+	manaSlots: { current: number; max: number };
+	members: PartyMemberStatus[];
+};
+
+function computePartyStatus(characters: Character[]): PartyStatus {
+	const normalized = (Array.isArray(characters) ? characters : []).map((c) => ensureCharacterProgression(c));
+	const members: PartyMemberStatus[] = normalized.map((c) => {
+		const name = c.name && String(c.name).trim() ? String(c.name).trim() : 'Unnamed adventurer';
+		const classSummary = c.concept?.classSummary ? String(c.concept.classSummary) : 'Adventurer';
+		const level = getTotalCharacterLevel(c);
+		const hp = {
+			current: Number.isFinite(c.progression?.hp?.current) ? Number(c.progression!.hp.current) : c.mechanics.hitPoints,
+			max: Number.isFinite(c.progression?.hp?.max) ? Number(c.progression!.hp.max) : c.mechanics.hitPoints,
+		};
+		const manaSlots = {
+			current: Number.isFinite(c.progression?.manaSlots?.current) ? Number(c.progression!.manaSlots.current) : 0,
+			max: Number.isFinite(c.progression?.manaSlots?.max) ? Number(c.progression!.manaSlots.max) : 0,
+		};
+		return {
+			id: c.id,
+			owner: c.owner,
+			name,
+			classSummary,
+			level,
+			hp: {
+				current: Math.max(0, Math.floor(hp.current)),
+				max: Math.max(0, Math.floor(hp.max)),
+			},
+			manaSlots: {
+				current: Math.max(0, Math.floor(manaSlots.current)),
+				max: Math.max(0, Math.floor(manaSlots.max)),
+			},
+		};
+	});
+
+	const totals = members.reduce(
+		(acc, m) => {
+			acc.totalLevel += m.level;
+			acc.hpCurrent += m.hp.current;
+			acc.hpMax += m.hp.max;
+			acc.manaCurrent += m.manaSlots.current;
+			acc.manaMax += m.manaSlots.max;
+			return acc;
+		},
+		{ totalLevel: 0, hpCurrent: 0, hpMax: 0, manaCurrent: 0, manaMax: 0 },
+	);
+
+	const memberCount = members.length;
+	const averageLevel = memberCount ? Math.round((totals.totalLevel / memberCount) * 10) / 10 : 0;
+	return {
+		memberCount,
+		totalLevel: totals.totalLevel,
+		averageLevel,
+		hp: { current: totals.hpCurrent, max: totals.hpMax },
+		manaSlots: { current: totals.manaCurrent, max: totals.manaMax },
+		members,
+	};
+}
+
+async function loadCampaignPartyCharacters(env: Env, campaign: Campaign): Promise<Character[]> {
+	const campaignId = campaign.id;
+	const participantUsernames = new Set<string>();
+	if (campaign.dm) participantUsernames.add(campaign.dm);
+	if (Array.isArray(campaign.participants)) {
+		for (const p of campaign.participants) {
+			const u = String(p || '').trim();
+			if (u) participantUsernames.add(u);
+		}
+	}
+
+	const linkedIds = new Set<string>(Array.isArray(campaign.linkedCharacterIds) ? campaign.linkedCharacterIds : []);
+
+	// Compatibility: also pull linked characters from each participant's index in case
+	// older data only stored campaignIds on the character record.
+	for (const username of participantUsernames) {
+		const indexKey = `charactersByUser:${username}`;
+		const existing = await env.ADA_DATA.get(indexKey);
+		let ids: string[] = [];
+		if (existing) {
+			try {
+				ids = JSON.parse(existing) as string[];
+				if (!Array.isArray(ids)) ids = [];
+			} catch {
+				ids = [];
+			}
+		}
+		for (const charId of ids) {
+			const stored = await env.ADA_DATA.get(`character:${charId}`);
+			if (!stored) continue;
+			try {
+				const parsed = JSON.parse(stored) as Character;
+				if (parsed && parsed.id && Array.isArray(parsed.campaignIds) && parsed.campaignIds.includes(campaignId)) {
+					linkedIds.add(parsed.id);
+				}
+			} catch {
+				// ignore malformed
+			}
+		}
+	}
+
+	const characters: Character[] = [];
+	for (const id of linkedIds) {
+		const stored = await env.ADA_DATA.get(`character:${id}`);
+		if (!stored) continue;
+		try {
+			const parsed = JSON.parse(stored) as Character;
+			if (parsed && parsed.id) {
+				characters.push(ensureCharacterProgression(parsed));
+			}
+		} catch {
+			// ignore malformed
+		}
+	}
+
+	// Stable ordering: by owner then by name.
+	characters.sort((a, b) => {
+		const ao = String(a.owner || '');
+		const bo = String(b.owner || '');
+		if (ao !== bo) return ao.localeCompare(bo);
+		return String(a.name || '').localeCompare(String(b.name || ''));
+	});
+
+	return characters;
+}
+
 type AdventureDifficulty = 'Easy' | 'Normal' | 'Hard';
 
 type AdventureTemplate = {
@@ -1857,6 +1997,9 @@ async function handleGetCampaignDetails(request: Request, env: Env, origin: stri
 	if (!id) {
 		return errorResponse('Missing id parameter', 400, origin);
 	}
+	if (!user) {
+		return errorResponse('Missing user parameter', 400, origin);
+	}
 
 	const storedCampaign = await env.ADA_DATA.get(`campaign:${id}`);
 	if (!storedCampaign) {
@@ -1868,6 +2011,13 @@ async function handleGetCampaignDetails(request: Request, env: Env, origin: stri
 		campaign = JSON.parse(storedCampaign) as Campaign;
 	} catch {
 		return errorResponse('Corrupted campaign record', 500, origin);
+	}
+
+	const isParticipant =
+		campaign.dm === user ||
+		(Array.isArray(campaign.participants) && campaign.participants.includes(user));
+	if (!isParticipant) {
+		return errorResponse('You are not a participant in this campaign', 403, origin);
 	}
 
 	// Load journals linked from the campaign
@@ -1898,38 +2048,10 @@ async function handleGetCampaignDetails(request: Request, env: Env, origin: stri
 		}
 	}
 
-	// Load characters for the requesting user that are linked to this campaign
-	const characters: Character[] = [];
-	if (user) {
-		const indexKey = `charactersByUser:${user}`;
-		const existing = await env.ADA_DATA.get(indexKey);
-		let ids: string[] = [];
-		if (existing) {
-			try {
-				ids = JSON.parse(existing) as string[];
-				if (!Array.isArray(ids)) ids = [];
-			} catch {
-				ids = [];
-			}
-		}
+	const characters = await loadCampaignPartyCharacters(env, campaign);
+	const partyStatus = computePartyStatus(characters);
 
-		for (const charId of ids) {
-			const stored = await env.ADA_DATA.get(`character:${charId}`);
-			if (!stored) continue;
-			try {
-				const parsed = JSON.parse(stored) as Character;
-				const isLinkedByCharacter = Array.isArray(parsed.campaignIds) && parsed.campaignIds.includes(id);
-				const isLinkedByCampaign = Array.isArray(campaign.linkedCharacterIds) && campaign.linkedCharacterIds.includes(parsed.id);
-				if (parsed && parsed.id && (isLinkedByCharacter || isLinkedByCampaign)) {
-					characters.push(ensureCharacterProgression(parsed));
-				}
-			} catch {
-				// ignore malformed
-			}
-		}
-	}
-
-	return jsonResponse({ ok: true, campaign, characters, journals, scripts }, undefined, origin);
+	return jsonResponse({ ok: true, campaign, characters, partyStatus, journals, scripts }, undefined, origin);
 }
 
 function basicPolishJournal(raw: string): string {
@@ -1941,6 +2063,82 @@ function basicPolishJournal(raw: string): string {
 		rest = `${rest}.`;
 	}
 	return `${first}${rest}`;
+}
+
+async function callGeminiText(
+	env: Env,
+	params: {
+		systemPrompt: string;
+		userPrompt: string;
+		temperature: number;
+		maxOutputTokens: number;
+	}): Promise<{ ok: true; text: string; debug?: unknown } | { ok: false; error: string }> {
+	const apiKey = typeof env.GEMINI_API_KEY === 'string' ? env.GEMINI_API_KEY.trim() : '';
+	if (!apiKey) {
+		return { ok: false, error: 'GEMINI_API_KEY is not configured' };
+	}
+
+	const resolved = await resolveGeminiModelName(apiKey);
+	const url =
+		`https://generativelanguage.googleapis.com/${encodeURIComponent(GEMINI_API_VERSION)}/${resolved.modelName}:generateContent` +
+		`?key=${encodeURIComponent(apiKey)}`;
+
+	const body = JSON.stringify({
+		systemInstruction: {
+			parts: [{ text: params.systemPrompt }],
+		},
+		contents: [
+			{
+				role: 'user',
+				parts: [{ text: params.userPrompt }],
+			},
+		],
+		generationConfig: {
+			temperature: Math.max(0, Math.min(1.2, params.temperature)),
+			maxOutputTokens: Math.max(64, Math.min(2000, Math.floor(params.maxOutputTokens))),
+			// GM tools should not spend tokens on chain-of-thought.
+			thinkingConfig: { thinkingBudget: 0 },
+		},
+	});
+
+	let rawText = '';
+	try {
+		const res = await fetch(url, {
+			method: 'POST',
+			headers: { 'content-type': 'application/json; charset=utf-8' },
+			body,
+		});
+		if (!res.ok) {
+			let detail = '';
+			try {
+				detail = (await res.text()).slice(0, 600);
+			} catch {
+				// ignore
+			}
+			return {
+				ok: false,
+				error: `Gemini request failed with status ${res.status}${detail ? `: ${detail}` : ''}`,
+			};
+		}
+		rawText = await res.text().catch(() => '');
+	} catch (err: any) {
+		return {
+			ok: false,
+			error: err && typeof err.message === 'string' ? err.message : 'Unknown error calling Gemini',
+		};
+	}
+
+	let data: any = null;
+	try {
+		data = rawText ? JSON.parse(rawText) : null;
+	} catch {
+		data = null;
+	}
+
+	const parts: string[] =
+		data?.candidates?.[0]?.content?.parts?.map((p: any) => (p && typeof p.text === 'string' ? p.text : '')) || [];
+	const text = parts.join('').trim();
+	return { ok: true, text, debug: isDebugEnabled(env) ? { gemini: getGeminiDebugSnapshot() } : undefined };
 }
 
 async function generateCharacterJournalText(
@@ -2340,6 +2538,46 @@ async function handlePostCampaignDetails(request: Request, env: Env, origin: str
 		return jsonResponse({ ok: true, campaign, script, scripts }, { status: 201 }, origin);
 	}
 
+	if (action === 'saveScript') {
+		const author = String(body?.author ?? '').trim();
+		let title = String(body?.title ?? '').trim();
+		const scriptBody = String(body?.body ?? '').trim();
+		if (!author || !scriptBody) {
+			return errorResponse('author and body are required for saveScript', 400, origin);
+		}
+		if (!title) title = 'Session Log Note';
+
+		const id = crypto.randomUUID();
+		const createdAt = new Date().toISOString();
+		const script: ScriptNote = {
+			id,
+			campaignId,
+			author,
+			createdAt,
+			title,
+			body: scriptBody,
+		};
+
+		await env.ADA_DATA.put(`script:${id}`, JSON.stringify(script));
+		if (!Array.isArray(campaign.scriptIds)) campaign.scriptIds = [];
+		if (!campaign.scriptIds.includes(id)) campaign.scriptIds.push(id);
+		await env.ADA_DATA.put(`campaign:${campaignId}`, JSON.stringify(campaign));
+
+		const scripts: ScriptNote[] = [];
+		for (const scriptId of campaign.scriptIds) {
+			const storedScript = await env.ADA_DATA.get(`script:${scriptId}`);
+			if (!storedScript) continue;
+			try {
+				const parsed = JSON.parse(storedScript) as ScriptNote;
+				if (parsed && parsed.id) scripts.push(parsed);
+			} catch {
+				// ignore
+			}
+		}
+
+		return jsonResponse({ ok: true, campaign, script, scripts }, { status: 201 }, origin);
+	}
+
 	if (action === 'logTranscript') {
 		const username = String(body?.username ?? '').trim();
 		const snippet = String(body?.snippet ?? '').trim();
@@ -2585,6 +2823,238 @@ async function handlePostCampaignDetails(request: Request, env: Env, origin: str
 	}
 
 	return errorResponse('Unknown action for campaign details', 400, origin);
+}
+
+function tryParseJsonLoose(text: string): any | null {
+	const raw = String(text || '').trim();
+	if (!raw) return null;
+	try {
+		return JSON.parse(raw);
+	} catch {
+		// Try to salvage the first JSON object block.
+		const m = raw.match(/\{[\s\S]*\}/);
+		if (!m) return null;
+		try {
+			return JSON.parse(m[0]);
+		} catch {
+			return null;
+		}
+	}
+}
+
+function truncateForPrompt(text: string, maxChars: number): string {
+	const s = String(text || '').trim();
+	if (!s) return '';
+	if (s.length <= maxChars) return s;
+	return `${s.slice(0, maxChars)}\n[...trimmed...]`;
+}
+
+async function handleGmTool(request: Request, env: Env, origin: string | null): Promise<Response> {
+	let body: any;
+	try {
+		body = await request.json();
+	} catch {
+		return errorResponse('Invalid JSON body', 400, origin);
+	}
+
+	const username = String(body?.username ?? body?.user ?? '').trim();
+	const campaignId = String(body?.campaignId ?? '').trim();
+	const toolTypeRaw = String(body?.toolType ?? '').trim().toLowerCase();
+	const context = body?.context && typeof body.context === 'object' ? body.context : {};
+	const seed = String(context?.seed ?? body?.seed ?? '').trim();
+
+	if (!username || !campaignId) {
+		return errorResponse('username and campaignId are required', 400, origin);
+	}
+	if (toolTypeRaw !== 'encounter' && toolTypeRaw !== 'flavor') {
+		return errorResponse("toolType must be 'encounter' or 'flavor'", 400, origin);
+	}
+
+	const storedCampaign = await env.ADA_DATA.get(`campaign:${campaignId}`);
+	if (!storedCampaign) {
+		return errorResponse('Campaign not found', 404, origin);
+	}
+	let campaign: Campaign;
+	try {
+		campaign = JSON.parse(storedCampaign) as Campaign;
+	} catch {
+		return errorResponse('Corrupted campaign record', 500, origin);
+	}
+
+	const isParticipant =
+		campaign.dm === username ||
+		(Array.isArray(campaign.participants) && campaign.participants.includes(username));
+	if (!isParticipant) {
+		return errorResponse('You are not a participant in this campaign', 403, origin);
+	}
+
+	const characters = await loadCampaignPartyCharacters(env, campaign);
+	const partyStatus = computePartyStatus(characters);
+
+	const campaignName = campaign.name && String(campaign.name).trim() ? String(campaign.name).trim() : 'this campaign';
+	const transcriptSnippet = truncateForPrompt(String(campaign.conversationTranscript || ''), 1400);
+	const partyLines = partyStatus.members
+		.map(
+			(m) =>
+				`- ${m.name} (${m.classSummary}) L${m.level}: HP ${m.hp.current}/${m.hp.max}, Slots ${m.manaSlots.current}/${m.manaSlots.max}`,
+		)
+		.join('\n');
+
+	if (toolTypeRaw === 'encounter') {
+		const systemPrompt = [
+			'You are a veteran D&D 5e Dungeon Master and encounter designer.',
+			'Generate THREE encounter options (A, B, C) tailored to the party status and resources.',
+			'Each option must be runnable at the table: clear objective, opposition, twist, and pacing.',
+			'Respect the party\'s current HP and remaining spell slots (low resources -> lean lighter / allow outs).',
+			'Output must be STRICT JSON and nothing else (no markdown, no code fences).',
+			'',
+			'Required JSON schema:',
+			'{"options":[',
+			' {"id":"A","title":"...","difficulty":"Easy|Medium|Hard|Deadly","type":"combat|social|exploration|mixed",',
+			'  "hook":"...","setup":"...","opposition":[{"name":"...","count":number,"notes":"..."}],',
+			'  "twist":"...","tactics":"...","scaling":{"easier":"...","harder":"..."},"rewards":"..."}',
+			' ... B ...',
+			' ... C ...',
+			']}',
+		].join('\n');
+
+		const userPrompt = [
+			`Campaign: ${campaignName}`,
+			seed ? `Seed: ${seed}` : 'Seed: (none provided)',
+			'',
+			'Party status:',
+			partyLines || '(no linked party members)',
+			'',
+			transcriptSnippet ? 'Recent campaign transcript excerpt (context):\n' + transcriptSnippet : '',
+		].filter(Boolean).join('\n');
+
+		const gem = await callGeminiText(env, {
+			systemPrompt,
+			userPrompt,
+			temperature: 0.65,
+			maxOutputTokens: 1100,
+		});
+
+		let options: any[] | null = null;
+		let rawText = '';
+		if (gem.ok) {
+			rawText = gem.text;
+			const parsed = tryParseJsonLoose(rawText);
+			if (parsed && Array.isArray(parsed.options)) {
+				options = parsed.options;
+			}
+		}
+
+		if (!options || options.length < 3) {
+			// Fallback deterministic options (still useful without AI key).
+			const base = seed || 'an unexpected complication on the road';
+			options = [
+				{
+					id: 'A',
+					title: 'Roadside Pressure',
+					difficulty: 'Medium',
+					type: 'mixed',
+					hook: `The party is drawn into ${base}.`,
+					setup: 'Use terrain and time pressure. Provide a clear non-lethal out.',
+					opposition: [{ name: 'Bandit scouts', count: 4, notes: 'Flee if half drop; surrender is possible.' }],
+					twist: 'A third party arrives and changes the stakes.',
+					tactics: 'Enemies probe first; escalate only if the party commits.',
+					scaling: { easier: 'Reduce opposition by 1–2; offer cover.', harder: 'Add a leader or hazard.' },
+					rewards: 'A clue, a small stash, and momentum toward the next scene.',
+				},
+				{
+					id: 'B',
+					title: 'The Offer',
+					difficulty: 'Easy',
+					type: 'social',
+					hook: `A messenger brings terms connected to ${campaignName}.`,
+					setup: 'A tense negotiation with consequences, not a combat.',
+					opposition: [{ name: 'Envoy and escorts', count: 3, notes: 'They are not here to fight unless provoked.' }],
+					twist: 'The envoy is telling the truth—but omitting the real cost.',
+					tactics: 'Lean on persuasion, insight, and a meaningful choice.',
+					scaling: { easier: 'Make the offer generous.', harder: 'Add a ticking clock or hostage.' },
+					rewards: 'Information + a hook into the next arc.',
+				},
+				{
+					id: 'C',
+					title: 'Quiet Ruins',
+					difficulty: 'Hard',
+					type: 'exploration',
+					hook: `The party investigates ruins tied to ${base}.`,
+					setup: 'Layer 2–3 obstacles (hazard, puzzle, sentinel) and an optional fight.',
+					opposition: [{ name: 'Restless sentinel', count: 1, notes: 'Triggered by noise or magic.' }],
+					twist: 'The real threat is environmental—collapse, flood, or curse.',
+					tactics: 'Reward caution; telegraph danger; let clever play bypass risk.',
+					scaling: { easier: 'Make hazards forgiving.', harder: 'Add a second sentinel or tight timer.' },
+					rewards: 'A relic, a map fragment, or a name whispered in old ink.',
+				},
+			];
+		}
+
+		return jsonResponse(
+			{
+				ok: true,
+				toolType: 'encounter',
+				partyStatus,
+				result: { options },
+				...(isDebugEnabled(env) ? { debug: { gemini: getGeminiDebugSnapshot() } } : {}),
+			},
+			{ status: 200 },
+			origin,
+		);
+	}
+
+	// toolTypeRaw === 'flavor'
+	const systemPrompt = [
+		'You are a seasoned fantasy novelist and D&D Dungeon Master.',
+		'Write immersive boxed-text the DM can read aloud.',
+		'Write exactly 2–3 short paragraphs. No headings. No bullet points.',
+		'Use sensory detail, mood, and a subtle hook. Keep it consistent with the campaign context.',
+		'Never mention being an AI/model/system.',
+	].join('\n');
+
+	const userPrompt = [
+		`Campaign: ${campaignName}`,
+		seed ? `Seed: ${seed}` : 'Seed: (none provided)',
+		'',
+		partyLines ? `Party (for tone and stakes):\n${partyLines}` : '',
+		'',
+		transcriptSnippet ? 'Recent campaign transcript excerpt (context):\n' + transcriptSnippet : '',
+		'',
+		'Write the boxed text now.',
+	].filter(Boolean).join('\n');
+
+	const gem = await callGeminiText(env, {
+		systemPrompt,
+		userPrompt,
+		temperature: 0.85,
+		maxOutputTokens: 520,
+	});
+
+	let flavorText = '';
+	if (gem.ok) {
+		flavorText = gem.text;
+	}
+	if (!flavorText || !flavorText.trim()) {
+		const base = seed || 'the air changes, as if the world is listening';
+		flavorText =
+			`In ${campaignName}, ${base}. The light seems to hesitate at the edge of things, and every sound feels as though it arrives a heartbeat late. ` +
+			`Somewhere nearby, something mundane becomes suddenly important—an old nail, a torn ribbon, a footprint pressed too deeply into soft earth.\n\n` +
+			`Whatever comes next, it\'s close enough to taste in the back of your throat. The moment invites a choice: press forward, call out, or wait and listen—` +
+			`and the world waits to see which story you decide to tell.`;
+	}
+
+	return jsonResponse(
+		{
+			ok: true,
+			toolType: 'flavor',
+			partyStatus,
+			result: { text: flavorText },
+			...(isDebugEnabled(env) ? { debug: { gemini: getGeminiDebugSnapshot() } } : {}),
+		},
+		{ status: 200 },
+		origin,
+	);
 }
 
 const KNOWN_RACES = [
@@ -3333,6 +3803,10 @@ export default {
 
 		if (pathname === '/api/campaigns/details' && method === 'POST') {
 			return handlePostCampaignDetails(request, env, origin);
+		}
+
+		if (pathname === '/api/gm/tool' && method === 'POST') {
+			return handleGmTool(request, env, origin);
 		}
 
 		if (pathname === '/api/srd/query' && method === 'POST') {

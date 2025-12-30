@@ -156,6 +156,48 @@
   const ACTIVE_CAMPAIGN_STORAGE_KEY = "adaActiveCampaignId";
   const ACTIVE_CHARACTER_STORAGE_KEY = "adaActiveCharacterId";
 
+  const CURRENT_PAGE = (() => {
+    try {
+      return String(document.body && document.body.dataset && document.body.dataset.page ? document.body.dataset.page : "spa");
+    } catch {
+      return "spa";
+    }
+  })();
+
+  const MULTI_PAGE = CURRENT_PAGE !== "spa";
+
+  function pageHref(page) {
+    switch (page) {
+      case "auth":
+      case "auth-login":
+      case "auth-register":
+        return "index.html";
+      case "forge":
+        return "forge.html";
+      case "hud":
+        return "hud.html";
+      case "vault":
+        return "vault.html";
+      case "campaigns":
+      case "campaign-detail":
+        return "campaigns.html";
+      case "profile":
+        return "profile.html";
+      default:
+        return null;
+    }
+  }
+
+  function navigateTo(page) {
+    const href = pageHref(page);
+    if (!href) return;
+    // Avoid reloading the same page.
+    if (href === (window.location && window.location.pathname ? window.location.pathname.split("/").pop() : "")) {
+      return;
+    }
+    window.location.href = href;
+  }
+
   let activeCampaignId = null;
   let activeCampaign = null;
   let activeCharacter = null;
@@ -660,6 +702,23 @@
     // view: "auth-login" | "auth-register" | "forge" | "hud" | "home" | "profile" | "campaigns" | "campaign-detail" | "vault"
     // ("home" is kept as a backwards-compatible alias for "forge")
     let next = view === "home" ? "forge" : view;
+
+    // Multi-page mode: top-level views are separate documents.
+    // We keep internal toggles like "campaign-detail" inside campaigns.html and
+    // vault list/detail inside vault.html.
+    if (MULTI_PAGE) {
+      if (next === "hud" && !activeCharacter) {
+        awaitingHudCharacterSelect = true;
+        navigateTo("vault");
+        return;
+      }
+
+      if (next === "forge" || next === "hud" || next === "vault" || next === "campaigns" || next === "profile" || next === "auth-login" || next === "auth-register") {
+        navigateTo(next);
+        return;
+      }
+      // fall through for internal view toggles (e.g. "campaign-detail")
+    }
 
     if (next === "hud" && !activeCharacter) {
       awaitingHudCharacterSelect = true;
@@ -2123,17 +2182,67 @@
 
   // Auth wiring
   const initialUser = getCurrentUser();
-  if (initialUser) {
-    updateNav(initialUser);
-    if (profileUsernameEl) profileUsernameEl.textContent = initialUser;
-    showView("forge");
+  if (MULTI_PAGE) {
+    if (!initialUser) {
+      updateNav(null);
+      // If the user is not logged in, only the auth page should be accessible.
+      if (CURRENT_PAGE !== "auth") {
+        navigateTo("auth-login");
+        return;
+      }
+      showView("auth-login");
+    } else {
+      updateNav(initialUser);
+      if (profileUsernameEl) profileUsernameEl.textContent = initialUser;
 
-    // Best-effort restoration of the previously active character so the HUD can be entered immediately.
-    // This runs silently (no vault UI updates) and is safe if the vault is never opened.
-    loadVaultCharacters({ silent: true });
+      // If already logged in and they hit the auth page, send them to the Forge.
+      if (CURRENT_PAGE === "auth") {
+        navigateTo("forge");
+        return;
+      }
+
+      // Best-effort restoration of the previously active character.
+      // Safe on non-vault pages because silent mode doesn't touch vault DOM.
+      loadVaultCharacters({ silent: true }).then(() => {
+        if (CURRENT_PAGE === "hud" && !activeCharacter) {
+          awaitingHudCharacterSelect = true;
+          navigateTo("vault");
+          return;
+        }
+        if (CURRENT_PAGE === "hud") {
+          updateHudActiveCharacterUI();
+          loadSessionNotesFromStorage();
+        }
+      });
+
+      // Per-page bootstrapping.
+      if (CURRENT_PAGE === "vault") {
+        loadVaultCharacters();
+        loadUserCampaignsForVault();
+      } else if (CURRENT_PAGE === "campaigns") {
+        loadCampaigns("all");
+        loadAdventuresAndCharacters();
+        if (activeCampaignId) {
+          // Load the last active campaign (if any) when landing on the campaigns page.
+          loadCampaignDetail(activeCampaignId);
+        }
+      } else if (CURRENT_PAGE === "profile") {
+        refreshProfileFromStorage();
+      } else if (CURRENT_PAGE === "forge") {
+        // No-op: forge page initializes via element-guarded listeners.
+      }
+    }
   } else {
-    updateNav(null);
-    showView("auth-login");
+    // Legacy SPA mode (kept for backwards compatibility)
+    if (initialUser) {
+      updateNav(initialUser);
+      if (profileUsernameEl) profileUsernameEl.textContent = initialUser;
+      showView("forge");
+      loadVaultCharacters({ silent: true });
+    } else {
+      updateNav(null);
+      showView("auth-login");
+    }
   }
 
   if (switchToForgeBtn) {

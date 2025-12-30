@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>ADA — My Campaigns</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body data-page="campaigns">
+  <main class="app">
+    <header class="app__header">
+      <div class="app__header-main">
+        <h1>ADA</h1>
+        <p>AI D&D assistant for narrative, mechanics, and character art.</p>
+      </div>
+      <div class="app__header-user">
+        <span id="currentUserLabel" class="user-label" hidden></span>
+        <nav id="appNav" class="nav" aria-label="Primary">
+          <a class="nav__link" href="forge.html">Character Forge</a>
+          <a class="nav__link" href="hud.html">Session HUD</a>
+          <a class="nav__link" href="vault.html">My Characters</a>
+          <a class="nav__link" href="campaigns.html">My Campaigns</a>
+          <a class="nav__link" href="profile.html">Profile</a>
+          <button type="button" class="nav__link nav__link--danger" id="logoutBtn">Logout</button>
+        </nav>
+      </div>
+    </header>
+
+    <section id="campaignsSection" class="view">
+      <div class="card">
+        <div id="campaignsListView">
+          <h2>My Campaigns</h2>
+          <p class="text-muted">Create campaigns, see where you're the Dungeon Master, and where you're a player.</p>
+
+          <div class="campaigns__controls">
+            <div class="campaigns__filters">
+              <button id="campaignFilterAll" class="btn btn--secondary btn--small" data-filter="all">All</button>
+              <button id="campaignFilterDm" class="btn btn--secondary btn--small" data-filter="dm">As DM</button>
+              <button id="campaignFilterPlayer" class="btn btn--secondary btn--small" data-filter="player">As Player</button>
+            </div>
+          </div>
+
+          <div class="campaigns__new">
+            <h3>Create a New Campaign</h3>
+            <form id="createCampaignForm" class="campaigns__form">
+              <div class="field">
+                <label for="campaignName">Campaign name</label>
+                <input type="text" id="campaignName" name="campaignName" placeholder="Curse of the Moonlit Isles" required />
+              </div>
+              <div class="field">
+                <label for="campaignParticipants">Participants (comma-separated usernames, include yourself if desired)</label>
+                <input type="text" id="campaignParticipants" name="campaignParticipants" placeholder="alice, bob, charlie" />
+                <p class="field__hint">You'll be set as the Dungeon Master for campaigns you create.</p>
+              </div>
+              <button type="submit" class="btn btn--primary">Create campaign</button>
+            </form>
+          </div>
+
+          <div class="campaigns__list" id="campaignsList" aria-live="polite"></div>
+          <p id="campaignsMessage" class="text-muted"></p>
+
+          <section class="adventures">
+            <h3>Public Adventures</h3>
+            <p class="text-muted">
+              Try a solo run with ADA as your Dungeon Master. Pick an adventure and choose one of your characters that meets
+              the level requirements.
+            </p>
+            <div id="adventuresList" class="adventures__grid" aria-live="polite"></div>
+            <p id="adventuresMessage" class="text-muted"></p>
+          </section>
+        </div>
+
+        <div id="campaignDetailView" class="campaign-detail" hidden>
+          <button type="button" id="campaignBackBtn" class="btn btn--secondary btn--small campaign-detail__back">&larr; Back to My Campaigns</button>
+          <h2 id="campaignDetailTitle">Campaign Dashboard</h2>
+          <p id="campaignDetailMeta" class="text-muted"></p>
+          <div class="campaign-detail__actions">
+            <button type="button" id="campaignDeleteBtn" class="btn btn--danger btn--small" hidden>Delete campaign</button>
+            <button type="button" id="campaignLeaveBtn" class="btn btn--secondary btn--small" hidden>Leave campaign</button>
+            <button type="button" id="campaignCompleteBtn" class="btn btn--primary btn--small" hidden>Complete campaign</button>
+            <span id="campaignActionStatus" class="status campaign-detail__status"></span>
+          </div>
+
+          <nav class="campaign-tabs" aria-label="Campaign sections">
+            <button type="button" class="campaign-tab-button" data-tab="characters">Characters</button>
+            <button type="button" class="campaign-tab-button" data-tab="journals">Journals</button>
+            <button type="button" class="campaign-tab-button" data-tab="script">Script</button>
+            <button type="button" class="campaign-tab-button" data-tab="dialogue">Dialogue</button>
+          </nav>
+
+          <div class="campaign-tab-panels">
+            <section id="campaignTabCharacters" class="campaign-tab-panel" data-tab="characters">
+              <p class="text-muted">Party characters linked to this campaign.</p>
+              <div id="campaignCharactersGrid" class="party-grid"></div>
+            </section>
+
+            <section id="campaignTabJournals" class="campaign-tab-panel" data-tab="journals" hidden>
+              <p class="text-muted">Polished narrative entries based on your session transcripts.</p>
+              <div class="script-panel__actions" style="margin: 0 0 0.75rem 0;">
+                <button type="button" id="campaignCreateJournalsBtn" class="btn btn--primary btn--small">
+                  Create journals (each character)
+                </button>
+                <span id="campaignJournalsStatus" class="status">Idle</span>
+              </div>
+              <div id="campaignJournalsList" class="journal-list"></div>
+            </section>
+
+            <section id="campaignTabScript" class="campaign-tab-panel" data-tab="script" hidden>
+              <div class="script-panel">
+                <p class="text-muted">Store prepared descriptions, encounter notes, or AI-generated flavor text for this campaign.</p>
+                <textarea
+                  id="campaignScriptPrompt"
+                  class="output__text script-panel__prompt"
+                  rows="4"
+                  placeholder="Describe the party's current location or status, and what kind of encounter you want to generate..."
+                ></textarea>
+                <div class="script-panel__actions">
+                  <button type="button" id="campaignScriptGenerateBtn" class="btn btn--primary btn--small">
+                    Generate encounter script
+                  </button>
+                  <span id="campaignScriptStatus" class="status script-panel__status">Idle</span>
+                </div>
+                <div id="campaignScriptsList" class="script-list"></div>
+              </div>
+            </section>
+
+            <section id="campaignTabDialogue" class="campaign-tab-panel" data-tab="dialogue" hidden>
+              <div class="dialogue-panel">
+                <p class="text-muted">Use live voice capture during your session. Transcripts here are tagged to this campaign for future journals and mechanics.</p>
+                <div class="controls dialogue-panel__controls">
+                  <button id="campaignDialogueStartBtn" class="btn btn--primary">Start Session Capture</button>
+                  <button id="campaignDialogueStopBtn" class="btn" disabled>Stop</button>
+                  <span id="campaignDialogueStatus" class="status">Idle</span>
+                </div>
+
+                <div
+                  id="dialogueContainer"
+                  class="chat-thread"
+                  role="log"
+                  aria-label="Campaign dialogue"
+                  aria-live="polite"
+                  aria-relevant="additions"
+                ></div>
+
+                <form id="dialogueComposer" class="chat-composer" autocomplete="off">
+                  <label for="dialogueTextInput" class="sr-only">Type a message</label>
+                  <input
+                    id="dialogueTextInput"
+                    class="chat-composer__input"
+                    type="text"
+                    inputmode="text"
+                    placeholder="Type a message…"
+                  />
+                  <button type="submit" id="dialogueSendBtn" class="btn btn--primary btn--small">
+                    Send
+                  </button>
+                </form>
+
+                <details class="dialogue-panel__raw">
+                  <summary class="text-muted">Full transcript (read-only)</summary>
+                  <textarea
+                    id="campaignDialogueTranscript"
+                    class="output__text dialogue-panel__transcript"
+                    rows="8"
+                    placeholder="Live session dialogue will appear here..."
+                    readonly
+                  ></textarea>
+                </details>
+                <p id="aiDmNotice" class="text-muted" hidden>
+                  ADA is acting as the Dungeon Master for this campaign. Type what your character does next and send it to continue the story.
+                </p>
+                <div class="ai-dm-panel" id="aiDmPanel" hidden>
+                  <div class="ai-dm__controls">
+                    <button type="button" id="aiDmRollBtn" class="btn btn--secondary btn--small">Roll d20</button>
+                    <span id="aiDmMechanics" class="ai-dm__mechanics text-muted"></span>
+                  </div>
+                </div>
+              </div>
+            </section>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script src="speech.js"></script>
+</body>
+</html>

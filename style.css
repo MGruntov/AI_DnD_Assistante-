@@ -108,52 +108,23 @@ h1, h2, h3, h4,
     radial-gradient(760px 300px at 92% 18%, rgba(224, 28, 41, 0.09), transparent 62%),
     linear-gradient(180deg, rgba(255, 255, 255, 0.92) 0%, rgba(255, 253, 250, 0.98) 36%, rgba(251, 246, 236, 0.98) 100%);
   box-shadow: var(--shadow-soft);
-  border: 2px solid rgba(224, 28, 41, 0.82);
+  border: 1px solid rgba(224, 28, 41, 0.32);
   box-shadow:
-    inset 0 0 0 2px rgba(243, 203, 112, 0.72),
+    inset 0 0 0 1px rgba(243, 203, 112, 0.50),
     0 22px 55px rgba(30, 23, 18, 0.14);
 }
-
-/* Corner dragon sigils (subtle but unmistakable) */
-.app::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  pointer-events: none;
-  opacity: 0.95;
-  background-repeat: no-repeat;
-  background-size: 92px 92px;
-  background-position:
-    10px 10px,
-    calc(100% - 10px) 10px,
-    10px calc(100% - 10px),
-    calc(100% - 10px) calc(100% - 10px);
-  background-image:
-    url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2064%2064'%3E%3Ccircle%20cx='32'%20cy='32'%20r='26'%20fill='none'%20stroke='%23E01C29'%20stroke-width='2'%20stroke-opacity='0.22'/%3E%3Ccircle%20cx='32'%20cy='32'%20r='21'%20fill='none'%20stroke='%23F3CB70'%20stroke-width='2'%20stroke-opacity='0.32'%20stroke-dasharray='2%204'/%3E%3Cpath%20d='M12%2031%20C19%2021%2026%2018%2032%2022%20C38%2018%2045%2021%2052%2031'%20fill='none'%20stroke='%23E01C29'%20stroke-width='2'%20stroke-opacity='0.20'%20stroke-linecap='round'/%3E%3Cpath%20d='M16%2042%20C22%2037%2028%2035%2032%2038%20C36%2035%2042%2037%2048%2042'%20fill='none'%20stroke='%23F3CB70'%20stroke-width='2'%20stroke-opacity='0.26'%20stroke-linecap='round'/%3E%3Cpath%20d='M32%2016%20L36%2024%20L32%2022%20L28%2024%20Z'%20fill='%23E01C29'%20fill-opacity='0.16'/%3E%3Cpath%20d='M32%2048%20L40%2040%20L32%2044%20L24%2040%20Z'%20fill='%23F3CB70'%20fill-opacity='0.16'/%3E%3C/svg%3E"),
-    url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2064%2064'%3E%3Ccircle%20cx='32'%20cy='32'%20r='26'%20fill='none'%20stroke='%23E01C29'%20stroke-width='2'%20stroke-opacity='0.22'/%3E%3Ccircle%20cx='32'%20cy='32'%20r='21'%20fill='none'%20stroke='%23F3CB70'%20stroke-width='2'%20stroke-opacity='0.32'%20stroke-dasharray='2%204'/%3E%3Cpath%20d='M12%2031%20C19%2021%2026%2018%2032%2022%20C38%2018%2045%2021%2052%2031'%20fill='none'%20stroke='%23E01C29'%20stroke-width='2'%20stroke-opacity='0.20'%20stroke-linecap='round'/%3E%3Cpath%20d='M16%2042%20C22%2037%2028%2035%2032%2038%20C36%2035%2042%2037%2048%2042'%20fill='none'%20stroke='%23F3CB70'%20stroke-width='2'%20stroke-opacity='0.26'%20stroke-linecap='round'/%3E%3Cpath%20d='M32%2016%20L36%2024%20L32%2022%20L28%2024%20Z'%20fill='%23E01C29'%20fill-opacity='0.16'/%3E%3Cpath%20d='M32%2048%20L40%2040%20L32%2044%20L24%2040%20Z'%20fill='%23F3CB70'%20fill-opacity='0.16'/%3E%3C/svg%3E"),
-    url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2064%2064'%3E%3Ccircle%20cx='32'%20cy='32'%20r='26'%20fill='none'%20stroke='%23E01C29'%20stroke-width='2'%20stroke-opacity='0.22'/%3E%3Ccircle%20cx='32'%20cy='32'%20r='21'%20fill='none'%20stroke='%23F3CB70'%20stroke-width='2'%20stroke-opacity='0.32'%20stroke-dasharray='2%204'/%3E%3Cpath%20d='M12%2031%20C19%2021%2026%2018%2032%2022%20C38%2018%2045%2021%2052%2031'%20fill='none'%20stroke='%23E01C29'%20stroke-width='2'%20stroke-opacity='0.20'%20stroke-linecap='round'/%3E%3Cpath%20d='M16%2042%20C22%2037%2028%2035%2032%2038%20C36%2035%2042%2037%2048%2042'%20fill='none'%20stroke='%23F3CB70'%20stroke-width='2'%20stroke-opacity='0.26'%20stroke-linecap='round'/%3E%3Cpath%20d='M32%2016%20L36%2024%20L32%2022%20L28%2024%20Z'%20fill='%23E01C29'%20fill-opacity='0.16'/%3E%3Cpath%20d='M32%2048%20L40%2040%20L32%2044%20L24%2040%20Z'%20fill='%23F3CB70'%20fill-opacity='0.16'/%3E%3C/svg%3E"),
-    url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2064%2064'%3E%3Ccircle%20cx='32'%20cy='32'%20r='26'%20fill='none'%20stroke='%23E01C29'%20stroke-width='2'%20stroke-opacity='0.22'/%3E%3Ccircle%20cx='32'%20cy='32'%20r='21'%20fill='none'%20stroke='%23F3CB70'%20stroke-width='2'%20stroke-opacity='0.32'%20stroke-dasharray='2%204'/%3E%3Cpath%20d='M12%2031%20C19%2021%2026%2018%2032%2022%20C38%2018%2045%2021%2052%2031'%20fill='none'%20stroke='%23E01C29'%20stroke-width='2'%20stroke-opacity='0.20'%20stroke-linecap='round'/%3E%3Cpath%20d='M16%2042%20C22%2037%2028%2035%2032%2038%20C36%2035%2042%2037%2048%2042'%20fill='none'%20stroke='%23F3CB70'%20stroke-width='2'%20stroke-opacity='0.26'%20stroke-linecap='round'/%3E%3Cpath%20d='M32%2016%20L36%2024%20L32%2022%20L28%2024%20Z'%20fill='%23E01C29'%20fill-opacity='0.16'/%3E%3Cpath%20d='M32%2048%20L40%2040%20L32%2044%20L24%2040%20Z'%20fill='%23F3CB70'%20fill-opacity='0.16'/%3E%3C/svg%3E");
-  mix-blend-mode: multiply;
-}
-
-/* Dragon-scale / wing border motif (falls back gracefully if masking isn't supported) */
+/* Celtic ornament border motif (two-color knotwork, same palette) */
 .app::after {
   content: "";
   position: absolute;
   inset: 0;
   border-radius: inherit;
-  padding: 12px;
+  padding: 14px;
   pointer-events: none;
-  opacity: 0.55;
-  background:
-    repeating-linear-gradient(
-      45deg,
-      rgba(224, 28, 41, 0.18) 0px,
-      rgba(224, 28, 41, 0.18) 10px,
-      rgba(243, 203, 112, 0.18) 10px,
-      rgba(243, 203, 112, 0.18) 20px
-    );
+  opacity: 0.62;
+  background-repeat: repeat;
+  background-size: 96px 96px;
+  background-image: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='96'%20height='96'%20viewBox='0%200%2096%2096'%3E%3Crect%20x='0'%20y='0'%20width='96'%20height='96'%20fill='none'/%3E%3Cg%20fill='none'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Cpath%20d='M12%2048%20C12%2030%2030%2012%2048%2012%20C66%2012%2084%2030%2084%2048%20C84%2066%2066%2084%2048%2084%20C30%2084%2012%2066%2012%2048Z'%20stroke='%23E01C29'%20stroke-opacity='0.28'%20stroke-width='4'/%3E%3Cpath%20d='M24%2048%20C24%2036%2036%2024%2048%2024%20C60%2024%2072%2036%2072%2048%20C72%2060%2060%2072%2048%2072%20C36%2072%2024%2060%2024%2048Z'%20stroke='%23F3CB70'%20stroke-opacity='0.34'%20stroke-width='3'/%3E%3Cpath%20d='M12%2048%20H24%20M72%2048%20H84%20M48%2012%20V24%20M48%2072%20V84'%20stroke='%23E01C29'%20stroke-opacity='0.18'%20stroke-width='4'/%3E%3Cpath%20d='M24%2048%20H36%20M60%2048%20H72%20M48%2024%20V36%20M48%2060%20V72'%20stroke='%23F3CB70'%20stroke-opacity='0.20'%20stroke-width='3'/%3E%3C/g%3E%3C/svg%3E");
   -webkit-mask:
     linear-gradient(#000 0 0) content-box,
     linear-gradient(#000 0 0);
@@ -173,6 +144,28 @@ h1, h2, h3, h4,
   align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
+}
+
+.app__header-main {
+  position: relative;
+  padding-right: 104px;
+}
+
+/* Explicit dragon head silhouette (single, tasteful) */
+.app__header-main::after {
+  content: "";
+  position: absolute;
+  right: -10px;
+  top: -18px;
+  width: 150px;
+  height: 150px;
+  pointer-events: none;
+  opacity: 0.22;
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: contain;
+  background-image: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%20200%20200'%3E%3Cpath%20d='M150%2048%20c-14%200-23%207-31%2016%20c-11-8-25-10-39-6%20c-13%204-23%2013-28%2026%20c-6%2016-2%2034%2013%2045%20c-7%208-10%2018-10%2028%20c0%2017%2010%2031%2027%2037%20c-4%202-8%203-12%203%20c-12%201-23-3-33-10%20c9%2022%2030%2036%2056%2036%20c24%200%2046-11%2059-29%20c12-17%2016-40%208-60%20c10-12%2014-26%2012-41%20c-2-20-18-41-42-45%20c7-9%2010-17%209-27%20c-1-14-11-23-19-23%20Z'%20fill='%23E01C29'%20fill-opacity='0.22'/%3E%3Cpath%20d='M150%2048%20c-14%200-23%207-31%2016%20c-11-8-25-10-39-6%20c-13%204-23%2013-28%2026%20c-6%2016-2%2034%2013%2045%20c-7%208-10%2018-10%2028%20c0%2017%2010%2031%2027%2037%20c-4%202-8%203-12%203%20c-12%201-23-3-33-10%20c9%2022%2030%2036%2056%2036%20c24%200%2046-11%2059-29%20c12-17%2016-40%208-60%20c10-12%2014-26%2012-41%20c-2-20-18-41-42-45%20c7-9%2010-17%209-27%20c-1-14-11-23-19-23%20Z'%20fill='none'%20stroke='%23F3CB70'%20stroke-opacity='0.30'%20stroke-width='6'%20stroke-linejoin='round'/%3E%3Cpath%20d='M116%2086%20c8%200%2014%206%2014%2014%20c0%207-6%2013-14%2013%20c-7%200-13-6-13-13%20c0-8%206-14%2013-14%20Z'%20fill='%23F3CB70'%20fill-opacity='0.14'/%3E%3C/svg%3E");
+  filter: drop-shadow(0 12px 22px rgba(30, 23, 18, 0.10));
 }
 
 .brand {
@@ -1594,23 +1587,6 @@ h1, h2, h3, h4,
   overflow: hidden;
 }
 
-/* Scale band / wing ridge at the top of key headers */
-.workspace__header::before {
-  content: "";
-  position: absolute;
-  left: 10px;
-  right: 10px;
-  top: 8px;
-  height: 18px;
-  border-radius: 999px;
-  pointer-events: none;
-  opacity: 0.45;
-  background:
-    radial-gradient(circle at 8px 10px, rgba(224, 28, 41, 0.22) 0 7px, transparent 8px) 0 0 / 16px 18px repeat-x,
-    radial-gradient(circle at 8px 10px, rgba(243, 203, 112, 0.26) 0 6px, transparent 7px) 8px 0 / 16px 18px repeat-x;
-  filter: blur(0.15px);
-}
-
 .workspace__title h2 {
   margin: 0 0 2px;
   font-size: 1.15rem;
@@ -1642,20 +1618,6 @@ h1, h2, h3, h4,
   box-shadow: var(--shadow-tight);
   position: relative;
   overflow: hidden;
-}
-
-/* Faint “Order of the Dragon” seal watermark inside panels */
-.panel::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  opacity: 0.22;
-  background-repeat: no-repeat;
-  background-position: right -24px top -24px;
-  background-size: 220px 220px;
-  background-image: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%20200%20200'%3E%3Ccircle%20cx='100'%20cy='100'%20r='84'%20fill='none'%20stroke='%23E01C29'%20stroke-width='3'%20stroke-opacity='0.12'/%3E%3Ccircle%20cx='100'%20cy='100'%20r='70'%20fill='none'%20stroke='%23F3CB70'%20stroke-width='3'%20stroke-opacity='0.14'%20stroke-dasharray='3%207'/%3E%3Cpath%20d='M40%2098%20C62%2064%2081%2056%20100%2068%20C119%2056%20138%2064%20160%2098'%20fill='none'%20stroke='%23E01C29'%20stroke-width='5'%20stroke-opacity='0.10'%20stroke-linecap='round'/%3E%3Cpath%20d='M58%20132%20C72%20118%2086%20112%20100%20122%20C114%20112%20128%20118%20142%20132'%20fill='none'%20stroke='%23F3CB70'%20stroke-width='5'%20stroke-opacity='0.10'%20stroke-linecap='round'/%3E%3Cpath%20d='M100%2048%20L112%2072%20L100%2066%20L88%2072%20Z'%20fill='%23E01C29'%20fill-opacity='0.08'/%3E%3Cpath%20d='M100%20156%20L128%20128%20L100%20140%20L72%20128%20Z'%20fill='%23F3CB70'%20fill-opacity='0.08'/%3E%3C/svg%3E");
-  mix-blend-mode: multiply;
 }
 
 .panel--compact {

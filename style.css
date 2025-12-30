@@ -114,6 +114,29 @@ h1, h2, h3, h4,
     0 22px 55px rgba(30, 23, 18, 0.14);
 }
 
+/* Corner dragon sigils (subtle but unmistakable) */
+.app::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  opacity: 0.95;
+  background-repeat: no-repeat;
+  background-size: 92px 92px;
+  background-position:
+    10px 10px,
+    calc(100% - 10px) 10px,
+    10px calc(100% - 10px),
+    calc(100% - 10px) calc(100% - 10px);
+  background-image:
+    url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2064%2064'%3E%3Ccircle%20cx='32'%20cy='32'%20r='26'%20fill='none'%20stroke='%23E01C29'%20stroke-width='2'%20stroke-opacity='0.22'/%3E%3Ccircle%20cx='32'%20cy='32'%20r='21'%20fill='none'%20stroke='%23F3CB70'%20stroke-width='2'%20stroke-opacity='0.32'%20stroke-dasharray='2%204'/%3E%3Cpath%20d='M12%2031%20C19%2021%2026%2018%2032%2022%20C38%2018%2045%2021%2052%2031'%20fill='none'%20stroke='%23E01C29'%20stroke-width='2'%20stroke-opacity='0.20'%20stroke-linecap='round'/%3E%3Cpath%20d='M16%2042%20C22%2037%2028%2035%2032%2038%20C36%2035%2042%2037%2048%2042'%20fill='none'%20stroke='%23F3CB70'%20stroke-width='2'%20stroke-opacity='0.26'%20stroke-linecap='round'/%3E%3Cpath%20d='M32%2016%20L36%2024%20L32%2022%20L28%2024%20Z'%20fill='%23E01C29'%20fill-opacity='0.16'/%3E%3Cpath%20d='M32%2048%20L40%2040%20L32%2044%20L24%2040%20Z'%20fill='%23F3CB70'%20fill-opacity='0.16'/%3E%3C/svg%3E"),
+    url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2064%2064'%3E%3Ccircle%20cx='32'%20cy='32'%20r='26'%20fill='none'%20stroke='%23E01C29'%20stroke-width='2'%20stroke-opacity='0.22'/%3E%3Ccircle%20cx='32'%20cy='32'%20r='21'%20fill='none'%20stroke='%23F3CB70'%20stroke-width='2'%20stroke-opacity='0.32'%20stroke-dasharray='2%204'/%3E%3Cpath%20d='M12%2031%20C19%2021%2026%2018%2032%2022%20C38%2018%2045%2021%2052%2031'%20fill='none'%20stroke='%23E01C29'%20stroke-width='2'%20stroke-opacity='0.20'%20stroke-linecap='round'/%3E%3Cpath%20d='M16%2042%20C22%2037%2028%2035%2032%2038%20C36%2035%2042%2037%2048%2042'%20fill='none'%20stroke='%23F3CB70'%20stroke-width='2'%20stroke-opacity='0.26'%20stroke-linecap='round'/%3E%3Cpath%20d='M32%2016%20L36%2024%20L32%2022%20L28%2024%20Z'%20fill='%23E01C29'%20fill-opacity='0.16'/%3E%3Cpath%20d='M32%2048%20L40%2040%20L32%2044%20L24%2040%20Z'%20fill='%23F3CB70'%20fill-opacity='0.16'/%3E%3C/svg%3E"),
+    url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2064%2064'%3E%3Ccircle%20cx='32'%20cy='32'%20r='26'%20fill='none'%20stroke='%23E01C29'%20stroke-width='2'%20stroke-opacity='0.22'/%3E%3Ccircle%20cx='32'%20cy='32'%20r='21'%20fill='none'%20stroke='%23F3CB70'%20stroke-width='2'%20stroke-opacity='0.32'%20stroke-dasharray='2%204'/%3E%3Cpath%20d='M12%2031%20C19%2021%2026%2018%2032%2022%20C38%2018%2045%2021%2052%2031'%20fill='none'%20stroke='%23E01C29'%20stroke-width='2'%20stroke-opacity='0.20'%20stroke-linecap='round'/%3E%3Cpath%20d='M16%2042%20C22%2037%2028%2035%2032%2038%20C36%2035%2042%2037%2048%2042'%20fill='none'%20stroke='%23F3CB70'%20stroke-width='2'%20stroke-opacity='0.26'%20stroke-linecap='round'/%3E%3Cpath%20d='M32%2016%20L36%2024%20L32%2022%20L28%2024%20Z'%20fill='%23E01C29'%20fill-opacity='0.16'/%3E%3Cpath%20d='M32%2048%20L40%2040%20L32%2044%20L24%2040%20Z'%20fill='%23F3CB70'%20fill-opacity='0.16'/%3E%3C/svg%3E"),
+    url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2064%2064'%3E%3Ccircle%20cx='32'%20cy='32'%20r='26'%20fill='none'%20stroke='%23E01C29'%20stroke-width='2'%20stroke-opacity='0.22'/%3E%3Ccircle%20cx='32'%20cy='32'%20r='21'%20fill='none'%20stroke='%23F3CB70'%20stroke-width='2'%20stroke-opacity='0.32'%20stroke-dasharray='2%204'/%3E%3Cpath%20d='M12%2031%20C19%2021%2026%2018%2032%2022%20C38%2018%2045%2021%2052%2031'%20fill='none'%20stroke='%23E01C29'%20stroke-width='2'%20stroke-opacity='0.20'%20stroke-linecap='round'/%3E%3Cpath%20d='M16%2042%20C22%2037%2028%2035%2032%2038%20C36%2035%2042%2037%2048%2042'%20fill='none'%20stroke='%23F3CB70'%20stroke-width='2'%20stroke-opacity='0.26'%20stroke-linecap='round'/%3E%3Cpath%20d='M32%2016%20L36%2024%20L32%2022%20L28%2024%20Z'%20fill='%23E01C29'%20fill-opacity='0.16'/%3E%3Cpath%20d='M32%2048%20L40%2040%20L32%2044%20L24%2040%20Z'%20fill='%23F3CB70'%20fill-opacity='0.16'/%3E%3C/svg%3E");
+  mix-blend-mode: multiply;
+}
+
 /* Dragon-scale / wing border motif (falls back gracefully if masking isn't supported) */
 .app::after {
   content: "";
@@ -1544,7 +1567,7 @@ h1, h2, h3, h4,
   margin: 4px 0;
 }
 
-/* ---------- High-Fantasy Parchment Workspace (Forge + HUD) ---------- */
+/* ---------- The Paladin’s Vow Workspace (Forge + HUD) ---------- */
 
 .text-muted {
   color: var(--ink-muted);
@@ -1567,6 +1590,25 @@ h1, h2, h3, h4,
   background:
     radial-gradient(550px 220px at 18% 0%, rgba(176, 137, 47, 0.14), transparent 62%),
     linear-gradient(180deg, rgba(255, 255, 255, 0.78), rgba(247, 239, 223, 0.95));
+  position: relative;
+  overflow: hidden;
+}
+
+/* Scale band / wing ridge at the top of key headers */
+.workspace__header::before {
+  content: "";
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  top: 8px;
+  height: 18px;
+  border-radius: 999px;
+  pointer-events: none;
+  opacity: 0.45;
+  background:
+    radial-gradient(circle at 8px 10px, rgba(224, 28, 41, 0.22) 0 7px, transparent 8px) 0 0 / 16px 18px repeat-x,
+    radial-gradient(circle at 8px 10px, rgba(243, 203, 112, 0.26) 0 6px, transparent 7px) 8px 0 / 16px 18px repeat-x;
+  filter: blur(0.15px);
 }
 
 .workspace__title h2 {
@@ -1598,6 +1640,22 @@ h1, h2, h3, h4,
     radial-gradient(650px 240px at 10% 0%, rgba(176, 137, 47, 0.1), transparent 62%),
     linear-gradient(180deg, rgba(255, 255, 255, 0.75), rgba(247, 239, 223, 0.95));
   box-shadow: var(--shadow-tight);
+  position: relative;
+  overflow: hidden;
+}
+
+/* Faint “Order of the Dragon” seal watermark inside panels */
+.panel::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.22;
+  background-repeat: no-repeat;
+  background-position: right -24px top -24px;
+  background-size: 220px 220px;
+  background-image: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%20200%20200'%3E%3Ccircle%20cx='100'%20cy='100'%20r='84'%20fill='none'%20stroke='%23E01C29'%20stroke-width='3'%20stroke-opacity='0.12'/%3E%3Ccircle%20cx='100'%20cy='100'%20r='70'%20fill='none'%20stroke='%23F3CB70'%20stroke-width='3'%20stroke-opacity='0.14'%20stroke-dasharray='3%207'/%3E%3Cpath%20d='M40%2098%20C62%2064%2081%2056%20100%2068%20C119%2056%20138%2064%20160%2098'%20fill='none'%20stroke='%23E01C29'%20stroke-width='5'%20stroke-opacity='0.10'%20stroke-linecap='round'/%3E%3Cpath%20d='M58%20132%20C72%20118%2086%20112%20100%20122%20C114%20112%20128%20118%20142%20132'%20fill='none'%20stroke='%23F3CB70'%20stroke-width='5'%20stroke-opacity='0.10'%20stroke-linecap='round'/%3E%3Cpath%20d='M100%2048%20L112%2072%20L100%2066%20L88%2072%20Z'%20fill='%23E01C29'%20fill-opacity='0.08'/%3E%3Cpath%20d='M100%20156%20L128%20128%20L100%20140%20L72%20128%20Z'%20fill='%23F3CB70'%20fill-opacity='0.08'/%3E%3C/svg%3E");
+  mix-blend-mode: multiply;
 }
 
 .panel--compact {

@@ -26,13 +26,6 @@
   const extractionFeedEl = document.getElementById("extractionFeed");
   const autoPortraitsToggle = document.getElementById("autoPortraitsToggle");
 
-  const hudActiveCharacterMetaEl = document.getElementById("hudActiveCharacterMeta");
-  const hudChangeCharacterBtn = document.getElementById("hudChangeCharacterBtn");
-  const hudRollLogEl = document.getElementById("hudRollLog");
-  const hudDiceButtons = Array.from(document.querySelectorAll(".dice__btn"));
-  const sessionNotesEl = document.getElementById("sessionNotes");
-  const sessionNotesStatusEl = document.getElementById("sessionNotesStatus");
-
   const profileSection = document.getElementById("profileSection");
   const campaignsSection = document.getElementById("campaignsSection");
   const vaultSection = document.getElementById("vaultSection");
@@ -128,33 +121,11 @@
     document.querySelectorAll(".portrait-card__select-btn")
   );
 
-  // Rules Lookup Elements
-  const rulesLookupInput = document.getElementById("rulesLookupInput");
-  const rulesLookupBtn = document.getElementById("rulesLookupBtn");
-  const rulesLookupResults = document.getElementById("rulesLookupResults");
-  const rulesResultTitle = document.getElementById("rulesResultTitle");
-  const rulesResultText = document.getElementById("rulesResultText");
-  const rulesResultSource = document.getElementById("rulesResultSource");
-  const rulesLookupPrevBtn = document.getElementById("rulesLookupPrevBtn");
-  const rulesLookupNextBtn = document.getElementById("rulesLookupNextBtn");
-  const rulesLookupCounter = document.getElementById("rulesLookupCounter");
-  const rulesLookupMessage = document.getElementById("rulesLookupMessage");
-
-  // Rules Lookup State
-  let rulesLookupState = {
-    results: [],
-    currentIndex: 0,
-  };
-
-  let rulesLookupDebounceTimer = null;
-  let rulesLookupAbortController = null;
-  let rulesLookupRequestSeq = 0;
-  let rulesLookupLastIssuedQuery = "";
-
   const PORTRAIT_STORAGE_KEY = "adaCurrentCharacterPortraitUrl";
   const CURRENT_USER_STORAGE_KEY = "adaCurrentUser";
   const ACTIVE_CAMPAIGN_STORAGE_KEY = "adaActiveCampaignId";
   const ACTIVE_CHARACTER_STORAGE_KEY = "adaActiveCharacterId";
+  const POST_SELECT_TARGET_STORAGE_KEY = "adaPostSelectTarget";
 
   const CURRENT_PAGE = (() => {
     try {
@@ -198,6 +169,47 @@
     window.location.href = href;
   }
 
+  function setPostSelectTarget(targetPage) {
+    try {
+      if (targetPage) {
+        localStorage.setItem(POST_SELECT_TARGET_STORAGE_KEY, String(targetPage));
+      } else {
+        localStorage.removeItem(POST_SELECT_TARGET_STORAGE_KEY);
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  function consumePostSelectTarget() {
+    try {
+      const t = localStorage.getItem(POST_SELECT_TARGET_STORAGE_KEY);
+      if (t) localStorage.removeItem(POST_SELECT_TARGET_STORAGE_KEY);
+      return t ? String(t) : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function emitAdaEvent(name, detail) {
+    try {
+      window.dispatchEvent(new CustomEvent(name, { detail }));
+    } catch {
+      // ignore
+    }
+  }
+
+  function notifyActiveCharacterChanged() {
+    emitAdaEvent("ada:active-character-changed", { character: activeCharacter || null });
+  }
+
+  function notifyActiveCampaignChanged() {
+    emitAdaEvent("ada:active-campaign-changed", {
+      campaignId: activeCampaignId || null,
+      campaign: activeCampaign || null,
+    });
+  }
+
   let activeCampaignId = null;
   let activeCampaign = null;
   let activeCharacter = null;
@@ -209,7 +221,6 @@
   let lastAutoPortraitAt = 0;
   let lastAutoPortraitSignature = "";
   let extractionUpdateTimer = null;
-  let notesSaveTimer = null;
   // Backend API base URL (Cloudflare Worker)
   // Automatically use localhost for development, production URL otherwise
   const isDevelopment = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' || window.location.hostname === '0.0.0.0';
@@ -348,29 +359,9 @@
     }
   }
 
-  function updateHudActiveCharacterUI() {
-    if (!hudActiveCharacterMetaEl) return;
-    if (!activeCharacter) {
-      hudActiveCharacterMetaEl.textContent = "No character selected yet.";
-      return;
-    }
-    const name = activeCharacter.name || "Unnamed Adventurer";
-    const race = activeCharacter.concept?.race || "";
-    const cls = activeCharacter.concept?.classSummary || "Adventurer";
-    const level = activeCharacter.concept?.levelSummary || "";
-    const bits = [name, [race, cls].filter(Boolean).join(" "), level ? `Lv ${level}` : ""]
-      .filter(Boolean)
-      .join(" • ");
-    hudActiveCharacterMetaEl.textContent = bits;
-  }
-
   function setActiveCharacter(character, { persist = true } = {}) {
     activeCharacter = character || null;
-    updateHudActiveCharacterUI();
-    // Chronicle notes are scoped by (campaign, character).
-    if (sessionNotesEl) {
-      loadSessionNotesFromStorage();
-    }
+    notifyActiveCharacterChanged();
     if (!persist) return;
     try {
       if (activeCharacter && activeCharacter.id) {
@@ -385,8 +376,11 @@
 
   function requestHudCharacterSelection(message) {
     awaitingHudCharacterSelect = true;
-    if (hudActiveCharacterMetaEl && message) {
-      hudActiveCharacterMetaEl.textContent = message;
+    if (message) {
+      emitAdaEvent("ada:hud-message", { message: String(message) });
+    }
+    if (MULTI_PAGE) {
+      setPostSelectTarget("hud");
     }
     showView("vault");
   }
@@ -707,12 +701,6 @@
     // We keep internal toggles like "campaign-detail" inside campaigns.html and
     // vault list/detail inside vault.html.
     if (MULTI_PAGE) {
-      if (next === "hud" && !activeCharacter) {
-        awaitingHudCharacterSelect = true;
-        navigateTo("vault");
-        return;
-      }
-
       if (next === "forge" || next === "hud" || next === "vault" || next === "campaigns" || next === "profile" || next === "auth-login" || next === "auth-register") {
         navigateTo(next);
         return;
@@ -740,7 +728,7 @@
     if (isWorkspaceView) {
       setWorkspaceView(next);
       if (next === "hud") {
-        updateHudActiveCharacterUI();
+        notifyActiveCharacterChanged();
       }
     }
     if (vaultSection) {
@@ -1746,8 +1734,8 @@
     activeCampaignId = campaign.id;
     activeCampaign = campaign;
 
-    // Chronicle notes are scoped by (campaign, character).
-    loadSessionNotesFromStorage();
+    // Chronicle notes are handled by the HUD module.
+    notifyActiveCampaignChanged();
 
     // Reset dialogue transcript when switching to a different campaign
     if (campaignDialogueTranscriptEl) {
@@ -2136,6 +2124,16 @@
     vaultListView.hidden = true;
     vaultDetailView.hidden = false;
 
+    // If the user was trying to enter the Session HUD, selecting a character
+    // should return them there.
+    if (MULTI_PAGE) {
+      const target = consumePostSelectTarget();
+      if (target === "hud") {
+        navigateTo("hud");
+        return;
+      }
+    }
+
     if (awaitingHudCharacterSelect) {
       awaitingHudCharacterSelect = false;
       showView("hud");
@@ -2204,14 +2202,9 @@
       // Best-effort restoration of the previously active character.
       // Safe on non-vault pages because silent mode doesn't touch vault DOM.
       loadVaultCharacters({ silent: true }).then(() => {
-        if (CURRENT_PAGE === "hud" && !activeCharacter) {
-          awaitingHudCharacterSelect = true;
-          navigateTo("vault");
-          return;
-        }
         if (CURRENT_PAGE === "hud") {
-          updateHudActiveCharacterUI();
-          loadSessionNotesFromStorage();
+          notifyActiveCharacterChanged();
+          notifyActiveCampaignChanged();
         }
       });
 
@@ -2257,88 +2250,12 @@
     });
   }
 
-  if (hudChangeCharacterBtn) {
-    hudChangeCharacterBtn.addEventListener("click", () => {
-      requestHudCharacterSelection("Choose an active character to enter the Session HUD.");
-    });
-  }
-
   if (transcriptEl) {
     transcriptEl.addEventListener("input", () => {
       scheduleExtractionUpdate(transcriptEl.value || "");
     });
     // Initial render
     scheduleExtractionUpdate(transcriptEl.value || "");
-  }
-
-  if (hudDiceButtons.length && hudRollLogEl) {
-    const rollHistory = [];
-
-    function logRoll({ die, result }) {
-      const now = new Date();
-      const stamp = now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-      const item = { die, result, stamp };
-      rollHistory.unshift(item);
-      if (rollHistory.length > 40) rollHistory.pop();
-
-      hudRollLogEl.innerHTML = "";
-      rollHistory.forEach((r) => {
-        const li = document.createElement("li");
-        li.className = "roll-log__item";
-        li.innerHTML = `Rolled d${r.die}: <b>${r.result}</b> <span>(${r.stamp})</span>`;
-        hudRollLogEl.appendChild(li);
-      });
-    }
-
-    hudDiceButtons.forEach((btn) => {
-      btn.addEventListener("click", () => {
-        const die = Number(btn.getAttribute("data-die"));
-        if (!Number.isFinite(die) || die <= 0) return;
-        const result = Math.floor(Math.random() * die) + 1;
-        btn.classList.remove("dice__btn--popped");
-        // restart animation
-        void btn.offsetWidth;
-        btn.classList.add("dice__btn--popped");
-        logRoll({ die, result });
-      });
-    });
-  }
-
-  function currentNotesStorageKey() {
-    const ch = activeCharacter && activeCharacter.id ? String(activeCharacter.id) : "none";
-    const camp = activeCampaignId ? String(activeCampaignId) : "no-campaign";
-    return `adaSessionNotes:${camp}:${ch}`;
-  }
-
-  function loadSessionNotesFromStorage() {
-    if (!sessionNotesEl) return;
-    try {
-      const key = currentNotesStorageKey();
-      const raw = localStorage.getItem(key) || "";
-      sessionNotesEl.value = raw;
-      if (sessionNotesStatusEl) sessionNotesStatusEl.textContent = "";
-    } catch {
-      // ignore
-    }
-  }
-
-  function scheduleSaveSessionNotes() {
-    if (!sessionNotesEl) return;
-    if (notesSaveTimer) window.clearTimeout(notesSaveTimer);
-    if (sessionNotesStatusEl) sessionNotesStatusEl.textContent = "Saving…";
-    notesSaveTimer = window.setTimeout(() => {
-      try {
-        localStorage.setItem(currentNotesStorageKey(), sessionNotesEl.value || "");
-        if (sessionNotesStatusEl) sessionNotesStatusEl.textContent = "Saved.";
-      } catch {
-        if (sessionNotesStatusEl) sessionNotesStatusEl.textContent = "Could not save on this device.";
-      }
-    }, 350);
-  }
-
-  if (sessionNotesEl) {
-    sessionNotesEl.addEventListener("input", scheduleSaveSessionNotes);
-    loadSessionNotesFromStorage();
   }
 
   if (showRegisterBtn) {
@@ -2602,7 +2519,7 @@
         } catch {
           // ignore
         }
-        loadSessionNotesFromStorage();
+        notifyActiveCampaignChanged();
         showView("campaigns");
         loadCampaigns("all");
         loadAdventuresAndCharacters();
@@ -2662,7 +2579,7 @@
       } catch {
         // ignore
       }
-      loadSessionNotesFromStorage();
+      notifyActiveCampaignChanged();
       showView("campaigns");
       loadCampaigns("all");
     });
@@ -3121,202 +3038,29 @@
     });
   }
 
-  // Rules Lookup Event Listeners
-  if (rulesLookupBtn) {
-    rulesLookupBtn.addEventListener("click", () => {
-      performRulesLookup({ immediate: true });
-    });
-  }
+  // Expose a small, stable API for page modules (e.g., HUD).
+  (function exposeAdaApi() {
+    const root = window;
+    const ada = root.ADA && typeof root.ADA === "object" ? root.ADA : {};
 
-  if (rulesLookupInput) {
-    rulesLookupInput.addEventListener("keydown", (event) => {
-      if (event.key === "Enter") {
-        event.preventDefault();
-        performRulesLookup({ immediate: true });
-      }
-    });
+    ada.config = ada.config && typeof ada.config === "object" ? ada.config : {};
+    ada.config.BACKEND_BASE_URL = BACKEND_BASE_URL;
 
-    // Typeahead: show results as the user types, without spamming the backend.
-    rulesLookupInput.addEventListener("input", () => {
-      scheduleRulesLookup(rulesLookupInput.value);
-    });
-  }
+    ada.storageKeys = {
+      CURRENT_USER: CURRENT_USER_STORAGE_KEY,
+      ACTIVE_CAMPAIGN_ID: ACTIVE_CAMPAIGN_STORAGE_KEY,
+      ACTIVE_CHARACTER_ID: ACTIVE_CHARACTER_STORAGE_KEY,
+      POST_SELECT_TARGET: POST_SELECT_TARGET_STORAGE_KEY,
+    };
 
-  if (rulesLookupNextBtn) {
-    rulesLookupNextBtn.addEventListener("click", () => {
-      if (rulesLookupState.currentIndex < rulesLookupState.results.length - 1) {
-        rulesLookupState.currentIndex++;
-        displayRulesResult();
-      }
-    });
-  }
+    ada.getCurrentUser = getCurrentUser;
+    ada.getActiveCampaignId = () => activeCampaignId;
+    ada.getActiveCharacter = () => activeCharacter;
+    ada.setActiveCharacter = setActiveCharacter;
+    ada.requestHudCharacterSelection = requestHudCharacterSelection;
+    ada.navigateTo = navigateTo;
+    ada.showView = showView;
 
-  if (rulesLookupPrevBtn) {
-    rulesLookupPrevBtn.addEventListener("click", () => {
-      if (rulesLookupState.currentIndex > 0) {
-        rulesLookupState.currentIndex--;
-        displayRulesResult();
-      }
-    });
-  }
-
-  /**
-   * Perform rules lookup by querying the backend
-   */
-  function scheduleRulesLookup(rawQuery) {
-    const query = String(rawQuery || "").trim();
-
-    if (rulesLookupDebounceTimer) window.clearTimeout(rulesLookupDebounceTimer);
-
-    if (!query) {
-      // Clear UI when user clears the input.
-      rulesLookupState.results = [];
-      rulesLookupState.currentIndex = 0;
-      if (rulesLookupMessage) rulesLookupMessage.textContent = "";
-      if (rulesLookupResults) rulesLookupResults.hidden = true;
-      // Cancel any in-flight request.
-      if (rulesLookupAbortController) {
-        rulesLookupAbortController.abort();
-        rulesLookupAbortController = null;
-      }
-      return;
-    }
-
-    // Keep the backend happy: wait for enough signal.
-    if (query.length < 2) {
-      if (rulesLookupMessage) rulesLookupMessage.textContent = "Keep typing…";
-      if (rulesLookupResults) rulesLookupResults.hidden = true;
-      return;
-    }
-
-    rulesLookupDebounceTimer = window.setTimeout(() => {
-      performRulesLookup({ query });
-    }, 220);
-  }
-
-  async function performRulesLookup({ query, k = 5, immediate = false } = {}) {
-    if (!rulesLookupInput) return;
-    const q = (typeof query === "string" ? query : rulesLookupInput.value).trim();
-
-    if (!q) {
-      if (rulesLookupMessage) {
-        rulesLookupMessage.textContent = "Please enter a search query.";
-      }
-      if (rulesLookupResults) rulesLookupResults.hidden = true;
-      return;
-    }
-
-    if (!immediate && q.length < 2) {
-      if (rulesLookupMessage) rulesLookupMessage.textContent = "Keep typing…";
-      if (rulesLookupResults) rulesLookupResults.hidden = true;
-      return;
-    }
-
-    const normalized = q.toLowerCase();
-    if (!immediate && normalized === rulesLookupLastIssuedQuery) {
-      return;
-    }
-    rulesLookupLastIssuedQuery = normalized;
-
-    // Cancel any in-flight request.
-    if (rulesLookupAbortController) {
-      rulesLookupAbortController.abort();
-    }
-    rulesLookupAbortController = new AbortController();
-    const seq = ++rulesLookupRequestSeq;
-
-    if (rulesLookupMessage) {
-      rulesLookupMessage.textContent = "Searching…";
-    }
-
-    try {
-      const res = await fetch(`${BACKEND_BASE_URL}/api/srd/query`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query: q, k }),
-        signal: rulesLookupAbortController.signal,
-      });
-      const data = await res.json().catch(() => ({}));
-
-      // Ignore stale responses.
-      if (seq !== rulesLookupRequestSeq) return;
-
-      if (!res.ok || data.ok === false) {
-        if (rulesLookupMessage) {
-          rulesLookupMessage.textContent =
-            data.error || data.message || "Could not search rules. Please try again.";
-        }
-        if (rulesLookupResults) rulesLookupResults.hidden = true;
-        return;
-      }
-
-      rulesLookupState.results = Array.isArray(data.results) ? data.results : [];
-      rulesLookupState.currentIndex = 0;
-
-      if (rulesLookupState.results.length === 0) {
-        if (rulesLookupMessage) {
-          rulesLookupMessage.textContent = "No results found for that query.";
-        }
-        if (rulesLookupResults) rulesLookupResults.hidden = true;
-        return;
-      }
-
-      displayRulesResult();
-      if (rulesLookupMessage) {
-        rulesLookupMessage.textContent = "";
-      }
-    } catch (err) {
-      if (err && err.name === "AbortError") {
-        return;
-      }
-      console.warn("[ADA] Rules lookup failed", err);
-      if (rulesLookupMessage) {
-        rulesLookupMessage.textContent = "Could not search rules. Please try again.";
-      }
-      if (rulesLookupResults) rulesLookupResults.hidden = true;
-    }
-  }
-
-  /**
-   * Display the current rules result
-   */
-  function displayRulesResult() {
-    const result = rulesLookupState.results[rulesLookupState.currentIndex];
-
-    if (!result) return;
-
-    // Update title
-    if (rulesResultTitle) {
-      rulesResultTitle.textContent = result.title || "Unknown";
-    }
-
-    // Update text
-    if (rulesResultText) {
-      rulesResultText.textContent = result.text || "No content available.";
-    }
-
-    // Update source
-    if (rulesResultSource) {
-      const path = Array.isArray(result.path) ? result.path.join(" > ") : "";
-      rulesResultSource.textContent = `Source: ${path || "D&D 5e SRD"}`;
-    }
-
-    // Update counter
-    if (rulesLookupCounter) {
-      rulesLookupCounter.textContent = `${rulesLookupState.currentIndex + 1} / ${rulesLookupState.results.length}`;
-    }
-
-    // Update navigation buttons
-    if (rulesLookupPrevBtn) {
-      rulesLookupPrevBtn.hidden = rulesLookupState.currentIndex === 0;
-    }
-    if (rulesLookupNextBtn) {
-      rulesLookupNextBtn.hidden =
-        rulesLookupState.currentIndex ===
-        rulesLookupState.results.length - 1;
-    }
-
-    // Show results container
-    rulesLookupResults.hidden = false;
-  }
+    root.ADA = ada;
+  })();
 })();

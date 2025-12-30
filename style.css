@@ -114,56 +114,6 @@ h1, h2, h3, h4,
     0 22px 55px rgba(30, 23, 18, 0.14);
 }
 
-/* Celtic knot side braid (tasteful, not overpowering) */
-.app {
-  --knot-strip-width: 56px;
-  padding-left: calc(24px + var(--knot-strip-width));
-}
-
-.app::before {
-  content: "";
-  position: absolute;
-  top: 18px;
-  bottom: 18px;
-  left: 16px;
-  width: calc(var(--knot-strip-width) - 16px);
-  border-radius: 18px;
-  pointer-events: none;
-  opacity: 0.55;
-  background-repeat: repeat-y;
-  background-position: center;
-  background-size: 40px 120px;
-  background-image: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='40'%20height='120'%20viewBox='0%200%2040%20120'%3E%3Crect%20width='40'%20height='120'%20fill='none'/%3E%3Cg%20fill='none'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Cpath%20d='M20%206%20C10%206%206%2010%206%2020%20C6%2030%2010%2034%2020%2034%20C30%2034%2034%2030%2034%2020%20C34%2010%2030%206%2020%206Z'%20stroke='%23E01C29'%20stroke-opacity='0.35'%20stroke-width='3.2'/%3E%3Cpath%20d='M20%2022%20C14%2022%2012%2024%2012%2030%20C12%2036%2014%2038%2020%2038%20C26%2038%2028%2036%2028%2030%20C28%2024%2026%2022%2020%2022Z'%20stroke='%23F3CB70'%20stroke-opacity='0.45'%20stroke-width='2.6'/%3E%3Cpath%20d='M20%2034%20V54%20M20%2066%20V86'%20stroke='%23E01C29'%20stroke-opacity='0.22'%20stroke-width='3.2'/%3E%3Cpath%20d='M20%2040%20C10%2040%206%2044%206%2054%20C6%2064%2010%2068%2020%2068%20C30%2068%2034%2064%2034%2054%20C34%2044%2030%2040%2020%2040Z'%20stroke='%23E01C29'%20stroke-opacity='0.35'%20stroke-width='3.2'/%3E%3Cpath%20d='M20%2056%20C14%2056%2012%2058%2012%2064%20C12%2070%2014%2072%2020%2072%20C26%2072%2028%2070%2028%2064%20C28%2058%2026%2056%2020%2056Z'%20stroke='%23F3CB70'%20stroke-opacity='0.45'%20stroke-width='2.6'/%3E%3Cpath%20d='M20%2074%20V94%20M20%20106%20V116'%20stroke='%23E01C29'%20stroke-opacity='0.22'%20stroke-width='3.2'/%3E%3Cpath%20d='M20%2074%20C10%2074%206%2078%206%2088%20C6%2098%2010%20102%2020%20102%20C30%20102%2034%2098%2034%2088%20C34%2078%2030%2074%2020%2074Z'%20stroke='%23E01C29'%20stroke-opacity='0.35'%20stroke-width='3.2'/%3E%3Cpath%20d='M20%2090%20C14%2090%2012%2092%2012%2098%20C12%20104%2014%20106%2020%20106%20C26%20106%2028%20104%2028%2098%20C28%2092%2026%2090%2020%2090Z'%20stroke='%23F3CB70'%20stroke-opacity='0.45'%20stroke-width='2.6'/%3E%3C/g%3E%3C/svg%3E");
-  mix-blend-mode: multiply;
-  z-index: 0;
-}
-
-.app > * {
-  position: relative;
-  z-index: 1;
-}
-/* Celtic ornament border motif (two-color knotwork, same palette) */
-.app::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  padding: 14px;
-  pointer-events: none;
-  opacity: 0.62;
-  background-repeat: repeat;
-  background-size: 96px 96px;
-  background-image: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='96'%20height='96'%20viewBox='0%200%2096%2096'%3E%3Crect%20x='0'%20y='0'%20width='96'%20height='96'%20fill='none'/%3E%3Cg%20fill='none'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Cpath%20d='M12%2048%20C12%2030%2030%2012%2048%2012%20C66%2012%2084%2030%2084%2048%20C84%2066%2066%2084%2048%2084%20C30%2084%2012%2066%2012%2048Z'%20stroke='%23E01C29'%20stroke-opacity='0.28'%20stroke-width='4'/%3E%3Cpath%20d='M24%2048%20C24%2036%2036%2024%2048%2024%20C60%2024%2072%2036%2072%2048%20C72%2060%2060%2072%2048%2072%20C36%2072%2024%2060%2024%2048Z'%20stroke='%23F3CB70'%20stroke-opacity='0.34'%20stroke-width='3'/%3E%3Cpath%20d='M12%2048%20H24%20M72%2048%20H84%20M48%2012%20V24%20M48%2072%20V84'%20stroke='%23E01C29'%20stroke-opacity='0.18'%20stroke-width='4'/%3E%3Cpath%20d='M24%2048%20H36%20M60%2048%20H72%20M48%2024%20V36%20M48%2060%20V72'%20stroke='%23F3CB70'%20stroke-opacity='0.20'%20stroke-width='3'/%3E%3C/g%3E%3C/svg%3E");
-  -webkit-mask:
-    linear-gradient(#000 0 0) content-box,
-    linear-gradient(#000 0 0);
-  -webkit-mask-composite: xor;
-  mask:
-    linear-gradient(#000 0 0) content-box,
-    linear-gradient(#000 0 0);
-  mask-composite: exclude;
-}
-
 .app__header {
   margin-bottom: 20px;
 }
@@ -177,14 +127,7 @@ h1, h2, h3, h4,
 
 .app__header-main {
   position: relative;
-  padding-right: 104px;
-}
-
-/* Explicit dragon head silhouette (single, tasteful) */
-.app__header-main::after {
-  position: relative;
   padding-right: 0;
-  right: -10px;
 }
 
 .brand__mark {
@@ -1893,7 +1836,6 @@ h1, h2, h3, h4,
   .app {
     margin: 12px;
     padding: 18px 16px 16px;
-    padding-left: calc(16px + var(--knot-strip-width));
   }
 
   .controls {

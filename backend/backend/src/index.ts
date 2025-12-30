@@ -3071,6 +3071,29 @@ function normalizeEncounterOptions(raw: any, intent: ReturnType<typeof parseArch
 	if (normalized.length !== 3) return null;
 	// Ensure A/B/C ordering.
 	normalized.sort((a, b) => a.id.localeCompare(b.id));
+
+	// Ensure each title is distinct (the UI uses the title as the primary label).
+	const seen = new Map<string, number>();
+	for (const opt of normalized) {
+		const k = String(opt.title || '').trim().toLowerCase();
+		if (!k) continue;
+		seen.set(k, (seen.get(k) || 0) + 1);
+	}
+	const dupKeys = new Set<string>([...seen.entries()].filter(([, n]) => n > 1).map(([k]) => k));
+	if (dupKeys.size) {
+		const used = new Set<string>();
+		for (const opt of normalized) {
+			let t = String(opt.title || '').trim();
+			if (!t) t = `Encounter ${opt.id}`;
+			const key = t.toLowerCase();
+			if (dupKeys.has(key) || used.has(key)) {
+				const suffix = `${opt.id}${opt.difficulty ? ` · ${opt.difficulty}` : ''}${opt.intentMode ? ` · ${opt.intentMode}` : ''}`;
+				t = `${t} — ${suffix}`;
+			}
+			opt.title = t;
+			used.add(String(opt.title).trim().toLowerCase());
+		}
+	}
 	return normalized;
 }
 
@@ -3139,6 +3162,7 @@ async function handleGmTool(request: Request, env: Env, origin: string | null): 
 			'- Provide THREE options with ids A, B, C.',
 			'- If overrideDifficulty is provided, ALL THREE options MUST use that difficulty tier.',
 			'- If overrideDifficulty is NOT provided, the tiers MUST be: A=Easy, B=Medium, C=Hard.',
+			'- Each option MUST have a unique, evocative title. Do not reuse titles across options. Do not name them "Option A" etc.',
 			'- Each option MUST include:',
 			'  - distinct enemy set (monsters + counts),',
 			'  - threatScale with dialUp and dialDown factors (hazards/behaviors to change lethality live),',

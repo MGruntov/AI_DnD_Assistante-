@@ -1769,15 +1769,16 @@
 
       const title = document.createElement("h4");
       title.className = "gm-option-card__title";
-      const label = opt && opt.id ? String(opt.id).trim() : "Option";
-      const t = opt && opt.title ? String(opt.title).trim() : "Encounter";
-      title.textContent = `${label}: ${t}`;
+      const label = opt && opt.id ? String(opt.id).trim() : "?";
+      const t = opt && opt.title ? String(opt.title).trim() : `Encounter ${label}`;
+      title.textContent = t;
 
       const meta = document.createElement("div");
       meta.className = "gm-option-card__meta";
       const diff = opt && opt.difficulty ? String(opt.difficulty).trim() : "";
       const kind = opt && opt.type ? String(opt.type).trim() : "";
-      meta.textContent = [diff, kind].filter(Boolean).join(" · ");
+      const mode = opt && opt.intentMode ? String(opt.intentMode).trim() : "";
+      meta.textContent = [`Option ${label}`, diff, kind, mode ? `Mode: ${mode}` : ""].filter(Boolean).join(" · ");
 
       header.appendChild(title);
       header.appendChild(meta);
@@ -1788,9 +1789,32 @@
       const shortLines = [];
       if (opt && opt.hook) shortLines.push(`Hook: ${String(opt.hook)}`);
       if (opt && opt.setup) shortLines.push(`Setup: ${String(opt.setup)}`);
-      if (opt && opt.twist) shortLines.push(`Twist: ${String(opt.twist)}`);
-      if (opt && opt.tactics) shortLines.push(`Tactics: ${String(opt.tactics)}`);
+      if (opt && opt.oppositionSummary) shortLines.push(`Opposition: ${String(opt.oppositionSummary)}`);
       body.textContent = shortLines.length ? shortLines.join("\n\n") : buildEncounterOptionText(opt);
+
+      const gmNotes = document.createElement("details");
+      const gmNotesSummary = document.createElement("summary");
+      gmNotesSummary.textContent = "GM Notes";
+      gmNotes.appendChild(gmNotesSummary);
+      const notesBlock = document.createElement("div");
+      notesBlock.className = "gm-statblock";
+      const notesTitle = document.createElement("div");
+      notesTitle.className = "gm-statblock__title";
+      notesTitle.textContent = "Notes";
+      const notesLine = document.createElement("div");
+      notesLine.className = "gm-statblock__line";
+      const lines = [];
+      if (opt && opt.twist) lines.push(`Twist: ${String(opt.twist)}`);
+      if (opt && opt.tactics) lines.push(`Tactics: ${String(opt.tactics)}`);
+      if (opt && opt.scaling) {
+        if (opt.scaling.easier) lines.push(`Scaling (easier): ${String(opt.scaling.easier)}`);
+        if (opt.scaling.harder) lines.push(`Scaling (harder): ${String(opt.scaling.harder)}`);
+      }
+      if (opt && opt.rewards) lines.push(`Rewards: ${String(opt.rewards)}`);
+      notesLine.textContent = lines.join("\n\n");
+      notesBlock.appendChild(notesTitle);
+      notesBlock.appendChild(notesLine);
+      gmNotes.appendChild(notesBlock);
 
       const quickView = document.createElement("details");
       const quickSummary = document.createElement("summary");
@@ -1857,7 +1881,7 @@
         const currentUser = getCurrentUser();
         if (!activeCampaignId || !currentUser) return;
 
-        const scriptTitle = `${label}: ${t}`;
+        const scriptTitle = `${t} (${label}${diff ? ` · ${diff}` : ""})`;
         const scriptBody = buildEncounterOptionText(opt);
         saveCampaignScript({ author: currentUser, title: scriptTitle, body: scriptBody });
       });
@@ -1866,6 +1890,7 @@
 
       card.appendChild(header);
       card.appendChild(body);
+      card.appendChild(gmNotes);
       card.appendChild(quickView);
       card.appendChild(actions);
 

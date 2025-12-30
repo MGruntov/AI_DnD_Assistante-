@@ -2466,9 +2466,14 @@
 
   if (appNav) {
     appNav.addEventListener("click", (event) => {
-      const target = event.target;
-      if (!(target instanceof HTMLElement)) return;
-      const view = target.getAttribute("data-view");
+      const rawTarget = event.target;
+      if (!(rawTarget instanceof Element)) return;
+
+      // Use event delegation so clicks work even if the user clicks on nested
+      // elements inside the nav button (icons, spans, etc.).
+      const btn = rawTarget.closest("[data-view]");
+      if (!(btn instanceof HTMLElement)) return;
+      const view = btn.getAttribute("data-view");
       if (!view) return;
       if (view === "forge") {
         showView("forge");

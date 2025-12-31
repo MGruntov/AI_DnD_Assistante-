@@ -1708,23 +1708,17 @@ async function handleStartAICampaign(request: Request, env: Env, origin: string 
 		return errorResponse('You do not own this character', 403, origin);
 	}
 
-	// Hard rule: a character can be linked to NO MORE than 1 campaign at a time.
-	// Starting a solo run automatically moves the character out of any previous campaign(s).
-	const previousCampaignIds = Array.isArray(character.campaignIds)
+	// Rule: a character can be linked to no more than 1 campaign at a time.
+	// Starting an AI-solo campaign does NOT auto-unlink/move the character.
+	const existingCampaignIds = Array.isArray(character.campaignIds)
 		? character.campaignIds.map((cid) => String(cid || '').trim()).filter((cid) => cid)
 		: [];
-	for (const prevId of previousCampaignIds) {
-		const storedPrev = await env.ADA_DATA.get(`campaign:${prevId}`);
-		if (!storedPrev) continue;
-		try {
-			const prevCampaign = JSON.parse(storedPrev) as Campaign;
-			if (Array.isArray(prevCampaign.linkedCharacterIds) && prevCampaign.linkedCharacterIds.includes(characterId)) {
-				prevCampaign.linkedCharacterIds = prevCampaign.linkedCharacterIds.filter((id) => id !== characterId);
-				await env.ADA_DATA.put(`campaign:${prevId}`, JSON.stringify(prevCampaign));
-			}
-		} catch {
-			// ignore malformed
-		}
+	if (existingCampaignIds.length > 0) {
+		return errorResponse(
+			'This character is already linked to another campaign. Unlink the character (or choose a different one) before starting a new solo run.',
+			409,
+			origin,
+		);
 	}
 
 	// Basic level gate: for now derive a crude total level from concept.levelSummary if present.
@@ -1844,7 +1838,6 @@ async function handleStartAICampaign(request: Request, env: Env, origin: string 
 			campaign,
 			session,
 			openingNarrative,
-			relinkedFrom: previousCampaignIds,
 			...(isDebugEnabled(env)
 				? {
 					debug: {

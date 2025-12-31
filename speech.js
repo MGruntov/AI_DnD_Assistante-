@@ -1288,13 +1288,7 @@
             return;
           }
           const data = result.data || {};
-          const relinkedFrom = Array.isArray(data.relinkedFrom)
-            ? data.relinkedFrom.map((cid) => String(cid || '').trim()).filter(Boolean)
-            : [];
-
-          status.textContent = relinkedFrom.length
-            ? `Adventure started. Your character was moved from ${relinkedFrom.length === 1 ? 'a previous campaign' : 'previous campaigns'} (auto-unlinked). Opening campaign...`
-            : "Adventure started. Opening campaign...";
+          status.textContent = "Adventure started. Opening campaign...";
           const campaign = data.campaign;
           const opening = data.openingNarrative || (data.opening && data.opening.narrative);
           if (campaign) {

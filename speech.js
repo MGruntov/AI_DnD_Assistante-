@@ -713,20 +713,23 @@
     // ("home" is kept as a backwards-compatible alias for "forge")
     let next = view === "home" ? "forge" : view;
 
-    // Multi-page mode: top-level views are separate documents.
-    // We keep internal toggles like "campaign-detail" inside campaigns.html and
-    // vault list/detail inside vault.html.
-    if (MULTI_PAGE) {
-      if (next === "forge" || next === "hud" || next === "vault" || next === "campaigns" || next === "profile" || next === "auth-login" || next === "auth-register") {
-        navigateTo(next);
-        return;
-      }
-      // fall through for internal view toggles (e.g. "campaign-detail")
-    }
-
     if (next === "hud" && !activeCharacter) {
       awaitingHudCharacterSelect = true;
       next = "vault";
+    }
+
+    // Multi-page mode: only navigate when the target page is a different document.
+    // This keeps same-page toggles working (e.g. login <-> register on index.html).
+    if (MULTI_PAGE) {
+      const href = pageHref(next);
+      const currentHref = window.location && window.location.pathname
+        ? window.location.pathname.split("/").pop()
+        : "";
+      if (href && href !== currentHref) {
+        navigateTo(next);
+        return;
+      }
+      // fall through for internal view toggles (e.g. auth-login/auth-register, campaign-detail)
     }
 
     const isAuthView = next === "auth-login" || next === "auth-register";

@@ -22,6 +22,7 @@
           <a class="nav__link" href="forge.html">Character Forge</a>
           <a class="nav__link" href="hud.html">Session HUD</a>
           <a class="nav__link" href="vault.html">My Characters</a>
+          <a class="nav__link" href="library.html">Grand Library</a>
           <a class="nav__link" href="campaigns.html">My Campaigns</a>
           <a class="nav__link" href="profile.html">Profile</a>
           <button type="button" class="nav__link nav__link--danger" id="logoutBtn">Logout</button>
@@ -34,6 +35,7 @@
         <div id="campaignsListView">
           <h2>My Campaigns</h2>
           <p class="text-muted">Create campaigns, see where you're the Dungeon Master, and where you're a player.</p>
+          <p class="text-muted">Looking to create something new? Head to <a href="library.html">Grand Library</a> for Human campaigns, AI solo adventures, and Architect templates.</p>
 
           <div class="campaigns__controls">
             <div class="campaigns__filters">
@@ -43,70 +45,8 @@
             </div>
           </div>
 
-          <div class="campaigns__new">
-            <h3>Create a New Campaign</h3>
-            <form id="createCampaignForm" class="campaigns__form">
-              <div class="field">
-                <label for="campaignName">Campaign name</label>
-                <input type="text" id="campaignName" name="campaignName" placeholder="Curse of the Moonlit Isles" required />
-              </div>
-              <div class="field">
-                <label for="campaignParticipants">Participants (comma-separated usernames, include yourself if desired)</label>
-                <input type="text" id="campaignParticipants" name="campaignParticipants" placeholder="alice, bob, charlie" />
-                <p class="field__hint">You'll be set as the Dungeon Master for campaigns you create.</p>
-              </div>
-              <button type="submit" class="btn btn--primary">Create campaign</button>
-            </form>
-          </div>
-
-          <section class="library" aria-label="Grand Library of Fate">
-            <h3>Grand Library of Fate</h3>
-            <p class="text-muted">
-              Community-published Master Templates. Choose a character and begin a private run guided by ADA, the Hidden Hand.
-            </p>
-            <div id="templatesList" class="templates__list" aria-live="polite"></div>
-            <p id="templatesMessage" class="text-muted"></p>
-          </section>
-
-          <section class="workshop" aria-label="Architect’s Workshop">
-            <h3>Architect’s Workshop</h3>
-            <p class="text-muted">
-              Publish a Master Template to the Library (limit: 3 per Architect). Define Canon Events that the Hidden Hand will ensure occur.
-            </p>
-            <form id="publishTemplateForm" class="campaigns__form">
-              <div class="field">
-                <label for="templateName">Template name</label>
-                <input type="text" id="templateName" name="templateName" placeholder="The Library That Remembers" required />
-              </div>
-
-              <div class="field">
-                <label>Canon Event Builder</label>
-                <div id="templateCanonEvents" class="canon-builder"></div>
-                <div class="canon-builder__actions">
-                  <button type="button" id="addCanonEventBtn" class="btn btn--secondary btn--small">Add Canon Event</button>
-                </div>
-                <p class="field__hint">
-                  Each Canon Event needs a title + description. Optional Nudge Ideas help ADA steer the player back to canon.
-                </p>
-              </div>
-
-              <button type="submit" class="btn btn--primary">Publish to Library</button>
-              <span id="publishTemplateStatus" class="status">Idle</span>
-            </form>
-          </section>
-
           <div class="campaigns__list" id="campaignsList" aria-live="polite"></div>
           <p id="campaignsMessage" class="text-muted"></p>
-
-          <section class="adventures">
-            <h3>Public Adventures</h3>
-            <p class="text-muted">
-              Try a solo run with ADA as your Dungeon Master. Pick an adventure and choose one of your characters that meets
-              the level requirements.
-            </p>
-            <div id="adventuresList" class="adventures__grid" aria-live="polite"></div>
-            <p id="adventuresMessage" class="text-muted"></p>
-          </section>
         </div>
 
         <div id="campaignDetailView" class="campaign-detail" hidden>

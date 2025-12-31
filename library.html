@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>ADA — Grand Library</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;800&family=MedievalSharp&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body data-page="library">
+  <main class="app">
+    <header class="app__header">
+      <div class="app__header-main">
+        <h1>ADA</h1>
+        <p>Grand Library of Fate — community templates, public adventures, and creation tools.</p>
+      </div>
+      <div class="app__header-user">
+        <span id="currentUserLabel" class="user-label" hidden></span>
+        <nav id="appNav" class="nav" aria-label="Primary">
+          <a class="nav__link" href="forge.html">Character Forge</a>
+          <a class="nav__link" href="hud.html">Session HUD</a>
+          <a class="nav__link" href="vault.html">My Characters</a>
+          <a class="nav__link" href="library.html">Grand Library</a>
+          <a class="nav__link" href="campaigns.html">My Campaigns</a>
+          <a class="nav__link" href="profile.html">Profile</a>
+          <button type="button" class="nav__link nav__link--danger" id="logoutBtn">Logout</button>
+        </nav>
+      </div>
+    </header>
+
+    <section class="view">
+      <div class="card">
+        <header class="library-header">
+          <h2>Grand Library of Fate</h2>
+          <p class="text-muted">
+            Discover community-published Master Templates and public solo adventures. Create your own human campaigns, or publish a template as an Architect.
+          </p>
+        </header>
+
+        <section class="library" aria-label="Grand Library of Fate">
+          <h3>Master Templates (Community)</h3>
+          <p class="text-muted">
+            Choose an unlinked character and begin a private run guided by ADA, the Hidden Hand.
+          </p>
+
+          <div class="library-controls" aria-label="Template search and filters">
+            <div class="field">
+              <label for="templateSearchInput">Search templates</label>
+              <input type="text" id="templateSearchInput" placeholder="Search by name, architect, tags, or canon..." />
+            </div>
+            <div class="library-controls__row">
+              <div class="field">
+                <label for="templateTagFilter">Tag</label>
+                <select id="templateTagFilter">
+                  <option value="">All tags</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="templateSortSelect">Sort</label>
+                <select id="templateSortSelect">
+                  <option value="relevance">Relevance</option>
+                  <option value="newest">Newest</option>
+                  <option value="canon">Canon events</option>
+                  <option value="architect">Architect</option>
+                  <option value="title">Title</option>
+                </select>
+              </div>
+              <div class="field">
+                <label>&nbsp;</label>
+                <label class="checkbox">
+                  <input type="checkbox" id="templateEligibleOnly" />
+                  Show only templates I can start
+                </label>
+              </div>
+            </div>
+
+            <div class="library-controls__meta" aria-live="polite">
+              <span id="templateResultsCount" class="text-muted">Showing 0 of 0</span>
+              <button type="button" id="templateClearFiltersBtn" class="btn btn--secondary btn--small">Clear filters</button>
+            </div>
+          </div>
+
+          <div id="templatesList" class="templates__list" aria-live="polite"></div>
+          <p id="templatesMessage" class="text-muted"></p>
+        </section>
+
+        <section class="creation" aria-label="Create">
+          <h3>Create</h3>
+          <p class="text-muted">Switch between Human Campaigns, AI Solo Adventures, and Architect publishing.</p>
+
+          <div class="segmented" role="tablist" aria-label="Creation modes">
+            <button type="button" id="createModeHumanBtn" class="segmented__btn" aria-selected="true">Human campaign</button>
+            <button type="button" id="createModeAiBtn" class="segmented__btn" aria-selected="false">AI solo adventure</button>
+            <button type="button" id="createModeArchitectBtn" class="segmented__btn" aria-selected="false">Architect template</button>
+          </div>
+
+          <div class="creation__panels">
+            <section id="createModeHumanPanel" class="creation__panel" aria-label="Human campaign creation">
+              <h4>Create a New Campaign</h4>
+              <form id="createCampaignForm" class="campaigns__form">
+                <div class="field">
+                  <label for="campaignName">Campaign name</label>
+                  <input type="text" id="campaignName" name="campaignName" placeholder="Curse of the Moonlit Isles" required />
+                </div>
+                <div class="field">
+                  <label for="campaignParticipants">Participants (comma-separated usernames, include yourself if desired)</label>
+                  <input type="text" id="campaignParticipants" name="campaignParticipants" placeholder="alice, bob, charlie" />
+                  <p class="field__hint">You'll be set as the Dungeon Master for campaigns you create.</p>
+                </div>
+                <button type="submit" class="btn btn--primary">Create campaign</button>
+                <p id="campaignsMessage" class="text-muted" style="margin-top: .75rem;"></p>
+              </form>
+            </section>
+
+            <section id="createModeAiPanel" class="creation__panel" aria-label="AI solo adventures" hidden>
+              <h4>Public Adventures</h4>
+              <p class="text-muted">
+                Try a solo run with ADA as your Dungeon Master. Pick an adventure and choose one of your characters that meets the level requirements.
+              </p>
+
+              <div class="library-controls" aria-label="Adventure search and filters">
+                <div class="field">
+                  <label for="adventureSearchInput">Search adventures</label>
+                  <input type="text" id="adventureSearchInput" placeholder="Search by title, summary, or difficulty..." />
+                </div>
+                <div class="library-controls__row">
+                  <div class="field">
+                    <label for="adventureSortSelect">Sort</label>
+                    <select id="adventureSortSelect">
+                      <option value="relevance">Relevance</option>
+                      <option value="title">Title</option>
+                      <option value="level">Level range</option>
+                    </select>
+                  </div>
+                  <div class="field">
+                    <label>&nbsp;</label>
+                    <label class="checkbox">
+                      <input type="checkbox" id="adventureEligibleOnly" />
+                      Show only adventures I can start
+                    </label>
+                  </div>
+                </div>
+
+                <div class="library-controls__meta" aria-live="polite">
+                  <span id="adventureResultsCount" class="text-muted">Showing 0 of 0</span>
+                  <button type="button" id="adventureClearFiltersBtn" class="btn btn--secondary btn--small">Clear filters</button>
+                </div>
+              </div>
+
+              <div id="adventuresList" class="adventures__grid" aria-live="polite"></div>
+              <p id="adventuresMessage" class="text-muted"></p>
+            </section>
+
+            <section id="createModeArchitectPanel" class="creation__panel" aria-label="Architect’s Workshop" hidden>
+              <h4>Architect’s Workshop</h4>
+              <p class="text-muted">
+                Publish a Master Template to the Library (limit: 3 per Architect). Define Canon Events the Hidden Hand will ensure occur.
+              </p>
+
+              <form id="publishTemplateForm" class="campaigns__form">
+                <div class="field">
+                  <label for="templateName">Template name</label>
+                  <input type="text" id="templateName" name="templateName" placeholder="The Library That Remembers" required />
+                </div>
+
+                <div class="field">
+                  <label>Canon Event Builder</label>
+                  <div id="templateCanonEvents" class="canon-builder"></div>
+                  <div class="canon-builder__actions">
+                    <button type="button" id="addCanonEventBtn" class="btn btn--secondary btn--small">Add Canon Event</button>
+                  </div>
+                  <p class="field__hint">
+                    Each Canon Event needs a title + description. Optional Nudge Ideas help ADA steer the player back to canon.
+                  </p>
+                </div>
+
+                <button type="submit" class="btn btn--primary">Publish to Library</button>
+                <span id="publishTemplateStatus" class="status">Idle</span>
+              </form>
+            </section>
+          </div>
+        </section>
+      </div>
+    </section>
+  </main>
+
+  <script src="speech.js"></script>
+</body>
+</html>

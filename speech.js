@@ -106,6 +106,21 @@
   // Grand Library of Fate (Public Templates)
   const templatesList = document.getElementById("templatesList");
   const templatesMessage = document.getElementById("templatesMessage");
+  const templateSearchInput = document.getElementById("templateSearchInput");
+  const templateTagFilter = document.getElementById("templateTagFilter");
+  const templateSortSelect = document.getElementById("templateSortSelect");
+  const templateEligibleOnly = document.getElementById("templateEligibleOnly");
+
+  const templateResultsCount = document.getElementById("templateResultsCount");
+  const templateClearFiltersBtn = document.getElementById("templateClearFiltersBtn");
+
+  const adventureSearchInput = document.getElementById("adventureSearchInput");
+  const adventureSortSelect = document.getElementById("adventureSortSelect");
+  const adventureEligibleOnly = document.getElementById("adventureEligibleOnly");
+
+  const adventureResultsCount = document.getElementById("adventureResultsCount");
+  const adventureClearFiltersBtn = document.getElementById("adventureClearFiltersBtn");
+
   const publishTemplateForm = document.getElementById("publishTemplateForm");
   const templateNameInput = document.getElementById("templateName");
   const templateCanonEventsEl = document.getElementById("templateCanonEvents");
@@ -172,6 +187,8 @@
         return "hud.html";
       case "vault":
         return "vault.html";
+      case "library":
+        return "library.html";
       case "campaigns":
       case "campaign-detail":
         return "campaigns.html";
@@ -180,6 +197,93 @@
       default:
         return null;
     }
+  }
+
+  // Library page creation mode toggle (Human / AI / Architect)
+  const createModeHumanBtn = document.getElementById("createModeHumanBtn");
+  const createModeAiBtn = document.getElementById("createModeAiBtn");
+  const createModeArchitectBtn = document.getElementById("createModeArchitectBtn");
+  const createModeHumanPanel = document.getElementById("createModeHumanPanel");
+  const createModeAiPanel = document.getElementById("createModeAiPanel");
+  const createModeArchitectPanel = document.getElementById("createModeArchitectPanel");
+
+  function setLibraryCreateMode(mode) {
+    if (createModeHumanPanel) createModeHumanPanel.hidden = mode !== "human";
+    if (createModeAiPanel) createModeAiPanel.hidden = mode !== "ai";
+    if (createModeArchitectPanel)
+      createModeArchitectPanel.hidden = mode !== "architect";
+
+    const setSelected = (btn, selected) => {
+      if (!btn) return;
+      try {
+        btn.setAttribute("aria-selected", selected ? "true" : "false");
+      } catch {
+        // ignore
+      }
+    };
+    setSelected(createModeHumanBtn, mode === "human");
+    setSelected(createModeAiBtn, mode === "ai");
+    setSelected(createModeArchitectBtn, mode === "architect");
+  }
+
+  function wireLibraryCreateModeToggle() {
+    if (!createModeHumanBtn && !createModeAiBtn && !createModeArchitectBtn) return;
+
+    if (createModeHumanBtn)
+      createModeHumanBtn.addEventListener("click", () => setLibraryCreateMode("human"));
+    if (createModeAiBtn)
+      createModeAiBtn.addEventListener("click", () => {
+        setLibraryCreateMode("ai");
+        loadAdventuresAndCharacters();
+      });
+    if (createModeArchitectBtn)
+      createModeArchitectBtn.addEventListener("click", () => {
+        setLibraryCreateMode("architect");
+        // Ensure builder is seeded
+        if (templateCanonEventsEl && templateCanonEventsEl.children.length === 0) {
+          createCanonEventRow();
+        }
+      });
+
+    // Default
+    setLibraryCreateMode("human");
+  }
+
+  function wireLibrarySearchAndFilters() {
+    // Templates
+    const rerenderTemplates = () => {
+      updateTemplateTagOptions(cachedPublicTemplates);
+      applyTemplateFiltersAndRender();
+    };
+    if (templateSearchInput) templateSearchInput.addEventListener("input", rerenderTemplates);
+    if (templateTagFilter) templateTagFilter.addEventListener("change", rerenderTemplates);
+    if (templateSortSelect) templateSortSelect.addEventListener("change", rerenderTemplates);
+    if (templateEligibleOnly) templateEligibleOnly.addEventListener("change", rerenderTemplates);
+
+    if (templateClearFiltersBtn)
+      templateClearFiltersBtn.addEventListener("click", () => {
+        if (templateSearchInput) templateSearchInput.value = "";
+        if (templateTagFilter) templateTagFilter.value = "";
+        if (templateSortSelect) templateSortSelect.value = "relevance";
+        if (templateEligibleOnly) templateEligibleOnly.checked = false;
+        rerenderTemplates();
+      });
+
+    // Adventures
+    const rerenderAdventures = () => {
+      applyAdventureFiltersAndRender(cachedAdventures, cachedAdventureCharacters);
+    };
+    if (adventureSearchInput) adventureSearchInput.addEventListener("input", rerenderAdventures);
+    if (adventureSortSelect) adventureSortSelect.addEventListener("change", rerenderAdventures);
+    if (adventureEligibleOnly) adventureEligibleOnly.addEventListener("change", rerenderAdventures);
+
+    if (adventureClearFiltersBtn)
+      adventureClearFiltersBtn.addEventListener("click", () => {
+        if (adventureSearchInput) adventureSearchInput.value = "";
+        if (adventureSortSelect) adventureSortSelect.value = "relevance";
+        if (adventureEligibleOnly) adventureEligibleOnly.checked = false;
+        rerenderAdventures();
+      });
   }
 
   function navigateTo(page) {
@@ -1132,6 +1236,222 @@
     }
   }
 
+  function normText(v) {
+    return String(v || "")
+      .toLowerCase()
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  function safeArray(v) {
+    return Array.isArray(v) ? v : [];
+  }
+
+  function characterIsUnlinked(ch) {
+    const ids = Array.isArray(ch?.campaignIds)
+      ? ch.campaignIds.map((cid) => String(cid || "").trim()).filter(Boolean)
+      : [];
+    return ids.length === 0;
+  }
+
+  function templateSearchBlob(t) {
+    const tags = safeArray(t?.templateTags || t?.tags).map((x) => String(x || "").trim());
+    const canonTitles = safeArray(t?.canonTimeline).map((ev) => `${ev?.title || ""} ${ev?.description || ""}`);
+    return normText([
+      t?.name,
+      t?.creatorUsername,
+      t?.dm,
+      t?.templateSummary,
+      ...tags,
+      ...canonTitles,
+    ].join(" \n "));
+  }
+
+  function scoreRelevance(haystack, query) {
+    const q = normText(query);
+    if (!q) return 0;
+    const h = normText(haystack);
+    if (!h) return 0;
+    const terms = q.split(" ").filter(Boolean);
+    let score = 0;
+    for (const term of terms) {
+      if (h.includes(term)) score += 1;
+    }
+    // Small boost for exact phrase match.
+    if (h.includes(q)) score += 2;
+    return score;
+  }
+
+  function updateTemplateTagOptions(templates) {
+    if (!templateTagFilter) return;
+    const current = String(templateTagFilter.value || "");
+    const tags = new Set();
+    safeArray(templates).forEach((t) => {
+      safeArray(t?.templateTags || t?.tags).forEach((tag) => {
+        const clean = String(tag || "").trim();
+        if (clean) tags.add(clean);
+      });
+    });
+    const sorted = Array.from(tags).sort((a, b) => a.localeCompare(b));
+
+    templateTagFilter.innerHTML = "";
+    const allOpt = document.createElement("option");
+    allOpt.value = "";
+    allOpt.textContent = "All tags";
+    templateTagFilter.appendChild(allOpt);
+    sorted.forEach((tag) => {
+      const opt = document.createElement("option");
+      opt.value = tag;
+      opt.textContent = tag;
+      templateTagFilter.appendChild(opt);
+    });
+
+    // Try to restore previous selection.
+    if (current && sorted.includes(current)) templateTagFilter.value = current;
+  }
+
+  function applyTemplateFiltersAndRender() {
+    if (!templatesList) return;
+    const templates = Array.isArray(cachedPublicTemplates) ? cachedPublicTemplates : [];
+    const query = templateSearchInput ? templateSearchInput.value : "";
+    const tag = templateTagFilter ? String(templateTagFilter.value || "") : "";
+    const sortMode = templateSortSelect ? String(templateSortSelect.value || "relevance") : "relevance";
+    const eligibleOnly = templateEligibleOnly ? Boolean(templateEligibleOnly.checked) : false;
+
+    const totalCount = templates.length;
+    const anyFilter = Boolean((query && String(query).trim()) || tag || eligibleOnly);
+    const canClear = Boolean(anyFilter || sortMode !== "relevance");
+    if (templateClearFiltersBtn) templateClearFiltersBtn.disabled = !canClear;
+
+    const eligibleChars = getEligibleTemplateCharacters();
+
+    const filtered = templates
+      .map((t) => {
+        const blob = templateSearchBlob(t);
+        const score = scoreRelevance(blob, query);
+        return { t, blob, score };
+      })
+      .filter(({ t, blob, score }) => {
+        if (query && score <= 0) return false;
+        if (tag) {
+          const tags = safeArray(t?.templateTags || t?.tags).map((x) => String(x || "").trim());
+          if (!tags.includes(tag)) return false;
+        }
+        if (eligibleOnly) {
+          return eligibleChars.length > 0;
+        }
+        return Boolean(blob || t);
+      });
+
+    filtered.sort((a, b) => {
+      if (sortMode === "newest") {
+        const ad = Date.parse(a.t?.createdAt || "") || 0;
+        const bd = Date.parse(b.t?.createdAt || "") || 0;
+        return bd - ad;
+      }
+      if (sortMode === "canon") {
+        const ac = Array.isArray(a.t?.canonTimeline) ? a.t.canonTimeline.length : 0;
+        const bc = Array.isArray(b.t?.canonTimeline) ? b.t.canonTimeline.length : 0;
+        return bc - ac;
+      }
+      if (sortMode === "architect") {
+        const an = String(a.t?.creatorUsername || a.t?.dm || "");
+        const bn = String(b.t?.creatorUsername || b.t?.dm || "");
+        return an.localeCompare(bn) || String(a.t?.name || "").localeCompare(String(b.t?.name || ""));
+      }
+      if (sortMode === "title") {
+        return String(a.t?.name || "").localeCompare(String(b.t?.name || ""));
+      }
+      // relevance default
+      if (b.score !== a.score) return b.score - a.score;
+      const bd = Date.parse(b.t?.createdAt || "") || 0;
+      const ad = Date.parse(a.t?.createdAt || "") || 0;
+      return bd - ad;
+    });
+
+    const finalTemplates = filtered.map((x) => x.t);
+    renderPublicTemplates(finalTemplates);
+
+    if (templateResultsCount) {
+      templateResultsCount.textContent = `Showing ${finalTemplates.length} of ${totalCount}`;
+    }
+
+    if (templatesMessage && !finalTemplates.length) {
+      // Avoid overriding the real empty-state (no templates published).
+      if (totalCount > 0 && anyFilter) {
+        templatesMessage.textContent = "No templates match your filters.";
+      }
+    }
+  }
+
+  function adventureSearchBlob(adv) {
+    return normText([adv?.title, adv?.summary, adv?.difficulty, adv?.id].join(" \n "));
+  }
+
+  function getEligibleAdventureCharactersFor(adv, characters) {
+    const chars = Array.isArray(characters) ? characters : [];
+    const levelMin = adv?.levelMin ?? 1;
+    const levelMax = adv?.levelMax ?? levelMin;
+    return chars.filter((ch) => {
+      if (!characterIsUnlinked(ch)) return false;
+      const lvl = computeCharacterTotalLevel(ch);
+      return lvl >= levelMin && lvl <= levelMax;
+    });
+  }
+
+  function applyAdventureFiltersAndRender(adventures, characters) {
+    if (!adventuresList) return;
+    const query = adventureSearchInput ? adventureSearchInput.value : "";
+    const sortMode = adventureSortSelect ? String(adventureSortSelect.value || "relevance") : "relevance";
+    const eligibleOnly = adventureEligibleOnly ? Boolean(adventureEligibleOnly.checked) : false;
+
+    const totalCount = safeArray(adventures).length;
+    const anyFilter = Boolean((query && String(query).trim()) || eligibleOnly);
+    const canClear = Boolean(anyFilter || sortMode !== "relevance");
+    if (adventureClearFiltersBtn) adventureClearFiltersBtn.disabled = !canClear;
+
+    const items = safeArray(adventures)
+      .map((adv) => {
+        const blob = adventureSearchBlob(adv);
+        const score = scoreRelevance(blob, query);
+        const eligible = getEligibleAdventureCharactersFor(adv, characters);
+        return { adv, blob, score, eligible };
+      })
+      .filter(({ score, eligible }) => {
+        if (query && score <= 0) return false;
+        if (eligibleOnly && (!eligible || eligible.length === 0)) return false;
+        return true;
+      });
+
+    items.sort((a, b) => {
+      if (sortMode === "title") {
+        return String(a.adv?.title || "").localeCompare(String(b.adv?.title || ""));
+      }
+      if (sortMode === "level") {
+        const aMin = a.adv?.levelMin ?? 1;
+        const bMin = b.adv?.levelMin ?? 1;
+        const aMax = a.adv?.levelMax ?? aMin;
+        const bMax = b.adv?.levelMax ?? bMin;
+        return aMin - bMin || aMax - bMax || String(a.adv?.title || "").localeCompare(String(b.adv?.title || ""));
+      }
+      // relevance default
+      if (b.score !== a.score) return b.score - a.score;
+      return String(a.adv?.title || "").localeCompare(String(b.adv?.title || ""));
+    });
+
+    renderAdventures(items.map((x) => x.adv), characters);
+    if (adventureResultsCount) {
+      adventureResultsCount.textContent = `Showing ${items.length} of ${totalCount}`;
+    }
+
+    if (adventuresMessage && items.length === 0) {
+      // Avoid overriding the real empty-state (no adventures published).
+      if (totalCount > 0 && anyFilter) {
+        adventuresMessage.textContent = "No adventures match your filters.";
+      }
+    }
+  }
+
   function computeCharacterTotalLevel(character) {
     const levelSummary = character?.concept?.levelSummary;
     if (typeof levelSummary !== "string" || !levelSummary.trim()) return 1;
@@ -1177,11 +1497,11 @@
       cachedAdventures = adventures;
       cachedAdventureCharacters = characters;
 
-      renderAdventures(adventures, characters);
+      applyAdventureFiltersAndRender(adventures, characters);
 
       // Templates use the same character pool; refresh selects once characters are known.
       if (templatesList && Array.isArray(cachedPublicTemplates) && cachedPublicTemplates.length) {
-        renderPublicTemplates(cachedPublicTemplates);
+        applyTemplateFiltersAndRender();
       }
     } catch (e) {
       console.error("Failed to load adventures or characters", e);
@@ -1252,10 +1572,14 @@
         characters.forEach((ch) => {
           const lvl = computeCharacterTotalLevel(ch);
           const meets = lvl >= (adv.levelMin ?? 1) && lvl <= (adv.levelMax ?? lvl);
+          const unlinked = characterIsUnlinked(ch);
           const opt = document.createElement("option");
           opt.value = ch.id;
           opt.textContent = `${ch.name || "Unnamed"} (Lv ${lvl})`;
-          if (!meets) {
+          if (!unlinked) {
+            opt.disabled = true;
+            opt.textContent += " – already linked to a campaign";
+          } else if (!meets) {
             opt.disabled = true;
             opt.textContent += " – level out of range";
           } else {
@@ -1464,7 +1788,8 @@
         ? result.data.templates
         : [];
     cachedPublicTemplates = templates;
-    renderPublicTemplates(templates);
+    updateTemplateTagOptions(templates);
+    applyTemplateFiltersAndRender();
   }
 
   function createCanonEventRow({ title = "", description = "", nudgeIdeas = "" } = {}) {
@@ -2890,14 +3215,17 @@
       if (CURRENT_PAGE === "vault") {
         loadVaultCharacters();
         loadUserCampaignsForVault();
-      } else if (CURRENT_PAGE === "campaigns") {
-        loadCampaigns("all");
-        loadAdventuresAndCharacters();
+      } else if (CURRENT_PAGE === "library") {
+        wireLibraryCreateModeToggle();
+        wireLibrarySearchAndFilters();
         loadPublicTemplates();
+        loadAdventuresAndCharacters();
         // Seed the canon builder with one empty event for convenience.
         if (templateCanonEventsEl && templateCanonEventsEl.children.length === 0) {
           createCanonEventRow();
         }
+      } else if (CURRENT_PAGE === "campaigns") {
+        loadCampaigns("all");
         if (activeCampaignId) {
           // Load the last active campaign (if any) when landing on the campaigns page.
           loadCampaignDetail(activeCampaignId);
@@ -3797,6 +4125,20 @@
           return;
         }
 
+        const createdCampaign = result.data && result.data.campaign;
+        // If campaign creation happens in the Library tab, jump to My Campaigns and open it.
+        if (MULTI_PAGE && CURRENT_PAGE === "library" && createdCampaign && createdCampaign.id) {
+          try {
+            localStorage.setItem(ACTIVE_CAMPAIGN_STORAGE_KEY, String(createdCampaign.id));
+          } catch {
+            // ignore
+          }
+          activeCampaignId = String(createdCampaign.id);
+          activeCampaign = createdCampaign;
+          navigateTo("campaign-detail");
+          return;
+        }
+
         campaignNameInput.value = "";
         campaignParticipantsInput.value = "";
         if (campaignsMessage) campaignsMessage.textContent = "Campaign created!";
@@ -3868,19 +4210,16 @@
   if (campaignFilterAllBtn) {
     campaignFilterAllBtn.addEventListener("click", () => {
       loadCampaigns("all");
-      loadAdventuresAndCharacters();
     });
   }
   if (campaignFilterDmBtn) {
     campaignFilterDmBtn.addEventListener("click", () => {
       loadCampaigns("dm");
-      loadAdventuresAndCharacters();
     });
   }
   if (campaignFilterPlayerBtn) {
     campaignFilterPlayerBtn.addEventListener("click", () => {
       loadCampaigns("player");
-      loadAdventuresAndCharacters();
     });
   }
 

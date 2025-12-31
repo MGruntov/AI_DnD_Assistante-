@@ -59,6 +59,42 @@
             </form>
           </div>
 
+          <section class="library" aria-label="Grand Library of Fate">
+            <h3>Grand Library of Fate</h3>
+            <p class="text-muted">
+              Community-published Master Templates. Choose a character and begin a private run guided by ADA, the Hidden Hand.
+            </p>
+            <div id="templatesList" class="templates__list" aria-live="polite"></div>
+            <p id="templatesMessage" class="text-muted"></p>
+          </section>
+
+          <section class="workshop" aria-label="Architect’s Workshop">
+            <h3>Architect’s Workshop</h3>
+            <p class="text-muted">
+              Publish a Master Template to the Library (limit: 3 per Architect). Define Canon Events that the Hidden Hand will ensure occur.
+            </p>
+            <form id="publishTemplateForm" class="campaigns__form">
+              <div class="field">
+                <label for="templateName">Template name</label>
+                <input type="text" id="templateName" name="templateName" placeholder="The Library That Remembers" required />
+              </div>
+
+              <div class="field">
+                <label>Canon Event Builder</label>
+                <div id="templateCanonEvents" class="canon-builder"></div>
+                <div class="canon-builder__actions">
+                  <button type="button" id="addCanonEventBtn" class="btn btn--secondary btn--small">Add Canon Event</button>
+                </div>
+                <p class="field__hint">
+                  Each Canon Event needs a title + description. Optional Nudge Ideas help ADA steer the player back to canon.
+                </p>
+              </div>
+
+              <button type="submit" class="btn btn--primary">Publish to Library</button>
+              <span id="publishTemplateStatus" class="status">Idle</span>
+            </form>
+          </section>
+
           <div class="campaigns__list" id="campaignsList" aria-live="polite"></div>
           <p id="campaignsMessage" class="text-muted"></p>
 

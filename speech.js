@@ -103,6 +103,15 @@
   const adventuresList = document.getElementById("adventuresList");
   const adventuresMessage = document.getElementById("adventuresMessage");
 
+  // Grand Library of Fate (Public Templates)
+  const templatesList = document.getElementById("templatesList");
+  const templatesMessage = document.getElementById("templatesMessage");
+  const publishTemplateForm = document.getElementById("publishTemplateForm");
+  const templateNameInput = document.getElementById("templateName");
+  const templateCanonEventsEl = document.getElementById("templateCanonEvents");
+  const addCanonEventBtn = document.getElementById("addCanonEventBtn");
+  const publishTemplateStatusEl = document.getElementById("publishTemplateStatus");
+
   const vaultListView = document.getElementById("vaultListView");
   const vaultDetailView = document.getElementById("vaultDetailView");
   const vaultCharactersGrid = document.getElementById("vaultCharactersGrid");
@@ -246,6 +255,7 @@
     : "https://backend.ada-assistante.workers.dev";
   let cachedAdventures = [];
   let cachedAdventureCharacters = [];
+  let cachedPublicTemplates = [];
   let cachedUserCampaigns = [];
   let cachedVaultCharacters = [];
   let lastAiMechanics = null;
@@ -1168,6 +1178,11 @@
       cachedAdventureCharacters = characters;
 
       renderAdventures(adventures, characters);
+
+      // Templates use the same character pool; refresh selects once characters are known.
+      if (templatesList && Array.isArray(cachedPublicTemplates) && cachedPublicTemplates.length) {
+        renderPublicTemplates(cachedPublicTemplates);
+      }
     } catch (e) {
       console.error("Failed to load adventures or characters", e);
       if (adventuresMessage) adventuresMessage.textContent = "Error loading adventures.";
@@ -1314,6 +1329,198 @@
     });
   }
 
+  function getEligibleTemplateCharacters() {
+    const chars = Array.isArray(cachedAdventureCharacters)
+      ? cachedAdventureCharacters
+      : [];
+    return chars.filter((ch) => {
+      const ids = Array.isArray(ch?.campaignIds)
+        ? ch.campaignIds.map((cid) => String(cid || "").trim()).filter(Boolean)
+        : [];
+      return ids.length === 0;
+    });
+  }
+
+  function renderPublicTemplates(templates) {
+    if (!templatesList) return;
+    templatesList.innerHTML = "";
+
+    if (!Array.isArray(templates) || templates.length === 0) {
+      if (templatesMessage)
+        templatesMessage.textContent =
+          "No Master Templates have been published yet.";
+      return;
+    }
+
+    if (templatesMessage) templatesMessage.textContent = "";
+
+    const eligibleChars = getEligibleTemplateCharacters();
+
+    templates.forEach((t) => {
+      const card = document.createElement("article");
+      card.className = "template-card";
+
+      const header = document.createElement("div");
+      header.className = "template-card__header";
+
+      const title = document.createElement("h4");
+      title.className = "template-card__title";
+      title.textContent = t.name || "Untitled template";
+
+      const meta = document.createElement("p");
+      meta.className = "template-card__meta text-muted";
+      const creator = t.creatorUsername || t.dm || "Unknown Architect";
+      const canonCount = Array.isArray(t.canonTimeline) ? t.canonTimeline.length : 0;
+      meta.textContent = `Architect: ${creator} · Canon Events: ${canonCount}`;
+
+      header.appendChild(title);
+      header.appendChild(meta);
+      card.appendChild(header);
+
+      const controls = document.createElement("div");
+      controls.className = "template-card__controls";
+
+      const select = document.createElement("select");
+      select.className = "template-card__select";
+      const placeholder = document.createElement("option");
+      placeholder.value = "";
+      placeholder.disabled = true;
+      placeholder.selected = true;
+      placeholder.textContent = eligibleChars.length
+        ? "Choose a character (must be unlinked)"
+        : "No eligible characters (unlink one first)";
+      select.appendChild(placeholder);
+
+      eligibleChars.forEach((ch) => {
+        const opt = document.createElement("option");
+        opt.value = ch.id;
+        opt.textContent = ch.name || "Unnamed";
+        select.appendChild(opt);
+      });
+
+      const joinBtn = document.createElement("button");
+      joinBtn.type = "button";
+      joinBtn.className = "btn btn--primary btn--small";
+      joinBtn.textContent = "Join template";
+      joinBtn.disabled = !eligibleChars.length;
+
+      const status = document.createElement("span");
+      status.className = "status";
+      status.textContent = "";
+
+      joinBtn.addEventListener("click", async () => {
+        const currentUser = getCurrentUser();
+        if (!currentUser) {
+          status.textContent = "Log in to start a run.";
+          return;
+        }
+        const characterId = select.value;
+        if (!characterId) {
+          status.textContent = "Choose a character first.";
+          return;
+        }
+        status.textContent = "Instantiating private run...";
+        const result = await apiPost("/api/templates/instantiate", {
+          username: currentUser,
+          templateId: t.id,
+          characterId,
+        });
+        if (!result.ok) {
+          const msg =
+            (result.data && (result.data.error || result.data.message)) ||
+            "Could not start template run.";
+          status.textContent = msg;
+          return;
+        }
+        status.textContent = "Run created. Opening campaign...";
+        const campaign = result.data && result.data.campaign;
+        if (campaign) {
+          openCampaignDashboard(campaign);
+          setCampaignTab("dialogue");
+        }
+      });
+
+      controls.appendChild(select);
+      controls.appendChild(joinBtn);
+      controls.appendChild(status);
+      card.appendChild(controls);
+
+      templatesList.appendChild(card);
+    });
+  }
+
+  async function loadPublicTemplates() {
+    if (!templatesList) return;
+    if (templatesMessage) templatesMessage.textContent = "Loading templates...";
+    const result = await apiGet("/api/templates/public");
+    if (!result.ok) {
+      if (templatesMessage)
+        templatesMessage.textContent =
+          "Could not load the Grand Library. Please try again later.";
+      return;
+    }
+    const templates =
+      result.data && Array.isArray(result.data.templates)
+        ? result.data.templates
+        : [];
+    cachedPublicTemplates = templates;
+    renderPublicTemplates(templates);
+  }
+
+  function createCanonEventRow({ title = "", description = "", nudgeIdeas = "" } = {}) {
+    if (!templateCanonEventsEl) return;
+    const row = document.createElement("div");
+    row.className = "canon-event";
+
+    row.innerHTML = `
+      <div class="field">
+        <label>Event title</label>
+        <input type="text" class="canon-event__title" value="${String(title).replace(/"/g, "&quot;")}" placeholder="A door opens in the stacks" required />
+      </div>
+      <div class="field">
+        <label>Event description</label>
+        <textarea class="canon-event__description output__text" rows="3" placeholder="What must happen, no matter what?" required>${String(description)}</textarea>
+      </div>
+      <div class="field">
+        <label>Nudge Ideas (optional, one per line)</label>
+        <textarea class="canon-event__nudges output__text" rows="2" placeholder="A messenger interrupts\nA locked gate forces a detour\nAn NPC begs for help">${String(
+          nudgeIdeas
+        )}</textarea>
+      </div>
+      <div class="canon-event__actions">
+        <button type="button" class="btn btn--secondary btn--small canon-event__remove">Remove</button>
+      </div>
+    `;
+
+    const removeBtn = row.querySelector(".canon-event__remove");
+    if (removeBtn) {
+      removeBtn.addEventListener("click", () => {
+        row.remove();
+      });
+    }
+
+    templateCanonEventsEl.appendChild(row);
+  }
+
+  function collectCanonEventsFromBuilder() {
+    if (!templateCanonEventsEl) return [];
+    const rows = Array.from(templateCanonEventsEl.querySelectorAll(".canon-event"));
+    return rows
+      .map((row) => {
+        const title = row.querySelector(".canon-event__title")?.value?.trim() || "";
+        const description = row
+          .querySelector(".canon-event__description")
+          ?.value?.trim() || "";
+        const nudgeIdeasText = row.querySelector(".canon-event__nudges")?.value || "";
+        const nudgeIdeas = String(nudgeIdeasText)
+          .split("\n")
+          .map((s) => s.trim())
+          .filter(Boolean);
+        return { title, description, nudgeIdeas };
+      })
+      .filter((ev) => ev.title && ev.description);
+  }
+
   function isAIDmCampaign(campaign) {
     if (!campaign) return false;
     return campaign.dmIsAI === true || campaign.mode === "ai-solo";
@@ -1425,6 +1632,8 @@
       return;
     }
 
+    const isHiddenHand = activeCampaign && activeCampaign.mode === "template-run";
+
     const trimmed = (text || "").trim();
     if (!trimmed) return;
 
@@ -1433,7 +1642,7 @@
 
     // Ensure we serialize turns so responses stay in order.
     aiDmTurnQueue = aiDmTurnQueue.then(async () => {
-      const result = await apiPost("/api/ai-dm/turn", {
+      const result = await apiPost(isHiddenHand ? "/api/hidden-hand/turn" : "/api/ai-dm/turn", {
         username,
         campaignId: activeCampaignId,
         text: trimmed,
@@ -1449,7 +1658,8 @@
 
       const payload = result.data || {};
       const narrative = payload.narrative || payload.text || "";
-      const mechanics = payload.mechanics || null;
+      const mechanics = isHiddenHand ? null : payload.mechanics || null;
+      const canon = isHiddenHand ? payload.canon || null : null;
       const debug = payload.debug || null;
       lastAiMechanics = mechanics;
 
@@ -1457,7 +1667,23 @@
         appendMessage("dm", narrative);
       }
 
-      if (mechanics && aiDmMechanicsEl) {
+      if (isHiddenHand) {
+        if (aiDmRollBtn) aiDmRollBtn.disabled = true;
+        if (aiDmMechanicsEl) {
+          const resolved = canon && Array.isArray(canon.resolvedEventIds)
+            ? canon.resolvedEventIds.length
+            : 0;
+          const total = Array.isArray(activeCampaign.canonTimeline)
+            ? activeCampaign.canonTimeline.length
+            : null;
+          aiDmMechanicsEl.textContent =
+            total != null
+              ? `Canon progress: ${resolved}/${total}`
+              : resolved
+              ? `Canon progress: ${resolved} resolved`
+              : "";
+        }
+      } else if (mechanics && aiDmMechanicsEl) {
         const dc = mechanics.dc;
         const ability = mechanics.ability;
         const skill = mechanics.skill;
@@ -1485,10 +1711,13 @@
           : "";
       if (modelName && aiDmNoticeEl) {
         aiDmNoticeEl.hidden = false;
-        aiDmNoticeEl.textContent =
-          `ADA is acting as the Dungeon Master for this campaign. ` +
-          `Type what your character does next and send it to continue the story. ` +
-          `AI model: ${modelName}`;
+        aiDmNoticeEl.textContent = isHiddenHand
+          ? `ADA (the Hidden Hand) is guiding this Master Template run. ` +
+            `Stay on course—canon is calling. ` +
+            `AI model: ${modelName}`
+          : `ADA is acting as the Dungeon Master for this campaign. ` +
+            `Type what your character does next and send it to continue the story. ` +
+            `AI model: ${modelName}`;
       }
     }).catch((e) => {
       console.error("[ADA] AI-DM turn failed", e);
@@ -2108,7 +2337,21 @@
       if (aiDmPanelEl) aiDmPanelEl.hidden = !isAi;
       if (dialogueTextInputEl) dialogueTextInputEl.disabled = false;
       if (dialogueSendBtn) dialogueSendBtn.disabled = false;
-      if (aiDmMechanicsEl) aiDmMechanicsEl.textContent = "";
+      if (aiDmRollBtn) aiDmRollBtn.disabled = isAi && campaign.mode === "template-run";
+      if (aiDmMechanicsEl) {
+        if (isAi && campaign.mode === "template-run") {
+          const resolved = Array.isArray(campaign.resolvedCanonEventIds)
+            ? campaign.resolvedCanonEventIds.length
+            : 0;
+          const total = Array.isArray(campaign.canonTimeline)
+            ? campaign.canonTimeline.length
+            : null;
+          aiDmMechanicsEl.textContent =
+            total != null ? `Canon progress: ${resolved}/${total}` : "";
+        } else {
+          aiDmMechanicsEl.textContent = "";
+        }
+      }
 
       // Configure delete/leave buttons based on campaign type and user role
       const isDm = campaign.dm === currentUser;
@@ -2650,6 +2893,11 @@
       } else if (CURRENT_PAGE === "campaigns") {
         loadCampaigns("all");
         loadAdventuresAndCharacters();
+        loadPublicTemplates();
+        // Seed the canon builder with one empty event for convenience.
+        if (templateCanonEventsEl && templateCanonEventsEl.children.length === 0) {
+          createCanonEventRow();
+        }
         if (activeCampaignId) {
           // Load the last active campaign (if any) when landing on the campaigns page.
           loadCampaignDetail(activeCampaignId);
@@ -3554,6 +3802,66 @@
         if (campaignsMessage) campaignsMessage.textContent = "Campaign created!";
         loadCampaigns("all");
       });
+    });
+  }
+
+  if (addCanonEventBtn) {
+    addCanonEventBtn.addEventListener("click", () => {
+      createCanonEventRow();
+    });
+  }
+
+  if (publishTemplateForm) {
+    publishTemplateForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const currentUser = getCurrentUser();
+      if (!currentUser) {
+        if (publishTemplateStatusEl)
+          publishTemplateStatusEl.textContent =
+            "You need to be logged in to publish a template.";
+        return;
+      }
+
+      const name = templateNameInput ? templateNameInput.value.trim() : "";
+      const canonTimeline = collectCanonEventsFromBuilder();
+
+      if (!name) {
+        if (publishTemplateStatusEl)
+          publishTemplateStatusEl.textContent = "Please name your template.";
+        return;
+      }
+      if (!canonTimeline.length) {
+        if (publishTemplateStatusEl)
+          publishTemplateStatusEl.textContent =
+            "Add at least one Canon Event before publishing.";
+        return;
+      }
+
+      if (publishTemplateStatusEl)
+        publishTemplateStatusEl.textContent = "Publishing to the Library...";
+
+      const result = await apiPost("/api/templates/create", {
+        username: currentUser,
+        name,
+        canonTimeline,
+      });
+
+      if (!result.ok) {
+        const msg =
+          (result.data && (result.data.error || result.data.message)) ||
+          "Could not publish template.";
+        if (publishTemplateStatusEl) publishTemplateStatusEl.textContent = msg;
+        return;
+      }
+
+      if (publishTemplateStatusEl)
+        publishTemplateStatusEl.textContent = "Published!";
+      if (templateNameInput) templateNameInput.value = "";
+      if (templateCanonEventsEl) templateCanonEventsEl.innerHTML = "";
+      createCanonEventRow();
+
+      // Refresh library
+      loadPublicTemplates();
     });
   }
 

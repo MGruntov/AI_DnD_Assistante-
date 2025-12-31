@@ -283,6 +283,19 @@ type Campaign = {
 	dm: string;
 	participants: string[];
 	createdAt: string;
+	// Community Templates ("Grand Library of Fate")
+	// - Templates are globally discoverable blueprints authored by an Architect.
+	// - Instances are private runs created from a template for a specific player.
+	isTemplate?: boolean;
+	creatorUsername?: string;
+	// Optional template metadata for discovery.
+	templateSummary?: string;
+	templateTags?: string[];
+	canonTimeline?: CanonEvent[];
+	// Instance-only fields
+	templateId?: string;
+	resolvedCanonEventIds?: string[];
+	currentTurnCount?: number;
 	journalEntryIds?: string[];
 	scriptIds?: string[];
 	encounterIds?: string[];
@@ -292,9 +305,30 @@ type Campaign = {
 	completedAt?: string;
 	xpAwardedToCharacterIds?: string[];
 	// Optional AI-DM fields
-	mode?: 'ai-solo' | 'standard';
+	mode?: 'ai-solo' | 'standard' | 'template-run';
 	adventureId?: string;
 	dmIsAI?: boolean;
+};
+
+type CanonEvent = {
+	id: string;
+	title: string;
+	description: string;
+	// Optional "Hidden Hand" prods to pull the player back toward canon.
+	nudgeIdeas?: string[];
+};
+
+type HiddenHandSessionState = {
+	campaignId: string;
+	templateId: string;
+	characterId: string;
+	playerUsername: string;
+	creatorUsername: string;
+	canonTimeline: CanonEvent[];
+	resolvedCanonEventIds: string[];
+	currentTurnCount: number;
+	log: TurnEntry[];
+	summary: string;
 };
 
 type EncounterStatBlock = {
@@ -1669,6 +1703,719 @@ async function handleCreateCampaign(request: Request, env: Env, origin: string |
 	}
 
 	return jsonResponse({ ok: true, campaign }, { status: 201 }, origin);
+}
+
+function normalizeCanonEvent(raw: any): CanonEvent | null {
+	const title = String(raw?.title ?? '').trim();
+	const description = String(raw?.description ?? '').trim();
+	if (!title || !description) return null;
+	const id = String(raw?.id ?? '').trim() || crypto.randomUUID();
+	const nudgeIdeasRaw = Array.isArray(raw?.nudgeIdeas)
+		? raw.nudgeIdeas
+		: typeof raw?.nudgeIdeas === 'string'
+			? String(raw.nudgeIdeas)
+				.split('\n')
+				.map((s) => s.trim())
+				.filter(Boolean)
+			: [];
+	const nudgeIdeas = Array.isArray(nudgeIdeasRaw)
+		? nudgeIdeasRaw.map((s) => String(s || '').trim()).filter(Boolean)
+		: [];
+	return { id, title, description, nudgeIdeas };
+}
+
+async function readStringArrayKV(env: Env, key: string): Promise<string[]> {
+	const stored = await env.ADA_DATA.get(key);
+	if (!stored) return [];
+	try {
+		const parsed = JSON.parse(stored) as unknown;
+		if (!Array.isArray(parsed)) return [];
+		return parsed.map((v) => String(v || '').trim()).filter(Boolean);
+	} catch {
+		return [];
+	}
+}
+
+async function writeStringArrayKV(env: Env, key: string, values: string[]): Promise<void> {
+	const deduped = Array.from(new Set(values.map((v) => String(v || '').trim()).filter(Boolean)));
+	await env.ADA_DATA.put(key, JSON.stringify(deduped));
+}
+
+async function getTemplatesByUserCount(env: Env, username: string): Promise<number> {
+	const key = `templatesByUserCount:${username}`;
+	const stored = await env.ADA_DATA.get(key);
+	if (!stored) return 0;
+	const n = Number.parseInt(String(stored).trim(), 10);
+	return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+async function setTemplatesByUserCount(env: Env, username: string, count: number): Promise<void> {
+	const key = `templatesByUserCount:${username}`;
+	await env.ADA_DATA.put(key, String(Math.max(0, Math.floor(count))));
+}
+
+async function handleCreateTemplate(request: Request, env: Env, origin: string | null): Promise<Response> {
+	let body: any;
+	try {
+		body = await request.json();
+	} catch {
+		return errorResponse('Invalid JSON body', 400, origin);
+	}
+
+	const username = String(body?.username ?? '').trim();
+	const name = String(body?.name ?? '').trim();
+	const templateSummary = String(body?.templateSummary ?? body?.summary ?? '').trim();
+	const templateTagsRaw = body?.templateTags ?? body?.tags;
+	const canonRaw = Array.isArray(body?.canonTimeline) ? body.canonTimeline : [];
+
+	if (!username || !name) {
+		return errorResponse('username and name are required', 400, origin);
+	}
+	if (!canonRaw.length) {
+		return errorResponse('canonTimeline is required (at least 1 Canon Event)', 400, origin);
+	}
+
+	// Ensure the user exists.
+	const userRecord = await env.ADA_DATA.get(`user:${username}`);
+	if (!userRecord) {
+		return errorResponse('Unknown user', 404, origin);
+	}
+
+	// The 3-Campaign Limit (templates per Architect)
+	const currentCount = await getTemplatesByUserCount(env, username);
+	if (currentCount >= 3) {
+		return errorResponse('Template limit reached: you can publish at most 3 Master Templates.', 403, origin);
+	}
+
+	const canonTimeline: CanonEvent[] = [];
+	for (const raw of canonRaw) {
+		const ev = normalizeCanonEvent(raw);
+		if (!ev) {
+			return errorResponse('Each Canon Event requires a title and description.', 400, origin);
+		}
+		canonTimeline.push(ev);
+	}
+
+	const id = crypto.randomUUID();
+	const createdAt = new Date().toISOString();
+	const templateTags = Array.isArray(templateTagsRaw)
+		? templateTagsRaw
+				.map((t: any) => String(t || '').trim())
+				.filter(Boolean)
+				.slice(0, 12)
+		: String(templateTagsRaw || '')
+				.split(',')
+				.map((t) => t.trim())
+				.filter(Boolean)
+				.slice(0, 12);
+	const cleanSummary = templateSummary ? templateSummary.slice(0, 600) : '';
+	const template: Campaign = {
+		id,
+		name,
+		dm: username,
+		participants: [username],
+		createdAt,
+		journalEntryIds: [],
+		scriptIds: [],
+		linkedCharacterIds: [],
+		isTemplate: true,
+		creatorUsername: username,
+		templateSummary: cleanSummary || undefined,
+		templateTags: templateTags.length ? templateTags : undefined,
+		canonTimeline,
+	};
+
+	await env.ADA_DATA.put(`campaign:${id}`, JSON.stringify(template));
+
+	// Global Discovery index
+	const globalKey = 'global:templates';
+	const existingIds = await readStringArrayKV(env, globalKey);
+	if (!existingIds.includes(id)) {
+		existingIds.push(id);
+		await writeStringArrayKV(env, globalKey, existingIds);
+	}
+
+	await setTemplatesByUserCount(env, username, currentCount + 1);
+
+	return jsonResponse({ ok: true, template }, { status: 201 }, origin);
+}
+
+async function handleUpdateTemplate(request: Request, env: Env, origin: string | null): Promise<Response> {
+	let body: any;
+	try {
+		body = await request.json();
+	} catch {
+		return errorResponse('Invalid JSON body', 400, origin);
+	}
+
+	const username = String(body?.username ?? '').trim();
+	const templateId = String(body?.templateId ?? body?.id ?? '').trim();
+	if (!username || !templateId) {
+		return errorResponse('username and templateId are required', 400, origin);
+	}
+
+	const stored = await env.ADA_DATA.get(`campaign:${templateId}`);
+	if (!stored) return errorResponse('Template not found', 404, origin);
+	let template: Campaign;
+	try {
+		template = JSON.parse(stored) as Campaign;
+	} catch {
+		return errorResponse('Corrupted template record', 500, origin);
+	}
+	if (template.isTemplate !== true) {
+		return errorResponse('That campaign is not a public template', 400, origin);
+	}
+	const owner = String(template.creatorUsername || template.dm || '').trim();
+	if (!owner || owner !== username) {
+		return errorResponse('Only the Architect who published this template can edit it', 403, origin);
+	}
+
+	// Optional fields to update
+	const nextName = body?.name != null ? String(body.name).trim() : template.name;
+	const summaryRaw = body?.templateSummary ?? body?.summary;
+	const nextSummary = summaryRaw != null ? String(summaryRaw || '').trim().slice(0, 600) : (template.templateSummary || undefined);
+	const tagsRaw = body?.templateTags ?? body?.tags;
+	const nextTags = tagsRaw == null
+		? (Array.isArray(template.templateTags) ? template.templateTags : undefined)
+		: (Array.isArray(tagsRaw)
+			? tagsRaw
+					.map((t: any) => String(t || '').trim())
+					.filter(Boolean)
+					.slice(0, 12)
+			: String(tagsRaw || '')
+					.split(',')
+					.map((t) => t.trim())
+					.filter(Boolean)
+					.slice(0, 12));
+
+	let nextCanonTimeline: CanonEvent[] | undefined = undefined;
+	if (body?.canonTimeline != null) {
+		const canonRaw = Array.isArray(body.canonTimeline) ? body.canonTimeline : [];
+		if (!canonRaw.length) {
+			return errorResponse('canonTimeline is required (at least 1 Canon Event)', 400, origin);
+		}
+		const canonTimeline: CanonEvent[] = [];
+		for (const raw of canonRaw) {
+			const ev = normalizeCanonEvent(raw);
+			if (!ev) {
+				return errorResponse('Each Canon Event requires a title and description.', 400, origin);
+			}
+			canonTimeline.push(ev);
+		}
+		nextCanonTimeline = canonTimeline;
+	}
+
+	const updated: Campaign = {
+		...template,
+		name: nextName || template.name,
+		templateSummary: nextSummary ? nextSummary : undefined,
+		templateTags: nextTags && nextTags.length ? nextTags : undefined,
+		canonTimeline: nextCanonTimeline ?? template.canonTimeline,
+	};
+
+	await env.ADA_DATA.put(`campaign:${templateId}`, JSON.stringify(updated));
+	return jsonResponse({ ok: true, template: updated }, { status: 200 }, origin);
+}
+
+async function handleDeleteTemplate(request: Request, env: Env, origin: string | null): Promise<Response> {
+	let body: any;
+	try {
+		body = await request.json();
+	} catch {
+		return errorResponse('Invalid JSON body', 400, origin);
+	}
+
+	const username = String(body?.username ?? '').trim();
+	const templateId = String(body?.templateId ?? body?.id ?? '').trim();
+	if (!username || !templateId) {
+		return errorResponse('username and templateId are required', 400, origin);
+	}
+
+	const stored = await env.ADA_DATA.get(`campaign:${templateId}`);
+	if (!stored) return errorResponse('Template not found', 404, origin);
+	let template: Campaign;
+	try {
+		template = JSON.parse(stored) as Campaign;
+	} catch {
+		return errorResponse('Corrupted template record', 500, origin);
+	}
+	if (template.isTemplate !== true) {
+		return errorResponse('That campaign is not a public template', 400, origin);
+	}
+	const owner = String(template.creatorUsername || template.dm || '').trim();
+	if (!owner || owner !== username) {
+		return errorResponse('Only the Architect who published this template can delete it', 403, origin);
+	}
+
+	// Remove from global discovery index
+	const globalKey = 'global:templates';
+	const ids = await readStringArrayKV(env, globalKey);
+	const filtered = ids.filter((id) => String(id || '').trim() !== templateId);
+	if (filtered.length !== ids.length) {
+		await writeStringArrayKV(env, globalKey, filtered);
+	}
+
+	// Remove the template record itself
+	await env.ADA_DATA.delete(`campaign:${templateId}`);
+
+	// Decrement the template counter for the Architect (best-effort).
+	const currentCount = await getTemplatesByUserCount(env, username);
+	await setTemplatesByUserCount(env, username, Math.max(0, currentCount - 1));
+
+	return jsonResponse({ ok: true }, { status: 200 }, origin);
+}
+
+async function handleListPublicTemplates(env: Env, origin: string | null): Promise<Response> {
+	const ids = await readStringArrayKV(env, 'global:templates');
+	const templates: Campaign[] = [];
+	for (const id of ids) {
+		const stored = await env.ADA_DATA.get(`campaign:${id}`);
+		if (!stored) continue;
+		try {
+			const parsed = JSON.parse(stored) as Campaign;
+			if (parsed && parsed.id && parsed.isTemplate === true) {
+				templates.push(parsed);
+			}
+		} catch {
+			// ignore malformed
+		}
+	}
+	return jsonResponse({ ok: true, templates }, undefined, origin);
+}
+
+function buildHiddenHandSystemPrompt(): string {
+	return [
+		'You are ADA, the Hidden Hand: an AI Dungeon Master executing an Architect\'s published Master Template.',
+		'Core directive (Narrative Gravity): at all cost lead the player toward the NEXT unresolved Canon Event.',
+		'Never reveal the existence of the Canon Timeline explicitly. Preserve the feeling of agency with meaningful choices, but ensure the story bends back toward canon.',
+		'If the player wanders or refuses the obvious path, apply a Nudge Idea: messenger, omen, blockade, opportunity, NPC plea, time pressure, etc.',
+		'',
+		'Output format (MUST follow):',
+		'[NARRATIVE]',
+		'(2-5 paragraphs; second person; vivid sensory detail; end with a clear prompt.)',
+		'[/NARRATIVE]',
+		'[CANON]',
+		'resolvedEventIds: <comma-separated ids including any newly resolved>',
+		'nextEventId: <id of the next unresolved event or NONE>',
+		'nudgeUsed: <short phrase describing the nudge you used, or NONE>',
+		'[/CANON]',
+	].join('\n');
+}
+
+function buildHiddenHandUserPrompt(params: {
+	templateName: string;
+	canonTimeline: CanonEvent[];
+	resolvedEventIds: string[];
+	currentTurnCount: number;
+	playerInput: string;
+}): { userPrompt: string; nextEvent: CanonEvent | null } {
+	const resolved = new Set(params.resolvedEventIds.map((id) => String(id || '').trim()).filter(Boolean));
+	const nextEvent = params.canonTimeline.find((ev) => ev && ev.id && !resolved.has(ev.id)) || null;
+
+	const timelineText = params.canonTimeline
+		.map((ev, idx) => {
+			const nudges = Array.isArray(ev.nudgeIdeas) && ev.nudgeIdeas.length
+				? ev.nudgeIdeas.map((n) => `  - ${n}`).join('\n')
+				: '  - (none provided)';
+			return [
+				`#${idx + 1} ${ev.title} (id: ${ev.id})`,
+				`Description: ${ev.description}`,
+				'Nudge Ideas:',
+				nudges,
+			].join('\n');
+		})
+		.join('\n\n');
+
+	const nextEventText = nextEvent
+		? [
+			`NEXT CANON EVENT TARGET (must steer toward this):`,
+			`${nextEvent.title} (id: ${nextEvent.id})`,
+			`${nextEvent.description}`,
+			`Nudges you may use: ${(nextEvent.nudgeIdeas || []).join(' | ') || '(none provided)'}`,
+		].join('\n')
+		: 'All Canon Events are resolved. Provide a satisfying epilogue beat and a final choice.';
+
+	const userPrompt = [
+		`Template: ${params.templateName}`,
+		`Turn: ${params.currentTurnCount}`,
+		'',
+		'Canon Timeline:',
+		timelineText,
+		'',
+		`Resolved Canon Event IDs: ${(Array.from(resolved)).join(', ') || '(none)'}`,
+		'',
+		nextEventText,
+		'',
+		`Player input: ${params.playerInput}`,
+	].join('\n');
+
+	return { userPrompt, nextEvent };
+}
+
+function parseHiddenHandResponse(raw: string): {
+	narrative: string;
+	resolvedEventIds: string[];
+	nextEventId: string | null;
+	nudgeUsed: string | null;
+} {
+	const text = String(raw || '').trim();
+	const narrativeMatch = text.match(/\[NARRATIVE\]([\s\S]*?)\[\/NARRATIVE\]/i);
+	const canonMatch = text.match(/\[CANON\]([\s\S]*?)\[\/CANON\]/i);
+	const narrative = narrativeMatch ? narrativeMatch[1].trim() : text;
+
+	let resolvedEventIds: string[] = [];
+	let nextEventId: string | null = null;
+	let nudgeUsed: string | null = null;
+
+	if (canonMatch) {
+		const canonText = canonMatch[1];
+		const resolvedLine = canonText.match(/resolvedEventIds\s*:\s*(.*)/i);
+		if (resolvedLine && resolvedLine[1]) {
+			resolvedEventIds = resolvedLine[1]
+				.split(',')
+				.map((s) => s.trim())
+				.filter(Boolean);
+		}
+		const nextLine = canonText.match(/nextEventId\s*:\s*(.*)/i);
+		if (nextLine && nextLine[1]) {
+			const v = nextLine[1].trim();
+			nextEventId = !v || v.toUpperCase() === 'NONE' ? null : v;
+		}
+		const nudgeLine = canonText.match(/nudgeUsed\s*:\s*(.*)/i);
+		if (nudgeLine && nudgeLine[1]) {
+			const v = nudgeLine[1].trim();
+			nudgeUsed = !v || v.toUpperCase() === 'NONE' ? null : v;
+		}
+	}
+
+	return { narrative, resolvedEventIds, nextEventId, nudgeUsed };
+}
+
+function computeCanonOrderIds(canonTimeline: CanonEvent[]): string[] {
+	const ids = (Array.isArray(canonTimeline) ? canonTimeline : [])
+		.map((ev) => String(ev?.id || '').trim())
+		.filter(Boolean);
+	// Preserve order, dedupe
+	const seen = new Set<string>();
+	const out: string[] = [];
+	for (const id of ids) {
+		if (seen.has(id)) continue;
+		seen.add(id);
+		out.push(id);
+	}
+	return out;
+}
+
+function sanitizeHiddenHandCanonProgress(params: {
+	canonTimeline: CanonEvent[];
+	previousResolvedIds: string[];
+	modelResolvedIds: string[];
+}): { resolvedEventIds: string[]; nextEventId: string | null } {
+	const orderedIds = computeCanonOrderIds(params.canonTimeline);
+	if (!orderedIds.length) {
+		return { resolvedEventIds: [], nextEventId: null };
+	}
+
+	const prevSet = new Set(
+		(Array.isArray(params.previousResolvedIds) ? params.previousResolvedIds : [])
+			.map((id) => String(id || '').trim())
+			.filter(Boolean),
+	);
+	const modelSet = new Set(
+		(Array.isArray(params.modelResolvedIds) ? params.modelResolvedIds : [])
+			.map((id) => String(id || '').trim())
+			.filter(Boolean),
+	);
+
+	// Canon is order-sensitive: resolved events must form a prefix of the timeline.
+	let prefix = 0;
+	while (prefix < orderedIds.length && prevSet.has(orderedIds[prefix])) {
+		prefix++;
+	}
+
+	// Allow resolving additional *consecutive* events only (no skipping).
+	while (prefix < orderedIds.length && modelSet.has(orderedIds[prefix])) {
+		prefix++;
+	}
+
+	const resolvedEventIds = orderedIds.slice(0, prefix);
+	const nextEventId = prefix < orderedIds.length ? orderedIds[prefix] : null;
+	return { resolvedEventIds, nextEventId };
+}
+
+async function callHiddenHand(env: Env, systemPrompt: string, userPrompt: string): Promise<string> {
+	const apiKey = typeof env.GEMINI_API_KEY === 'string' ? env.GEMINI_API_KEY.trim() : '';
+	if (!apiKey) {
+		throw new Error('GEMINI_API_KEY is not configured');
+	}
+	const resolved = await resolveGeminiModelName(apiKey);
+	const url =
+		`https://generativelanguage.googleapis.com/${encodeURIComponent(GEMINI_API_VERSION)}/${resolved.modelName}:generateContent` +
+		`?key=${encodeURIComponent(apiKey)}`;
+
+	const body = JSON.stringify({
+		systemInstruction: { parts: [{ text: systemPrompt }] },
+		contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
+		generationConfig: { temperature: 0.7, maxOutputTokens: 900 },
+	});
+
+	const res = await fetch(url, {
+		method: 'POST',
+		headers: { 'content-type': 'application/json' },
+		body,
+	});
+	if (!res.ok) {
+		const errText = await res.text().catch(() => '');
+		throw new Error(`Gemini error (${res.status}): ${errText}`);
+	}
+	const data = (await res.json().catch(() => null)) as any;
+	const parts: string[] =
+		data?.candidates?.[0]?.content?.parts?.map((p: any) => (p && typeof p.text === 'string' ? p.text : '')) || [];
+	return parts.join('').trim();
+}
+
+async function handleInstantiateTemplate(request: Request, env: Env, origin: string | null): Promise<Response> {
+	let body: any;
+	try {
+		body = await request.json();
+	} catch {
+		return errorResponse('Invalid JSON body', 400, origin);
+	}
+
+	const username = String(body?.username ?? '').trim();
+	const templateId = String(body?.templateId ?? '').trim();
+	const characterId = String(body?.characterId ?? '').trim();
+	if (!username || !templateId || !characterId) {
+		return errorResponse('username, templateId and characterId are required', 400, origin);
+	}
+
+	// Ensure the user exists.
+	const userRecord = await env.ADA_DATA.get(`user:${username}`);
+	if (!userRecord) {
+		return errorResponse('Unknown user', 404, origin);
+	}
+
+	const storedTemplate = await env.ADA_DATA.get(`campaign:${templateId}`);
+	if (!storedTemplate) return errorResponse('Template not found', 404, origin);
+	let template: Campaign;
+	try {
+		template = JSON.parse(storedTemplate) as Campaign;
+	} catch {
+		return errorResponse('Corrupted template record', 500, origin);
+	}
+	if (!template.isTemplate) {
+		return errorResponse('That campaign is not a public template', 400, origin);
+	}
+	const canonTimeline = Array.isArray(template.canonTimeline) ? template.canonTimeline : [];
+	if (!canonTimeline.length) {
+		return errorResponse('Template is missing a canonTimeline', 500, origin);
+	}
+
+	const storedCharacter = await env.ADA_DATA.get(`character:${characterId}`);
+	if (!storedCharacter) return errorResponse('Character not found', 404, origin);
+	let character: Character;
+	try {
+		character = JSON.parse(storedCharacter) as Character;
+	} catch {
+		return errorResponse('Corrupted character record', 500, origin);
+	}
+	if (character.owner !== username) {
+		return errorResponse('You do not own this character', 403, origin);
+	}
+	const existingCampaignIds = Array.isArray(character.campaignIds)
+		? character.campaignIds.map((cid) => String(cid || '').trim()).filter(Boolean)
+		: [];
+	if (existingCampaignIds.length > 0) {
+		return errorResponse(
+			'This character is already linked to another campaign. Unlink the character (or choose a different one) before starting a template run.',
+			409,
+			origin,
+		);
+	}
+
+	const id = crypto.randomUUID();
+	const createdAt = new Date().toISOString();
+	const campaign: Campaign = {
+		id,
+		name: template.name,
+		dm: 'AI_ADA',
+		participants: [username],
+		createdAt,
+		journalEntryIds: [],
+		scriptIds: [],
+		linkedCharacterIds: [characterId],
+		mode: 'template-run',
+		dmIsAI: true,
+		isTemplate: false,
+		templateId: template.id,
+		creatorUsername: template.creatorUsername || 'unknown',
+		canonTimeline,
+		resolvedCanonEventIds: [],
+		currentTurnCount: 0,
+	};
+
+	await env.ADA_DATA.put(`campaign:${id}`, JSON.stringify(campaign));
+
+	// Link character to the new instance
+	character.campaignIds = [id];
+	await env.ADA_DATA.put(`character:${characterId}`, JSON.stringify(character));
+
+	// Index campaign for the player
+	const idxKey = `campaignsByUser:${username}`;
+	const existing = await env.ADA_DATA.get(idxKey);
+	let ids: string[] = [];
+	if (existing) {
+		try {
+			ids = JSON.parse(existing) as string[];
+			if (!Array.isArray(ids)) ids = [];
+		} catch {
+			ids = [];
+		}
+	}
+	if (!ids.includes(id)) {
+		ids.push(id);
+		await env.ADA_DATA.put(idxKey, JSON.stringify(ids));
+	}
+
+	const hhSession: HiddenHandSessionState = {
+		campaignId: id,
+		templateId: template.id,
+		characterId,
+		playerUsername: username,
+		creatorUsername: template.creatorUsername || username,
+		canonTimeline,
+		resolvedCanonEventIds: [],
+		currentTurnCount: 0,
+		log: [],
+		summary: '',
+	};
+	await env.ADA_DATA.put(`hhSession:${id}`, JSON.stringify(hhSession));
+
+	return jsonResponse({ ok: true, campaign }, { status: 201 }, origin);
+}
+
+async function handleHiddenHandTurn(request: Request, env: Env, origin: string | null): Promise<Response> {
+	let body: any;
+	try {
+		body = await request.json();
+	} catch {
+		return errorResponse('Invalid JSON body', 400, origin);
+	}
+
+	const username = String(body?.username ?? '').trim();
+	const campaignId = String(body?.campaignId ?? '').trim();
+	const playerInput = String(body?.text ?? body?.input ?? '').trim();
+	if (!username || !campaignId || !playerInput) {
+		return errorResponse('username, campaignId and text are required', 400, origin);
+	}
+
+	const storedCampaign = await env.ADA_DATA.get(`campaign:${campaignId}`);
+	if (!storedCampaign) return errorResponse('Campaign not found', 404, origin);
+	let campaign: Campaign;
+	try {
+		campaign = JSON.parse(storedCampaign) as Campaign;
+	} catch {
+		return errorResponse('Corrupted campaign record', 500, origin);
+	}
+
+	const isParticipant =
+		campaign.dm === username ||
+		(Array.isArray(campaign.participants) && campaign.participants.includes(username));
+	if (!isParticipant) {
+		return errorResponse('You are not a participant in this campaign', 403, origin);
+	}
+	if (campaign.mode !== 'template-run' || campaign.dmIsAI !== true || !campaign.templateId) {
+		return errorResponse('This campaign is not configured for Hidden Hand mode', 400, origin);
+	}
+
+	const sessionKey = `hhSession:${campaignId}`;
+	const storedSession = await env.ADA_DATA.get(sessionKey);
+	if (!storedSession) return errorResponse('Hidden Hand session not found', 404, origin);
+	let session: HiddenHandSessionState;
+	try {
+		session = JSON.parse(storedSession) as HiddenHandSessionState;
+	} catch {
+		return errorResponse('Corrupted Hidden Hand session record', 500, origin);
+	}
+
+	const storedCharacter = await env.ADA_DATA.get(`character:${session.characterId}`);
+	if (!storedCharacter) return errorResponse('Character not found', 404, origin);
+	let character: Character;
+	try {
+		character = JSON.parse(storedCharacter) as Character;
+	} catch {
+		return errorResponse('Corrupted character record', 500, origin);
+	}
+	if (character.owner !== username) {
+		return errorResponse('You do not own this character', 403, origin);
+	}
+
+	session.log.push({ role: 'player', text: playerInput, timestamp: new Date().toISOString() });
+	if (!Array.isArray(session.resolvedCanonEventIds)) session.resolvedCanonEventIds = [];
+	if (!Number.isFinite(session.currentTurnCount)) session.currentTurnCount = 0;
+	const nextTurn = session.currentTurnCount + 1;
+
+	const systemPrompt = buildHiddenHandSystemPrompt();
+	const { userPrompt } = buildHiddenHandUserPrompt({
+		templateName: campaign.name || 'Master Template',
+		canonTimeline: Array.isArray(session.canonTimeline) ? session.canonTimeline : [],
+		resolvedEventIds: session.resolvedCanonEventIds,
+		currentTurnCount: nextTurn,
+		playerInput,
+	});
+
+	let raw = '';
+	let parsed = { narrative: '', resolvedEventIds: [] as string[], nextEventId: null as string | null, nudgeUsed: null as string | null };
+	try {
+		raw = await callHiddenHand(env, systemPrompt, userPrompt);
+		parsed = parseHiddenHandResponse(raw);
+	} catch (err) {
+		console.error('Hidden Hand call failed', err);
+		parsed.narrative = `A cold draft stirs the library stacks of fate, and for a heartbeat the world seems to hesitate. Even so, the story presses on—what do you do next?`;
+		parsed.resolvedEventIds = session.resolvedCanonEventIds;
+		parsed.nextEventId = null;
+		parsed.nudgeUsed = null;
+	}
+
+	// Update session + campaign state.
+	// IMPORTANT: Canon progress is enforced server-side. The model may only resolve consecutive events in order.
+	const canonTimeline = Array.isArray(session.canonTimeline) ? session.canonTimeline : [];
+	const canonProgress = sanitizeHiddenHandCanonProgress({
+		canonTimeline,
+		previousResolvedIds: session.resolvedCanonEventIds,
+		modelResolvedIds: parsed.resolvedEventIds,
+	});
+
+	session.resolvedCanonEventIds = canonProgress.resolvedEventIds;
+	session.currentTurnCount = nextTurn;
+	session.log.push({ role: 'dm', text: parsed.narrative || '', timestamp: new Date().toISOString() });
+
+	campaign.resolvedCanonEventIds = canonProgress.resolvedEventIds;
+	campaign.currentTurnCount = nextTurn;
+	await env.ADA_DATA.put(`campaign:${campaignId}`, JSON.stringify(campaign));
+	await env.ADA_DATA.put(sessionKey, JSON.stringify(session));
+
+	return jsonResponse(
+		{
+			ok: true,
+			narrative: parsed.narrative,
+			canon: {
+				resolvedEventIds: canonProgress.resolvedEventIds,
+				nextEventId: canonProgress.nextEventId,
+				nudgeUsed: parsed.nudgeUsed,
+			},
+			currentTurnCount: nextTurn,
+			...(isDebugEnabled(env)
+				? {
+					debug: {
+						gemini: getGeminiDebugSnapshot(),
+					},
+				}
+				: {}),
+		},
+		{ status: 200 },
+		origin,
+	);
 }
 
 async function handleStartAICampaign(request: Request, env: Env, origin: string | null): Promise<Response> {
@@ -4123,6 +4870,26 @@ export default {
 
 		if (pathname === '/api/adventures' && method === 'GET') {
 			return handleListAdventures(origin);
+		}
+
+		// Grand Library of Fate (Public Templates)
+		if (pathname === '/api/templates/public' && method === 'GET') {
+			return handleListPublicTemplates(env, origin);
+		}
+		if (pathname === '/api/templates/create' && method === 'POST') {
+			return handleCreateTemplate(request, env, origin);
+		}
+		if (pathname === '/api/templates/update' && method === 'POST') {
+			return handleUpdateTemplate(request, env, origin);
+		}
+		if (pathname === '/api/templates/delete' && method === 'POST') {
+			return handleDeleteTemplate(request, env, origin);
+		}
+		if (pathname === '/api/templates/instantiate' && method === 'POST') {
+			return handleInstantiateTemplate(request, env, origin);
+		}
+		if (pathname === '/api/hidden-hand/turn' && method === 'POST') {
+			return handleHiddenHandTurn(request, env, origin);
 		}
 
 		if (pathname === '/api/characters/forge' && method === 'POST') {

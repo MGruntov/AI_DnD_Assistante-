@@ -147,4 +147,317 @@ describe('ADA backend worker', () => {
 			}
 		});
 	});
+
+	describe('Grand Library of Fate templates', () => {
+		it('supports template create -> list -> update -> delete, and decrements the 3-template limit on delete', async () => {
+			const username = `architect_${Math.random().toString(16).slice(2)}`;
+			const password = 'testpass123';
+
+			// Register
+			{
+				const req = new Request('http://example.com/api/register', {
+					method: 'POST',
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify({ username, password }),
+				});
+				const ctx = createExecutionContext();
+				const res = await worker.fetch(req, env, ctx);
+				await waitOnExecutionContext(ctx);
+				expect(res.status).toBe(201);
+			}
+
+			// Create a template
+			let templateId = '';
+			{
+				const req = new Request('http://example.com/api/templates/create', {
+					method: 'POST',
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify({
+						username,
+						name: 'The Test Template',
+						templateSummary: 'A template used for automated tests.',
+						templateTags: ['test', 'library'],
+						canonTimeline: [
+							{ title: 'Canon Event One', description: 'The first inevitable thing happens.', nudgeIdeas: ['A messenger arrives.'] },
+						],
+					}),
+				});
+				const ctx = createExecutionContext();
+				const res = await worker.fetch(req, env, ctx);
+				await waitOnExecutionContext(ctx);
+				expect(res.status).toBe(201);
+				const json = (await res.json()) as any;
+				expect(json?.ok).toBe(true);
+				templateId = String(json?.template?.id || '');
+				expect(templateId.length).toBeGreaterThan(0);
+			}
+
+			// List public templates and ensure it appears
+			{
+				const req = new Request('http://example.com/api/templates/public');
+				const ctx = createExecutionContext();
+				const res = await worker.fetch(req, env, ctx);
+				await waitOnExecutionContext(ctx);
+				expect(res.status).toBe(200);
+				const json = (await res.json()) as any;
+				const templates = Array.isArray(json?.templates) ? json.templates : [];
+				expect(templates.some((t: any) => String(t?.id || '') === templateId)).toBe(true);
+			}
+
+			// Update template name + canon timeline
+			{
+				const req = new Request('http://example.com/api/templates/update', {
+					method: 'POST',
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify({
+						username,
+						templateId,
+						name: 'The Updated Test Template',
+						canonTimeline: [
+							{ title: 'Canon Event One', description: 'The first inevitable thing happens.' },
+							{ title: 'Canon Event Two', description: 'A second inevitability follows.' },
+						],
+					}),
+				});
+				const ctx = createExecutionContext();
+				const res = await worker.fetch(req, env, ctx);
+				await waitOnExecutionContext(ctx);
+				expect(res.status).toBe(200);
+				const json = (await res.json()) as any;
+				expect(json?.ok).toBe(true);
+				expect(String(json?.template?.name || '')).toMatch(/updated/i);
+				const canon = Array.isArray(json?.template?.canonTimeline) ? json.template.canonTimeline : [];
+				expect(canon.length).toBe(2);
+			}
+
+			// Verify 3-template limit: create two more, then a 4th should fail
+			let template2 = '';
+			let template3 = '';
+			{
+				const mk = async (name: string) => {
+					const req = new Request('http://example.com/api/templates/create', {
+						method: 'POST',
+						headers: { 'content-type': 'application/json' },
+						body: JSON.stringify({
+							username,
+							name,
+							canonTimeline: [{ title: 'Only Event', description: 'Just one.' }],
+						}),
+					});
+					const ctx = createExecutionContext();
+					const res = await worker.fetch(req, env, ctx);
+					await waitOnExecutionContext(ctx);
+					return res;
+				};
+
+				// We already have 1 template (templateId). Add 2 more.
+				{
+					const res = await mk('Template Two');
+					expect(res.status).toBe(201);
+					const json = (await res.json()) as any;
+					template2 = String(json?.template?.id || '');
+					expect(template2.length).toBeGreaterThan(0);
+				}
+				{
+					const res = await mk('Template Three');
+					expect(res.status).toBe(201);
+					const json = (await res.json()) as any;
+					template3 = String(json?.template?.id || '');
+					expect(template3.length).toBeGreaterThan(0);
+				}
+
+				// 4th should fail
+				{
+					const res = await mk('Template Four (Should Fail)');
+					expect(res.status).toBe(403);
+					const json = (await res.json()) as any;
+					expect(String(json?.error || '')).toMatch(/limit/i);
+				}
+			}
+
+			// Delete one template and then creating another should succeed
+			{
+				const req = new Request('http://example.com/api/templates/delete', {
+					method: 'POST',
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify({ username, templateId: template2 }),
+				});
+				const ctx = createExecutionContext();
+				const res = await worker.fetch(req, env, ctx);
+				await waitOnExecutionContext(ctx);
+				expect(res.status).toBe(200);
+				const json = (await res.json()) as any;
+				expect(json?.ok).toBe(true);
+			}
+			{
+				const req = new Request('http://example.com/api/templates/create', {
+					method: 'POST',
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify({
+						username,
+						name: 'Template Four (Now Allowed)',
+						canonTimeline: [{ title: 'Only Event', description: 'Just one.' }],
+					}),
+				});
+				const ctx = createExecutionContext();
+				const res = await worker.fetch(req, env, ctx);
+				await waitOnExecutionContext(ctx);
+				expect(res.status).toBe(201);
+			}
+
+			// Delete the original template and ensure it disappears from public listing
+			{
+				const req = new Request('http://example.com/api/templates/delete', {
+					method: 'POST',
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify({ username, templateId }),
+				});
+				const ctx = createExecutionContext();
+				const res = await worker.fetch(req, env, ctx);
+				await waitOnExecutionContext(ctx);
+				expect(res.status).toBe(200);
+			}
+			{
+				const req = new Request('http://example.com/api/templates/public');
+				const ctx = createExecutionContext();
+				const res = await worker.fetch(req, env, ctx);
+				await waitOnExecutionContext(ctx);
+				expect(res.status).toBe(200);
+				const json = (await res.json()) as any;
+				const templates = Array.isArray(json?.templates) ? json.templates : [];
+				expect(templates.some((t: any) => String(t?.id || '') === templateId)).toBe(false);
+			}
+
+			// Cleanup: delete remaining templates (best-effort)
+			for (const tid of [template3]) {
+				const req = new Request('http://example.com/api/templates/delete', {
+					method: 'POST',
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify({ username, templateId: tid }),
+				});
+				const ctx = createExecutionContext();
+				await worker.fetch(req, env, ctx);
+				await waitOnExecutionContext(ctx);
+			}
+		});
+
+		it('enforces canon progression server-side for Hidden Hand turns', async () => {
+			const username = `player_${Math.random().toString(16).slice(2)}`;
+			const password = 'testpass123';
+
+			// Register
+			{
+				const req = new Request('http://example.com/api/register', {
+					method: 'POST',
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify({ username, password }),
+				});
+				const ctx = createExecutionContext();
+				const res = await worker.fetch(req, env, ctx);
+				await waitOnExecutionContext(ctx);
+				expect(res.status).toBe(201);
+			}
+
+			// Forge a character (must be unlinked)
+			let characterId = '';
+			{
+				const req = new Request('http://example.com/api/characters/forge', {
+					method: 'POST',
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify({
+						username,
+						name: 'Hidden Hand Tester',
+						narrativeText: 'A curious wanderer who keeps finding the same door.',
+						dryRun: false,
+					}),
+				});
+				const ctx = createExecutionContext();
+				const res = await worker.fetch(req, env, ctx);
+				await waitOnExecutionContext(ctx);
+				expect(res.status).toBe(201);
+				const json = (await res.json()) as any;
+				characterId = String(json?.character?.id || '');
+				expect(characterId.length).toBeGreaterThan(0);
+			}
+
+			// Create a template with 2 canon events
+			let templateId = '';
+			{
+				const req = new Request('http://example.com/api/templates/create', {
+					method: 'POST',
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify({
+						username,
+						name: 'Canon Enforcement Template',
+						canonTimeline: [
+							{ title: 'First Door', description: 'The first door must be found.' },
+							{ title: 'Second Door', description: 'The second door must be opened.' },
+						],
+					}),
+				});
+				const ctx = createExecutionContext();
+				const res = await worker.fetch(req, env, ctx);
+				await waitOnExecutionContext(ctx);
+				expect(res.status).toBe(201);
+				const json = (await res.json()) as any;
+				templateId = String(json?.template?.id || '');
+				expect(templateId.length).toBeGreaterThan(0);
+			}
+
+			// Instantiate a private run
+			let campaignId = '';
+			let firstCanonId = '';
+			{
+				const req = new Request('http://example.com/api/templates/instantiate', {
+					method: 'POST',
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify({ username, templateId, characterId }),
+				});
+				const ctx = createExecutionContext();
+				const res = await worker.fetch(req, env, ctx);
+				await waitOnExecutionContext(ctx);
+				expect(res.status).toBe(201);
+				const json = (await res.json()) as any;
+				const campaign = json?.campaign;
+				campaignId = String(campaign?.id || '');
+				expect(campaignId.length).toBeGreaterThan(0);
+				const canon = Array.isArray(campaign?.canonTimeline) ? campaign.canonTimeline : [];
+				expect(canon.length).toBe(2);
+				firstCanonId = String(canon?.[0]?.id || '').trim();
+				expect(firstCanonId.length).toBeGreaterThan(0);
+			}
+
+			// Perform a Hidden Hand turn.
+			// Even if the AI call fails (e.g., no GEMINI_API_KEY), server must compute canon.nextEventId.
+			{
+				const req = new Request('http://example.com/api/hidden-hand/turn', {
+					method: 'POST',
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify({ username, campaignId, text: 'I wander the halls looking for any door.' }),
+				});
+				const ctx = createExecutionContext();
+				const res = await worker.fetch(req, env, ctx);
+				await waitOnExecutionContext(ctx);
+				expect(res.status).toBe(200);
+				const json = (await res.json()) as any;
+				expect(json?.ok).toBe(true);
+				expect(Number(json?.currentTurnCount || 0)).toBe(1);
+				const resolved = Array.isArray(json?.canon?.resolvedEventIds) ? json.canon.resolvedEventIds : [];
+				expect(resolved.length).toBe(0);
+				expect(String(json?.canon?.nextEventId || '')).toBe(firstCanonId);
+			}
+
+			// Cleanup (best-effort): delete template so global index stays clean
+			{
+				const req = new Request('http://example.com/api/templates/delete', {
+					method: 'POST',
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify({ username, templateId }),
+				});
+				const ctx = createExecutionContext();
+				await worker.fetch(req, env, ctx);
+				await waitOnExecutionContext(ctx);
+			}
+		});
+	});
 });

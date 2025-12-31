@@ -230,6 +230,7 @@
   let activeCampaignCharacters = [];
   let activeCampaignPartyStatus = null;
   let activeCampaignEncounters = [];
+  let activeCampaignCanUseGmTools = false;
   let cachedPlayerSpeakerLabel = "You";
 
   let currentWorkspaceView = "forge"; // "forge" | "hud"
@@ -1286,8 +1287,14 @@
             status.textContent = msg;
             return;
           }
-          status.textContent = "Adventure started. Opening campaign...";
           const data = result.data || {};
+          const relinkedFrom = Array.isArray(data.relinkedFrom)
+            ? data.relinkedFrom.map((cid) => String(cid || '').trim()).filter(Boolean)
+            : [];
+
+          status.textContent = relinkedFrom.length
+            ? `Adventure started. Your character was moved from ${relinkedFrom.length === 1 ? 'a previous campaign' : 'previous campaigns'} (auto-unlinked). Opening campaign...`
+            : "Adventure started. Opening campaign...";
           const campaign = data.campaign;
           const opening = data.openingNarrative || (data.opening && data.opening.narrative);
           if (campaign) {
@@ -1316,6 +1323,31 @@
   function isAIDmCampaign(campaign) {
     if (!campaign) return false;
     return campaign.dmIsAI === true || campaign.mode === "ai-solo";
+  }
+
+  function setGmToolsVisibility({ canUse }) {
+    const gmTabBtn = campaignTabButtons.find(
+      (b) => b && b.getAttribute && b.getAttribute("data-tab") === "script"
+    );
+    const gmTabPanel = campaignTabPanels.find(
+      (p) => p && p.getAttribute && p.getAttribute("data-tab") === "script"
+    );
+
+    activeCampaignCanUseGmTools = !!canUse;
+
+    if (gmTabBtn) {
+      gmTabBtn.hidden = !canUse;
+      gmTabBtn.disabled = !canUse;
+      gmTabBtn.style.display = canUse ? "" : "none";
+      gmTabBtn.setAttribute("aria-disabled", canUse ? "false" : "true");
+      if (!canUse) {
+        gmTabBtn.classList.remove("campaign-tab-button--active");
+        gmTabBtn.removeAttribute("aria-current");
+      }
+    }
+    if (!canUse && gmTabPanel) {
+      gmTabPanel.hidden = true;
+    }
   }
 
   function setCampaignTab(tabId) {
@@ -1996,6 +2028,14 @@
       return { ok: false, status: 400, data: { error: "Open a campaign dashboard first." } };
     }
 
+    if (!activeCampaignCanUseGmTools) {
+      return {
+        ok: false,
+        status: 403,
+        data: { error: "GM Tools are available only to the campaign's DM (and not in AI-DM campaigns)." },
+      };
+    }
+
     const safeTool = String(toolType || "").trim().toLowerCase();
     if (safeTool !== "encounter" && safeTool !== "flavor") {
       return { ok: false, status: 400, data: { error: "Unknown GM tool." } };
@@ -2081,6 +2121,14 @@
       const isParticipant =
         Array.isArray(campaign.participants) &&
         campaign.participants.includes(currentUser);
+
+      // GM Tools permissions: DM-only and never available for AI-DM campaigns.
+      const canUseGmTools = isDm && !isAi;
+      setGmToolsVisibility({ canUse: canUseGmTools });
+      if (!canUseGmTools) {
+        // Ensure we don't land on a hidden tab.
+        setCampaignTab("characters");
+      }
 
       if (campaignDeleteBtn) {
         const canDelete = isAi && isParticipant;
@@ -2954,7 +3002,23 @@
         if (!res.ok || data.ok === false) {
           throw new Error(data.error || data.message || "Failed to link character.");
         }
-        vaultLinkStatus.textContent = "Character linked to campaign.";
+
+        const relinkedFrom = Array.isArray(data.relinkedFrom)
+          ? data.relinkedFrom.map((cid) => String(cid || '').trim()).filter(Boolean)
+          : [];
+        if (relinkedFrom.length) {
+          const fromLabels = relinkedFrom.map((cid) => {
+            const match = Array.isArray(cachedUserCampaigns)
+              ? cachedUserCampaigns.find((c) => String(c.id) === String(cid))
+              : null;
+            const name = match && match.name ? match.name : '';
+            return name ? name : cid;
+          });
+          vaultLinkStatus.textContent = `Character linked to campaign. Moved from: ${fromLabels.join(", ")}.`;
+        } else {
+          vaultLinkStatus.textContent = "Character linked to campaign.";
+        }
+
         await loadVaultCharacters();
       } catch (err) {
         console.error("Failed to link character", err);

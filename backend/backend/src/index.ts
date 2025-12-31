@@ -1708,6 +1708,25 @@ async function handleStartAICampaign(request: Request, env: Env, origin: string 
 		return errorResponse('You do not own this character', 403, origin);
 	}
 
+	// Hard rule: a character can be linked to NO MORE than 1 campaign at a time.
+	// Starting a solo run automatically moves the character out of any previous campaign(s).
+	const previousCampaignIds = Array.isArray(character.campaignIds)
+		? character.campaignIds.map((cid) => String(cid || '').trim()).filter((cid) => cid)
+		: [];
+	for (const prevId of previousCampaignIds) {
+		const storedPrev = await env.ADA_DATA.get(`campaign:${prevId}`);
+		if (!storedPrev) continue;
+		try {
+			const prevCampaign = JSON.parse(storedPrev) as Campaign;
+			if (Array.isArray(prevCampaign.linkedCharacterIds) && prevCampaign.linkedCharacterIds.includes(characterId)) {
+				prevCampaign.linkedCharacterIds = prevCampaign.linkedCharacterIds.filter((id) => id !== characterId);
+				await env.ADA_DATA.put(`campaign:${prevId}`, JSON.stringify(prevCampaign));
+			}
+		} catch {
+			// ignore malformed
+		}
+	}
+
 	// Basic level gate: for now derive a crude total level from concept.levelSummary if present.
 	let totalLevel = 1;
 	const levelSummary = character.concept?.levelSummary;
@@ -1746,6 +1765,10 @@ async function handleStartAICampaign(request: Request, env: Env, origin: string 
 	};
 
 	await env.ADA_DATA.put(`campaign:${id}`, JSON.stringify(campaign));
+
+	// Persist linkage on the character as well (authoritative single-campaign rule).
+	character.campaignIds = [id];
+	await env.ADA_DATA.put(`character:${characterId}`, JSON.stringify(character));
 
 	// Index campaign for the player
 	const idxKey = `campaignsByUser:${username}`;
@@ -1821,6 +1844,7 @@ async function handleStartAICampaign(request: Request, env: Env, origin: string 
 			campaign,
 			session,
 			openingNarrative,
+			relinkedFrom: previousCampaignIds,
 			...(isDebugEnabled(env)
 				? {
 					debug: {
@@ -2385,6 +2409,25 @@ async function handlePostCampaignDetails(request: Request, env: Env, origin: str
 			return errorResponse("Only the DM or the character's owner can link this character", 403, origin);
 		}
 
+		// Hard rule: a character can be linked to NO MORE than 1 campaign at a time.
+		// Linking will automatically move the character out of any previously linked campaign(s).
+		const previousCampaignIds = Array.isArray(character.campaignIds)
+			? character.campaignIds.map((cid) => String(cid || '').trim()).filter((cid) => cid && cid !== campaignId)
+			: [];
+		for (const prevId of previousCampaignIds) {
+			const storedPrev = await env.ADA_DATA.get(`campaign:${prevId}`);
+			if (!storedPrev) continue;
+			try {
+				const prevCampaign = JSON.parse(storedPrev) as Campaign;
+				if (Array.isArray(prevCampaign.linkedCharacterIds) && prevCampaign.linkedCharacterIds.includes(characterId)) {
+					prevCampaign.linkedCharacterIds = prevCampaign.linkedCharacterIds.filter((id) => id !== characterId);
+					await env.ADA_DATA.put(`campaign:${prevId}`, JSON.stringify(prevCampaign));
+				}
+			} catch {
+				// ignore malformed campaigns
+			}
+		}
+
 		// Enforce: one character per player per campaign
 		const indexKey = `charactersByUser:${owner}`;
 		const existing = await env.ADA_DATA.get(indexKey);
@@ -2424,16 +2467,14 @@ async function handlePostCampaignDetails(request: Request, env: Env, origin: str
 			campaign.linkedCharacterIds.push(characterId);
 		}
 
-		if (!Array.isArray(character.campaignIds)) character.campaignIds = [];
-		if (!character.campaignIds.includes(campaignId)) {
-			character.campaignIds.push(campaignId);
-		}
+		// Single-campaign linkage.
+		character.campaignIds = [campaignId];
 
 		await env.ADA_DATA.put(`campaign:${campaignId}`, JSON.stringify(campaign));
 		await env.ADA_DATA.put(`character:${characterId}`, JSON.stringify(character));
 
 		// No need to send characters list right now; front-end can refresh later if needed.
-		return jsonResponse({ ok: true, campaign }, { status: 200 }, origin);
+		return jsonResponse({ ok: true, campaign, relinkedFrom: previousCampaignIds }, { status: 200 }, origin);
 	}
 
 	if (action === 'addJournal') {
@@ -2577,6 +2618,13 @@ async function handlePostCampaignDetails(request: Request, env: Env, origin: str
 		if (!author || !prompt) {
 			return errorResponse('author and prompt are required for addScript', 400, origin);
 		}
+		// GM Tools are DM-only and not available for AI-DM campaigns.
+		if (campaign.dmIsAI || campaign.mode === 'ai-solo') {
+			return errorResponse('GM Tools are not available for AI-DM campaigns', 403, origin);
+		}
+		if (campaign.dm !== author) {
+			return errorResponse('Only the DM can use GM Tools', 403, origin);
+		}
 		if (!title) {
 			title = 'Generated Encounter Script';
 		}
@@ -2620,6 +2668,13 @@ async function handlePostCampaignDetails(request: Request, env: Env, origin: str
 		const scriptBody = String(body?.body ?? '').trim();
 		if (!author || !scriptBody) {
 			return errorResponse('author and body are required for saveScript', 400, origin);
+		}
+		// GM Tools are DM-only and not available for AI-DM campaigns.
+		if (campaign.dmIsAI || campaign.mode === 'ai-solo') {
+			return errorResponse('GM Tools are not available for AI-DM campaigns', 403, origin);
+		}
+		if (campaign.dm !== author) {
+			return errorResponse('Only the DM can use GM Tools', 403, origin);
 		}
 		if (!title) title = 'Session Log Note';
 
@@ -3713,9 +3768,8 @@ async function handleForgeCharacter(request: Request, env: Env, origin: string |
 	const character = forgeCharacterFromNarrative(username, narrativeText, portraitUrl, explicitName);
 
 	if (campaign) {
-		character.campaignIds = Array.isArray(character.campaignIds)
-			? [...new Set([...character.campaignIds, campaignId])]
-			: [campaignId];
+		// Enforce: a character may be linked to at most one campaign at a time.
+		character.campaignIds = [campaignId];
 		if (!Array.isArray(campaign.linkedCharacterIds)) campaign.linkedCharacterIds = [];
 		if (!campaign.linkedCharacterIds.includes(character.id)) {
 			campaign.linkedCharacterIds.push(character.id);

@@ -39,9 +39,16 @@
           <p class="text-muted">Build campaigns, import scenarios, and test with AI players. (Studio wiring is landing in phases.)</p>
         </header>
 
-        <section aria-label="Create a campaign">
-          <h3>Create a Campaign</h3>
-          <form id="createCampaignForm" class="campaigns__form">
+        <div class="studio-options" aria-label="Studio options" style="margin-top: 1rem; margin-bottom: 1.25rem; display: flex; gap: .5rem; flex-wrap: wrap;">
+          <button type="button" class="btn btn--primary" id="studioPanelWorldsBtn" aria-pressed="true">Worlds</button>
+          <button type="button" class="btn btn--secondary" id="studioPanelHallBtn" aria-pressed="false">Hall of Records</button>
+          <button type="button" class="btn btn--secondary" id="studioPanelSagasBtn" aria-pressed="false">AI Sagas</button>
+        </div>
+
+        <section id="studioPanelWorlds" aria-label="World management">
+          <section aria-label="Create a campaign">
+            <h3>Create a Campaign</h3>
+            <form id="createCampaignForm" class="campaigns__form">
             <div class="field">
               <label for="campaignName">Campaign name</label>
               <input type="text" id="campaignName" name="campaignName" placeholder="The Sapphire Marches" required />
@@ -82,27 +89,29 @@
             </div>
             <button type="submit" class="btn btn--primary">Create campaign</button>
             <p id="campaignsMessage" class="text-muted" style="margin-top: .75rem;"></p>
-          </form>
+            </form>
+          </section>
+
+          <section aria-label="Campaign management">
+            <h3>My Active Worlds</h3>
+            <div id="campaignsList" class="campaigns__list" aria-live="polite"></div>
+            <p id="campaignsMessageList" class="text-muted"></p>
+          </section>
         </section>
 
-        <section aria-label="Campaign management">
-          <h3>My Active Worlds</h3>
-          <div id="campaignsList" class="campaigns__list" aria-live="polite"></div>
-          <p id="campaignsMessageList" class="text-muted"></p>
-        </section>
+        <section id="studioPanelHall" aria-label="Hall of Records tools" hidden>
+          <section aria-label="Import a scenario">
+            <h3>Import Scenario</h3>
+            <p class="text-muted">Clone a Master Template from the Hall into a private Architect campaign.</p>
+            <div id="studioScenarioList" class="studio-scenarios" aria-live="polite"></div>
+            <p id="studioScenarioMessage" class="text-muted"></p>
+            <a class="link-btn" href="hall.html">Browse the full Hall of Records →</a>
+          </section>
 
-        <section aria-label="Import a scenario">
-          <h3>Import Scenario</h3>
-          <p class="text-muted">Clone a Master Template from the Hall into a private Architect campaign.</p>
-          <div id="studioScenarioList" class="studio-scenarios" aria-live="polite"></div>
-          <p id="studioScenarioMessage" class="text-muted"></p>
-          <a class="link-btn" href="hall.html">Browse the full Hall of Records →</a>
-        </section>
-
-        <section aria-label="Publish to Hall of Records">
-          <h3>Publish to Hall</h3>
-          <p class="text-muted">Snapshot one of your campaigns as a read-only Master Template in the Hall of Records. Limit: 3 published templates per Architect.</p>
-          <form id="publishCampaignForm" class="studio-form">
+          <section aria-label="Publish to Hall of Records">
+            <h3>Publish to Hall</h3>
+            <p class="text-muted">Snapshot one of your campaigns as a read-only Master Template in the Hall of Records. Limit: 3 published templates per Architect.</p>
+            <form id="publishCampaignForm" class="studio-form">
             <div class="field">
               <label for="publishCampaignSelect">Select campaign to publish</label>
               <select id="publishCampaignSelect" required>
@@ -119,13 +128,15 @@
             </div>
             <button type="submit" class="btn btn--primary">Publish to Hall</button>
             <p id="publishCampaignStatus" class="text-muted" style="margin-top: 0.75rem;"></p>
-          </form>
+            </form>
+          </section>
         </section>
 
-        <section aria-label="Publish to AI Sagas">
-          <h3>Publish to AI Sagas</h3>
-          <p class="text-muted">Create a new solo ADA adventure. Once published, it will appear in <a href="sagas.html">AI Sagas</a> for everyone.</p>
-          <form id="publishAdventureForm" class="studio-form">
+        <section id="studioPanelSagas" aria-label="AI Sagas tools" hidden>
+          <section aria-label="Publish to AI Sagas">
+            <h3>Publish to AI Sagas</h3>
+            <p class="text-muted">Create a new solo ADA adventure. Once published, it will appear in <a href="sagas.html">AI Sagas</a> for everyone.</p>
+            <form id="publishAdventureForm" class="studio-form">
             <div class="field">
               <label for="adventureTitle">Adventure title</label>
               <input type="text" id="adventureTitle" placeholder="The Lanterns of Blackwater" required />
@@ -182,7 +193,8 @@
 
             <button type="submit" class="btn btn--primary">Publish adventure</button>
             <p id="publishAdventureStatus" class="text-muted" style="margin-top: 0.75rem;"></p>
-          </form>
+            </form>
+          </section>
         </section>
       </div>
     </section>

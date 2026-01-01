@@ -131,6 +131,14 @@
   const studioScenarioList = document.getElementById("studioScenarioList");
   const studioScenarioMessage = document.getElementById("studioScenarioMessage");
 
+  // Studio panel toggles (Worlds / Hall / AI Sagas)
+  const studioPanelWorldsBtn = document.getElementById("studioPanelWorldsBtn");
+  const studioPanelHallBtn = document.getElementById("studioPanelHallBtn");
+  const studioPanelSagasBtn = document.getElementById("studioPanelSagasBtn");
+  const studioPanelWorlds = document.getElementById("studioPanelWorlds");
+  const studioPanelHall = document.getElementById("studioPanelHall");
+  const studioPanelSagas = document.getElementById("studioPanelSagas");
+
   let activeLobbyId = null;
 
   // GM Tactical Dashboard (Campaigns -> Script tab)
@@ -216,6 +224,7 @@
   const onboardingStatusEl = document.getElementById("onboardingStatus");
 
   const IS_ARCHITECT_STORAGE_KEY = "adaIsArchitect";
+  const STUDIO_PANEL_STORAGE_KEY = "adaStudioPanel";
 
   function isArchitect() {
     try {
@@ -237,6 +246,36 @@
   function setOnboardingStatus(text) {
     if (!onboardingStatusEl) return;
     onboardingStatusEl.textContent = text || "";
+  }
+
+  function setStudioPanel(panelKey) {
+    if (!studioPanelWorlds || !studioPanelHall || !studioPanelSagas) return;
+
+    const key = String(panelKey || "worlds").toLowerCase();
+    const isWorlds = key === "worlds";
+    const isHall = key === "hall";
+    const isSagas = key === "sagas";
+
+    studioPanelWorlds.hidden = !isWorlds;
+    studioPanelHall.hidden = !isHall;
+    studioPanelSagas.hidden = !isSagas;
+
+    const setBtnState = (btn, pressed) => {
+      if (!btn) return;
+      btn.setAttribute("aria-pressed", pressed ? "true" : "false");
+      btn.classList.toggle("btn--primary", !!pressed);
+      btn.classList.toggle("btn--secondary", !pressed);
+    };
+
+    setBtnState(studioPanelWorldsBtn, isWorlds);
+    setBtnState(studioPanelHallBtn, isHall);
+    setBtnState(studioPanelSagasBtn, isSagas);
+
+    try {
+      localStorage.setItem(STUDIO_PANEL_STORAGE_KEY, isHall ? "hall" : isSagas ? "sagas" : "worlds");
+    } catch {
+      // ignore
+    }
   }
 
   function quickstartPortraitSvg(kind) {
@@ -265,6 +304,31 @@
   <text x="128" y="46" text-anchor="middle" font-family="Cinzel, serif" font-size="18" fill="${ink}" fill-opacity="0.75">${title}</text>
 </svg>`;
     return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
+  }
+
+  // Studio panel switching (only runs when the Studio panels exist)
+  if (studioPanelWorlds && studioPanelHall && studioPanelSagas) {
+    let initialPanel = "worlds";
+    try {
+      const stored = localStorage.getItem(STUDIO_PANEL_STORAGE_KEY);
+      if (stored) initialPanel = String(stored);
+    } catch {
+      // ignore
+    }
+
+    // Default to Worlds if stored is invalid
+    if (!/^(worlds|hall|sagas)$/i.test(initialPanel)) initialPanel = "worlds";
+    setStudioPanel(initialPanel);
+
+    if (studioPanelWorldsBtn) {
+      studioPanelWorldsBtn.addEventListener("click", () => setStudioPanel("worlds"));
+    }
+    if (studioPanelHallBtn) {
+      studioPanelHallBtn.addEventListener("click", () => setStudioPanel("hall"));
+    }
+    if (studioPanelSagasBtn) {
+      studioPanelSagasBtn.addEventListener("click", () => setStudioPanel("sagas"));
+    }
   }
 
   async function createQuickstartCharacter(archetype) {

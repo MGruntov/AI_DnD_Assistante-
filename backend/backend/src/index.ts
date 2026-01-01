@@ -11,13 +11,8 @@
  * Learn more at https://developers.cloudflare.com/workers/
  */
 
-type Env = {
-	ADA_DATA: KVNamespace;
-	GEMINI_API_KEY: string;
-	// Non-secret toggle for returning debug fields in API responses.
-	// Set via Wrangler vars (not secrets), e.g. ADA_DEBUG="1".
-	ADA_DEBUG?: string;
-};
+import type { Env } from './env';
+import { createApp } from './appRoutes';
 
 // Gemini (Google Generative Language API) uses v1beta endpoints for generateContent and model listing.
 // Model names are typically versioned (e.g. gemini-1.5-flash-001) and listModels returns full names
@@ -232,7 +227,7 @@ async function resolveGeminiModelName(apiKey: string): Promise<{
 
 const CORS_HEADERS_BASE = {
 	'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
-	'Access-Control-Allow-Headers': 'Content-Type',
+	'Access-Control-Allow-Headers': 'Content-Type, Authorization',
 } as const;
 
 function withCorsHeaders(origin: string | null, extra?: HeadersInit): HeadersInit {
@@ -5767,153 +5762,159 @@ function handleSRDQuery(request: Request, origin: string | null): Promise<Respon
 
 export default {
 	async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
-		const url = new URL(request.url);
-		const pathname = url.pathname;
-		const method = request.method.toUpperCase();
-		const origin = request.headers.get('Origin');
-
-		// CORS preflight handling
-		if (method === 'OPTIONS') {
-			return new Response(null, {
-				status: 204,
-				headers: withCorsHeaders(origin, {}),
-			});
-		}
-
-		// Simple routing
-		if (pathname === '/api/health' && method === 'GET') {
-			return handleHealth(origin);
-		}
-
-		if (pathname === '/api/health/ai' && method === 'GET') {
-			return handleAIHealth(env, origin);
-		}
-
-		if (pathname === '/api/health/ai/models' && method === 'GET') {
-			return handleAIModels(env, origin);
-		}
-
-		if (pathname === '/api/register' && method === 'POST') {
-			return handleRegister(request, env, origin);
-		}
-
-		if (pathname === '/api/login' && method === 'POST') {
-			return handleLogin(request, env, origin);
-		}
-
-		if (pathname === '/api/adventures' && method === 'GET') {
-			return handleListAdventures(env, origin);
-		}
-		if (pathname === '/api/adventures/publish' && method === 'POST') {
-			return handlePublishAdventure(request, env, origin);
-		}
-
-		// Grand Library of Fate (Public Templates)
-		if (pathname === '/api/templates/public' && method === 'GET') {
-			return handleListPublicTemplates(env, origin);
-		}
-		if (pathname === '/api/scenarios/clone' && method === 'POST') {
-			return handleCloneScenario(request, env, origin);
-		}
-		if (pathname === '/api/templates/create' && method === 'POST') {
-			return handleCreateTemplate(request, env, origin);
-		}
-		if (pathname === '/api/templates/update' && method === 'POST') {
-			return handleUpdateTemplate(request, env, origin);
-		}
-		if (pathname === '/api/templates/delete' && method === 'POST') {
-			return handleDeleteTemplate(request, env, origin);
-		}
-		if (pathname === '/api/templates/publish' && method === 'POST') {
-			return handlePublishToHall(request, env, origin);
-		}
-		if (pathname === '/api/templates/instantiate' && method === 'POST') {
-			return handleInstantiateTemplate(request, env, origin);
-		}
-
-		// Human Lobbies (public campaign browser + approval workflow + OOC chat)
-		if (pathname === '/api/lobbies/public' && method === 'GET') {
-			return handleListPublicLobbies(env, origin);
-		}
-		if (pathname === '/api/lobbies/details' && method === 'GET') {
-			return handleGetLobbyDetails(request, env, origin);
-		}
-		if (pathname === '/api/lobbies/join' && method === 'POST') {
-			return handleLobbyJoin(request, env, origin);
-		}
-		if (pathname === '/api/lobbies/approve' && method === 'POST') {
-			return handleLobbyApprove(request, env, origin);
-		}
-		if (pathname === '/api/lobbies/reject' && method === 'POST') {
-			return handleLobbyReject(request, env, origin);
-		}
-		if (pathname === '/api/lobbies/chat/send' && method === 'POST') {
-			return handleLobbyChatSend(request, env, origin);
-		}
-		if (pathname === '/api/hidden-hand/turn' && method === 'POST') {
-			return handleHiddenHandTurn(request, env, origin);
-		}
-
-		if (pathname === '/api/characters/forge' && method === 'POST') {
-			return handleForgeCharacter(request, env, origin);
-		}
-
-		if (pathname === '/api/characters/delete' && method === 'POST') {
-			return handleDeleteCharacter(request, env, origin);
-		}
-
-		if (pathname === '/api/characters/level-up' && method === 'POST') {
-			return handleCharacterLevelUp(request, env, origin);
-		}
-
-		if (pathname === '/api/characters' && method === 'GET') {
-			return handleListCharacters(request, env, origin);
-		}
-
-		if (pathname === '/api/ai-campaigns/start' && method === 'POST') {
-			return handleStartAICampaign(request, env, origin);
-		}
-
-		if (pathname === '/api/ai-dm/turn' && method === 'POST') {
-			return handleAIDMTurn(request, env, origin);
-		}
-
-		if (pathname === '/api/ai-dm/resolve-check' && method === 'POST') {
-			return handleAIDMResolveCheck(request, env, origin);
-		}
-
-		if (pathname === '/api/ai-player/turn' && method === 'POST') {
-			return handleAIPlayerTurn(request, env, origin);
-		}
-
-		if (pathname === '/api/campaigns' && method === 'POST') {
-			return handleCreateCampaign(request, env, origin);
-		}
-
-		if (pathname === '/api/campaigns' && method === 'GET') {
-			return handleListCampaigns(request, env, origin);
-		}
-
-		if (pathname === '/api/campaigns/details' && method === 'GET') {
-			return handleGetCampaignDetails(request, env, origin);
-		}
-
-		if (pathname === '/api/campaigns/details' && method === 'POST') {
-			return handlePostCampaignDetails(request, env, origin);
-		}
-
-		if (pathname === '/api/campaigns/approve-player' && method === 'POST') {
-			return handleLobbyApprove(request, env, origin);
-		}
-
-		if (pathname === '/api/gm/tool' && method === 'POST') {
-			return handleGmTool(request, env, origin);
-		}
-
-		if (pathname === '/api/srd/query' && method === 'POST') {
-			return handleSRDQuery(request, origin);
-		}
-
-		return errorResponse('Not Found', 404, origin);
+		return app.fetch(request, env, ctx);
 	},
 } satisfies ExportedHandler<Env>;
+
+async function legacyFetch(request: Request, env: Env, _ctx?: ExecutionContext): Promise<Response> {
+	const url = new URL(request.url);
+	const pathname = url.pathname;
+	const method = request.method.toUpperCase();
+	const origin = request.headers.get('Origin');
+
+	// CORS preflight handling (legacy)
+	if (method === 'OPTIONS') {
+		return new Response(null, {
+			status: 204,
+			headers: withCorsHeaders(origin, {}),
+		});
+	}
+
+	// Simple routing (legacy)
+	if (pathname === '/api/health' && method === 'GET') {
+		return handleHealth(origin);
+	}
+
+	if (pathname === '/api/health/ai' && method === 'GET') {
+		return handleAIHealth(env, origin);
+	}
+
+	if (pathname === '/api/health/ai/models' && method === 'GET') {
+		return handleAIModels(env, origin);
+	}
+
+	if (pathname === '/api/register' && method === 'POST') {
+		return handleRegister(request, env, origin);
+	}
+
+	if (pathname === '/api/login' && method === 'POST') {
+		return handleLogin(request, env, origin);
+	}
+
+	if (pathname === '/api/adventures' && method === 'GET') {
+		return handleListAdventures(env, origin);
+	}
+	if (pathname === '/api/adventures/publish' && method === 'POST') {
+		return handlePublishAdventure(request, env, origin);
+	}
+
+	// Grand Library of Fate (Public Templates)
+	if (pathname === '/api/templates/public' && method === 'GET') {
+		return handleListPublicTemplates(env, origin);
+	}
+	if (pathname === '/api/scenarios/clone' && method === 'POST') {
+		return handleCloneScenario(request, env, origin);
+	}
+	if (pathname === '/api/templates/create' && method === 'POST') {
+		return handleCreateTemplate(request, env, origin);
+	}
+	if (pathname === '/api/templates/update' && method === 'POST') {
+		return handleUpdateTemplate(request, env, origin);
+	}
+	if (pathname === '/api/templates/delete' && method === 'POST') {
+		return handleDeleteTemplate(request, env, origin);
+	}
+	if (pathname === '/api/templates/publish' && method === 'POST') {
+		return handlePublishToHall(request, env, origin);
+	}
+	if (pathname === '/api/templates/instantiate' && method === 'POST') {
+		return handleInstantiateTemplate(request, env, origin);
+	}
+
+	// Human Lobbies (public campaign browser + approval workflow + OOC chat)
+	if (pathname === '/api/lobbies/public' && method === 'GET') {
+		return handleListPublicLobbies(env, origin);
+	}
+	if (pathname === '/api/lobbies/details' && method === 'GET') {
+		return handleGetLobbyDetails(request, env, origin);
+	}
+	if (pathname === '/api/lobbies/join' && method === 'POST') {
+		return handleLobbyJoin(request, env, origin);
+	}
+	if (pathname === '/api/lobbies/approve' && method === 'POST') {
+		return handleLobbyApprove(request, env, origin);
+	}
+	if (pathname === '/api/lobbies/reject' && method === 'POST') {
+		return handleLobbyReject(request, env, origin);
+	}
+	if (pathname === '/api/lobbies/chat/send' && method === 'POST') {
+		return handleLobbyChatSend(request, env, origin);
+	}
+	if (pathname === '/api/hidden-hand/turn' && method === 'POST') {
+		return handleHiddenHandTurn(request, env, origin);
+	}
+
+	if (pathname === '/api/characters/forge' && method === 'POST') {
+		return handleForgeCharacter(request, env, origin);
+	}
+
+	if (pathname === '/api/characters/delete' && method === 'POST') {
+		return handleDeleteCharacter(request, env, origin);
+	}
+
+	if (pathname === '/api/characters/level-up' && method === 'POST') {
+		return handleCharacterLevelUp(request, env, origin);
+	}
+
+	if (pathname === '/api/characters' && method === 'GET') {
+		return handleListCharacters(request, env, origin);
+	}
+
+	if (pathname === '/api/ai-campaigns/start' && method === 'POST') {
+		return handleStartAICampaign(request, env, origin);
+	}
+
+	if (pathname === '/api/ai-dm/turn' && method === 'POST') {
+		return handleAIDMTurn(request, env, origin);
+	}
+
+	if (pathname === '/api/ai-dm/resolve-check' && method === 'POST') {
+		return handleAIDMResolveCheck(request, env, origin);
+	}
+
+	if (pathname === '/api/ai-player/turn' && method === 'POST') {
+		return handleAIPlayerTurn(request, env, origin);
+	}
+
+	if (pathname === '/api/campaigns' && method === 'POST') {
+		return handleCreateCampaign(request, env, origin);
+	}
+
+	if (pathname === '/api/campaigns' && method === 'GET') {
+		return handleListCampaigns(request, env, origin);
+	}
+
+	if (pathname === '/api/campaigns/details' && method === 'GET') {
+		return handleGetCampaignDetails(request, env, origin);
+	}
+
+	if (pathname === '/api/campaigns/details' && method === 'POST') {
+		return handlePostCampaignDetails(request, env, origin);
+	}
+
+	if (pathname === '/api/campaigns/approve-player' && method === 'POST') {
+		return handleLobbyApprove(request, env, origin);
+	}
+
+	if (pathname === '/api/gm/tool' && method === 'POST') {
+		return handleGmTool(request, env, origin);
+	}
+
+	if (pathname === '/api/srd/query' && method === 'POST') {
+		return handleSRDQuery(request, origin);
+	}
+
+	return errorResponse('Not Found', 404, origin);
+}
+
+const app = createApp({ legacyFetch });

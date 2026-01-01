@@ -1,3 +1,6 @@
+import { authHeaders, clearAuthToken, setAuthToken } from "./js/api.js";
+import { apiGetJson, apiPostJson } from "./js/api-client.js";
+
 (function () {
   const TranscriptMode = {
     APPEND: "append",
@@ -1158,24 +1161,7 @@
   }
 
   async function apiPost(path, payload) {
-    const url = `${BACKEND_BASE_URL}${path}`;
-    try {
-      const res = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-
-      const data = await res.json().catch(() => ({}));
-      return { ok: res.ok, status: res.status, data };
-    } catch (e) {
-      console.error("[ADA] API error", e);
-      return {
-        ok: false,
-        status: 0,
-        data: { error: "Network error. Please try again." },
-      };
-    }
+    return apiPostJson(BACKEND_BASE_URL, path, payload);
   }
 
   function humanizeWorldTheme(theme) {
@@ -1917,18 +1903,7 @@
   }
 
   async function apiGet(path) {
-    const url = `${BACKEND_BASE_URL}${path}`;
-    try {
-      const res = await fetch(url, {
-        method: "GET",
-        headers: { Accept: "application/json" },
-      });
-      const data = await res.json().catch(() => ({}));
-      return { ok: res.ok, status: res.status, data };
-    } catch (e) {
-      console.error("[ADA] API GET error", e);
-      return { ok: false, status: 0, data: null };
-    }
+    return apiGetJson(BACKEND_BASE_URL, path);
   }
 
   function normText(v) {
@@ -4000,7 +3975,7 @@
       try {
         const res = await fetch(`${BACKEND_BASE_URL}/api/characters/level-up`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: authHeaders({ "Content-Type": "application/json" }),
           body: JSON.stringify({ username: currentUser, characterId: activeCharacter.id }),
         });
         const data = await res.json().catch(() => ({}));
@@ -4299,7 +4274,7 @@
       vaultDeleteStatus.textContent = "Deleting character...";
       fetch(`${BACKEND_BASE_URL}/api/characters/delete`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: authHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify({ username: currentUser, characterId: activeCharacter.id }),
       })
         .then((res) => res.json().then((data) => ({ res, data })).catch(() => ({ res, data: {} })))
@@ -4340,6 +4315,10 @@
           setAuthMessage(msg || "Invalid username or password.");
           return;
         }
+
+        // New auth flow returns a token; keep username-based storage for backward compatibility.
+        const token = result.data && result.data.token;
+        if (token) setAuthToken(token);
 
         setCurrentUser(username);
         updateNav(username);
@@ -4447,7 +4426,7 @@
       try {
         const res = await fetch(`${BACKEND_BASE_URL}/api/campaigns/details`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: authHeaders({ "Content-Type": "application/json" }),
           body: JSON.stringify({
             campaignId,
             username: currentUser,
@@ -4955,6 +4934,10 @@
       if (dialogueTextInputEl) dialogueTextInputEl.value = "";
 
       clearCurrentUser();
+
+      // Clear JWT session.
+      clearAuthToken();
+
       updateNav(null);
       setAuthMessage("");
       showView("auth-login");

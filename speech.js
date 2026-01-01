@@ -90,6 +90,19 @@
   const publishTemplateSummary = document.getElementById("publishTemplateSummary");
   const publishTemplateTags = document.getElementById("publishTemplateTags");
   const publishCampaignStatus = document.getElementById("publishCampaignStatus");
+  // Studio publish to AI Sagas
+  const publishAdventureForm = document.getElementById("publishAdventureForm");
+  const adventureTitleInput = document.getElementById("adventureTitle");
+  const adventureSummaryInput = document.getElementById("adventureSummary");
+  const adventureDifficultySelect = document.getElementById("adventureDifficulty");
+  const adventureLevelMinInput = document.getElementById("adventureLevelMin");
+  const adventureLevelMaxInput = document.getElementById("adventureLevelMax");
+  const adventurePrimerInput = document.getElementById("adventurePrimer");
+  const adventureCheckpointsInput = document.getElementById("adventureCheckpoints");
+  const adventureVictoryInput = document.getElementById("adventureVictory");
+  const adventureDefeatInput = document.getElementById("adventureDefeat");
+  const adventureTagsInput = document.getElementById("adventureTags");
+  const publishAdventureStatus = document.getElementById("publishAdventureStatus");
   const campaignAiPlayerPrompt = document.getElementById("campaignAiPlayerPrompt");
   const aiPlayerPromptField = document.getElementById("aiPlayerPromptField");
 
@@ -5089,6 +5102,95 @@
       if (publishCampaignSelect) publishCampaignSelect.value = "";
       if (publishTemplateSummary) publishTemplateSummary.value = "";
       if (publishTemplateTags) publishTemplateTags.value = "";
+    });
+  }
+
+  // Publish Solo Adventure to AI Sagas (Studio)
+  if (publishAdventureForm) {
+    publishAdventureForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const currentUser = getCurrentUser();
+      if (!currentUser) {
+        if (publishAdventureStatus) publishAdventureStatus.textContent = "Please log in.";
+        return;
+      }
+
+      const title = adventureTitleInput ? String(adventureTitleInput.value || "").trim() : "";
+      const summary = adventureSummaryInput ? String(adventureSummaryInput.value || "").trim() : "";
+      const difficulty = adventureDifficultySelect
+        ? String(adventureDifficultySelect.value || "Normal")
+        : "Normal";
+      const levelMin = adventureLevelMinInput
+        ? Number.parseInt(String(adventureLevelMinInput.value || "1"), 10)
+        : 1;
+      const levelMax = adventureLevelMaxInput
+        ? Number.parseInt(String(adventureLevelMaxInput.value || String(levelMin || 1)), 10)
+        : levelMin;
+      const primer = adventurePrimerInput ? String(adventurePrimerInput.value || "").trim() : "";
+      const checkpointsText = adventureCheckpointsInput
+        ? String(adventureCheckpointsInput.value || "")
+        : "";
+      const victoryText = adventureVictoryInput ? String(adventureVictoryInput.value || "") : "";
+      const defeatText = adventureDefeatInput ? String(adventureDefeatInput.value || "") : "";
+      const tagsText = adventureTagsInput ? String(adventureTagsInput.value || "") : "";
+
+      if (!title || !summary) {
+        if (publishAdventureStatus) publishAdventureStatus.textContent = "Please provide a title and summary.";
+        return;
+      }
+
+      const checkpoints = checkpointsText
+        .split(/\n|,/)
+        .map((s) => s.trim())
+        .filter(Boolean);
+      const victoryConditions = victoryText
+        .split(/\n/)
+        .map((s) => s.trim())
+        .filter(Boolean);
+      const defeatConditions = defeatText
+        .split(/\n/)
+        .map((s) => s.trim())
+        .filter(Boolean);
+      const tags = tagsText
+        .split(/,|\n/)
+        .map((s) => s.trim())
+        .filter(Boolean);
+
+      if (publishAdventureStatus) publishAdventureStatus.textContent = "Publishing to AI Sagas...";
+
+      const result = await apiPost("/api/adventures/publish", {
+        username: currentUser,
+        title,
+        summary,
+        difficulty,
+        levelMin: Number.isFinite(levelMin) ? levelMin : 1,
+        levelMax: Number.isFinite(levelMax) ? levelMax : (Number.isFinite(levelMin) ? levelMin : 1),
+        primer,
+        checkpoints,
+        victoryConditions,
+        defeatConditions,
+        tags,
+      });
+
+      if (!result.ok) {
+        const msg = (result.data && (result.data.error || result.data.message)) || "Could not publish adventure.";
+        if (publishAdventureStatus) publishAdventureStatus.textContent = msg;
+        return;
+      }
+
+      if (publishAdventureStatus) publishAdventureStatus.textContent = "Published! View it in AI Sagas.";
+      if (adventureTitleInput) adventureTitleInput.value = "";
+      if (adventureSummaryInput) adventureSummaryInput.value = "";
+      if (adventurePrimerInput) adventurePrimerInput.value = "";
+      if (adventureCheckpointsInput) adventureCheckpointsInput.value = "";
+      if (adventureVictoryInput) adventureVictoryInput.value = "";
+      if (adventureDefeatInput) adventureDefeatInput.value = "";
+      if (adventureTagsInput) adventureTagsInput.value = "";
+
+      // Best-effort: if the user has the sagas UI open in a multi-view page, refresh.
+      if (CURRENT_PAGE === "sagas") {
+        loadAdventuresAndCharacters();
+      }
     });
   }
 

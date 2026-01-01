@@ -121,6 +121,69 @@
             <p id="publishCampaignStatus" class="text-muted" style="margin-top: 0.75rem;"></p>
           </form>
         </section>
+
+        <section aria-label="Publish to AI Sagas">
+          <h3>Publish to AI Sagas</h3>
+          <p class="text-muted">Create a new solo ADA adventure. Once published, it will appear in <a href="sagas.html">AI Sagas</a> for everyone.</p>
+          <form id="publishAdventureForm" class="studio-form">
+            <div class="field">
+              <label for="adventureTitle">Adventure title</label>
+              <input type="text" id="adventureTitle" placeholder="The Lanterns of Blackwater" required />
+            </div>
+            <div class="field">
+              <label for="adventureSummary">Summary</label>
+              <textarea id="adventureSummary" rows="3" placeholder="What is the hook, the vibe, and the objective?" required></textarea>
+            </div>
+
+            <div class="studio-options">
+              <label class="checkbox">
+                <span class="text-muted" style="display:block; margin-bottom: .35rem;">Difficulty</span>
+                <select id="adventureDifficulty" style="margin-left: 0;">
+                  <option value="Easy">Easy</option>
+                  <option value="Normal" selected>Normal</option>
+                  <option value="Hard">Hard</option>
+                </select>
+              </label>
+              <label class="checkbox">
+                <span class="text-muted" style="display:block; margin-bottom: .35rem;">Level range</span>
+                <div style="display:flex; gap:.5rem; align-items:center;">
+                  <input type="number" id="adventureLevelMin" min="1" max="20" value="1" style="width: 6rem;" />
+                  <span class="text-muted">to</span>
+                  <input type="number" id="adventureLevelMax" min="1" max="20" value="2" style="width: 6rem;" />
+                </div>
+              </label>
+            </div>
+
+            <div class="field">
+              <label for="adventurePrimer">DM primer (optional)</label>
+              <textarea id="adventurePrimer" rows="4" placeholder="Tell ADA how to run this adventure: setting, tone, mission, boundaries."></textarea>
+              <p class="field__hint">If left blank, ADA will use your summary as the premise.</p>
+            </div>
+
+            <div class="field">
+              <label for="adventureCheckpoints">Checkpoints (optional, one per line)</label>
+              <textarea id="adventureCheckpoints" rows="3" placeholder="opening\ncomplication\nfinale"></textarea>
+            </div>
+
+            <div class="field">
+              <label for="adventureVictory">Victory conditions (optional, one per line)</label>
+              <textarea id="adventureVictory" rows="3" placeholder="Rescue the missing courier\nEscape the flooded tunnels"></textarea>
+            </div>
+
+            <div class="field">
+              <label for="adventureDefeat">Defeat conditions (optional, one per line)</label>
+              <textarea id="adventureDefeat" rows="3" placeholder="Reduced to 0 HP\nObjective is irretrievably lost"></textarea>
+            </div>
+
+            <div class="field">
+              <label for="adventureTags">Tags (optional, comma-separated)</label>
+              <input type="text" id="adventureTags" placeholder="mystery, coastal, low-magic" />
+            </div>
+
+            <button type="submit" class="btn btn--primary">Publish adventure</button>
+            <p id="publishAdventureStatus" class="text-muted" style="margin-top: 0.75rem;"></p>
+          </form>
+        </section>
       </div>
     </section>
   </main>

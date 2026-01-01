@@ -562,9 +562,9 @@ function ensureCharacterProgression(character: Character): Character {
 	};
 }
 
-function xpAwardForCampaign(campaign: Campaign): number {
+async function xpAwardForCampaign(env: Env, campaign: Campaign): Promise<number> {
 	if (campaign.adventureId) {
-		const adv = ADVENTURES.find((a) => a.id === campaign.adventureId);
+		const adv = await getAdventureById(env, campaign.adventureId);
 		if (adv?.difficulty === 'Easy') return 250;
 		if (adv?.difficulty === 'Hard') return 600;
 		return 400;
@@ -970,7 +970,7 @@ async function handleAIDMResolveCheck(request: Request, env: Env, origin: string
 	}
 
 	const adventureId = campaign.adventureId;
-	const adventure = ADVENTURES.find((a) => a.id === adventureId);
+	const adventure = await getAdventureById(env, String(adventureId || '').trim());
 	if (!adventure) {
 		return errorResponse('Adventure configuration not found for this campaign', 500, origin);
 	}
@@ -1050,7 +1050,7 @@ async function handleAIDMResolveCheck(request: Request, env: Env, origin: string
 
 	if (completionJustOccurred) {
 		try {
-			const xpAmount = xpAwardForCampaign(campaign);
+			const xpAmount = await xpAwardForCampaign(env, campaign);
 			await awardXpToCharacter(env, session.characterId, xpAmount);
 		} catch (err) {
 			console.error('Failed to award XP on completion (resolve-check)', err);
@@ -1229,8 +1229,175 @@ async function handleAIModels(env: Env, origin: string | null): Promise<Response
 	);
 }
 
-async function handleListAdventures(origin: string | null): Promise<Response> {
-	return jsonResponse({ ok: true, adventures: ADVENTURES }, undefined, origin);
+function normalizeAdventureDifficulty(raw: any): AdventureDifficulty {
+	const v = String(raw || '').trim().toLowerCase();
+	if (v === 'easy') return 'Easy';
+	if (v === 'hard') return 'Hard';
+	return 'Normal';
+}
+
+function normalizeBoundedInt(raw: any, fallback: number, min: number, max: number): number {
+	const n = Number.parseInt(String(raw ?? ''), 10);
+	if (!Number.isFinite(n)) return fallback;
+	return Math.max(min, Math.min(max, n));
+}
+
+function normalizeStringList(
+	raw: any,
+	opts: { maxItems: number; maxItemLength: number; splitPattern?: RegExp },
+): string[] {
+	const splitPattern = opts.splitPattern ?? /\n/;
+	const arr = Array.isArray(raw)
+		? raw
+		: typeof raw === 'string'
+			? String(raw)
+				.split(splitPattern)
+				.map((s) => s.trim())
+				.filter(Boolean)
+			: [];
+	return arr
+		.map((v: any) => String(v || '').trim())
+		.filter(Boolean)
+		.map((v) => (v.length > opts.maxItemLength ? v.slice(0, opts.maxItemLength) : v))
+		.slice(0, opts.maxItems);
+}
+
+async function listPublishedAdventures(env: Env): Promise<AdventureTemplate[]> {
+	const ids = await readStringArrayKV(env, 'global:adventures');
+	const adventures: AdventureTemplate[] = [];
+	for (const id of ids) {
+		const stored = await env.ADA_DATA.get(`adventure:${id}`);
+		if (!stored) continue;
+		try {
+			const parsed = JSON.parse(stored) as AdventureTemplate;
+			if (parsed && parsed.id && parsed.title && Array.isArray(parsed.checkpoints)) {
+				adventures.push(parsed);
+			}
+		} catch {
+			// ignore malformed
+		}
+	}
+	return adventures;
+}
+
+async function getAdventureById(env: Env, adventureId: string): Promise<AdventureTemplate | null> {
+	const id = String(adventureId || '').trim();
+	if (!id) return null;
+	const builtIn = ADVENTURES.find((a) => a.id === id);
+	if (builtIn) return builtIn;
+	const stored = await env.ADA_DATA.get(`adventure:${id}`);
+	if (!stored) return null;
+	try {
+		const parsed = JSON.parse(stored) as AdventureTemplate;
+		if (parsed && parsed.id === id && parsed.title && Array.isArray(parsed.checkpoints)) {
+			return parsed;
+		}
+	} catch {
+		// ignore malformed
+	}
+	return null;
+}
+
+async function handleListAdventures(env: Env, origin: string | null): Promise<Response> {
+	const published = await listPublishedAdventures(env);
+	const byId = new Map<string, AdventureTemplate>();
+	for (const a of ADVENTURES) {
+		byId.set(String(a.id), a);
+	}
+	for (const a of published) {
+		const id = String(a?.id || '').trim();
+		if (!id) continue;
+		if (!byId.has(id)) byId.set(id, a);
+	}
+	return jsonResponse({ ok: true, adventures: Array.from(byId.values()) }, undefined, origin);
+}
+
+async function handlePublishAdventure(request: Request, env: Env, origin: string | null): Promise<Response> {
+	let body: any;
+	try {
+		body = await request.json();
+	} catch {
+		return errorResponse('Invalid JSON body', 400, origin);
+	}
+
+	const username = String(body?.username ?? '').trim();
+	const title = String(body?.title ?? body?.name ?? '').trim();
+	const summary = String(body?.summary ?? '').trim();
+	const primerRaw = String(body?.primer ?? '').trim();
+	const difficulty = normalizeAdventureDifficulty(body?.difficulty);
+	const levelMin = normalizeBoundedInt(body?.levelMin, 1, 1, 20);
+	const levelMax = normalizeBoundedInt(body?.levelMax, Math.max(1, levelMin), 1, 20);
+	const tags = normalizeStringList(body?.tags ?? body?.templateTags, {
+		maxItems: 12,
+		maxItemLength: 32,
+		splitPattern: /,|\n/,
+	});
+
+	if (!username || !title || !summary) {
+		return errorResponse('username, title and summary are required', 400, origin);
+	}
+
+	// Ensure user exists.
+	const userRecord = await env.ADA_DATA.get(`user:${username}`);
+	if (!userRecord) {
+		return errorResponse('Unknown user', 404, origin);
+	}
+
+	const checkpoints = normalizeStringList(body?.checkpoints, {
+		maxItems: 12,
+		maxItemLength: 48,
+		splitPattern: /,|\n/,
+	});
+	const victoryConditions = normalizeStringList(body?.victoryConditions, {
+		maxItems: 8,
+		maxItemLength: 200,
+	});
+	const defeatConditions = normalizeStringList(body?.defeatConditions, {
+		maxItems: 8,
+		maxItemLength: 200,
+	});
+
+	const normalizedCheckpoints = checkpoints.length ? checkpoints : ['opening', 'complication', 'finale'];
+	const normalizedVictory = victoryConditions.length
+		? victoryConditions
+		: ['The player completes the central objective of the adventure.'];
+	const normalizedDefeat = defeatConditions.length
+		? defeatConditions
+		: ['The player character is reduced to 0 hit points with no clear rescue available.'];
+
+	const primer = primerRaw
+		? primerRaw.slice(0, 2200)
+		: `You are acting as an AI Dungeon Master for D&D 5e. Run a tightly scoped solo adventure.\n\nAdventure premise: ${summary.slice(0, 600)}`;
+
+	const id = crypto.randomUUID();
+	const createdAt = new Date().toISOString();
+	const adventure: AdventureTemplate & { creatorUsername?: string; createdAt?: string; tags?: string[] } = {
+		id,
+		title: title.slice(0, 120),
+		levelMin,
+		levelMax: Math.max(levelMin, levelMax),
+		difficulty,
+		summary: summary.slice(0, 600),
+		primer,
+		checkpoints: normalizedCheckpoints,
+		victoryConditions: normalizedVictory,
+		defeatConditions: normalizedDefeat,
+		creatorUsername: username,
+		createdAt,
+		...(tags.length ? { tags } : {}),
+	};
+
+	await env.ADA_DATA.put(`adventure:${id}`, JSON.stringify(adventure));
+
+	// Add to global discovery index
+	const globalKey = 'global:adventures';
+	const existingIds = await readStringArrayKV(env, globalKey);
+	if (!existingIds.includes(id)) {
+		existingIds.push(id);
+		await writeStringArrayKV(env, globalKey, existingIds);
+	}
+
+	return jsonResponse({ ok: true, adventure }, { status: 201 }, origin);
 }
 
 const ADVENTURES: AdventureTemplate[] = [
@@ -3200,7 +3367,7 @@ async function handleStartAICampaign(request: Request, env: Env, origin: string 
 		return errorResponse('username, characterId and adventureId are required', 400, origin);
 	}
 
-	const adventure = ADVENTURES.find((a) => a.id === adventureId);
+	const adventure = await getAdventureById(env, adventureId);
 	if (!adventure) {
 		return errorResponse('Unknown adventureId', 404, origin);
 	}
@@ -3407,7 +3574,7 @@ async function handleAIDMTurn(request: Request, env: Env, origin: string | null)
 	if (!adventureId) {
 		return errorResponse('AI-DM campaign is missing an adventureId', 500, origin);
 	}
-	const adventure = ADVENTURES.find((a) => a.id === adventureId);
+	const adventure = await getAdventureById(env, adventureId);
 	if (!adventure) {
 		return errorResponse('Adventure configuration not found for this campaign', 500, origin);
 	}
@@ -3507,7 +3674,7 @@ async function handleAIDMTurn(request: Request, env: Env, origin: string | null)
 
 		// Award XP only on the transition into completed.
 		if (progressResult.statusBefore !== 'completed' && session.status === 'completed') {
-			const xpAmount = xpAwardForCampaign(campaign);
+			const xpAmount = await xpAwardForCampaign(env, campaign);
 			try {
 				await awardXpToCharacter(env, session.characterId, xpAmount);
 			} catch (err) {
@@ -4296,7 +4463,7 @@ async function handlePostCampaignDetails(request: Request, env: Env, origin: str
 			return errorResponse('No linked characters to award XP to', 400, origin);
 		}
 
-		const xpAmount = xpAwardForCampaign(campaign);
+		const xpAmount = await xpAwardForCampaign(env, campaign);
 		const awardedTo: string[] = [];
 		for (const charId of linkedIds) {
 			try {
@@ -5635,7 +5802,10 @@ export default {
 		}
 
 		if (pathname === '/api/adventures' && method === 'GET') {
-			return handleListAdventures(origin);
+			return handleListAdventures(env, origin);
+		}
+		if (pathname === '/api/adventures/publish' && method === 'POST') {
+			return handlePublishAdventure(request, env, origin);
 		}
 
 		// Grand Library of Fate (Public Templates)

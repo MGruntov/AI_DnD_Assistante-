@@ -62,6 +62,7 @@
 
           <nav class="campaign-tabs" aria-label="Campaign sections">
             <button type="button" class="campaign-tab-button" data-tab="characters">Characters</button>
+            <button type="button" class="campaign-tab-button" data-tab="lobby">Lobby Chat</button>
             <button type="button" class="campaign-tab-button" data-tab="journals">Journals</button>
             <button type="button" class="campaign-tab-button" data-tab="script">GM Tools</button>
             <button type="button" class="campaign-tab-button" data-tab="dialogue">Dialogue</button>
@@ -69,8 +70,35 @@
 
           <div class="campaign-tab-panels">
             <section id="campaignTabCharacters" class="campaign-tab-panel" data-tab="characters">
+              <div id="campaignGmQueue" class="gm-queue" hidden>
+                <h3>Approval Queue</h3>
+                <p class="text-muted">Players requesting to join this lobby:</p>
+                <div id="campaignPendingList" class="pending-list"></div>
+              </div>
               <p class="text-muted">Party characters linked to this campaign.</p>
               <div id="campaignCharactersGrid" class="party-grid"></div>
+            </section>
+
+            <section id="campaignTabLobby" class="campaign-tab-panel campaign-tab-panel--lobby" data-tab="lobby" hidden>
+              <div class="lobby-panel">
+                <p class="text-muted">Out-of-character chat for campaign coordination and social banter. <strong class="text-gold">Distinct from the Dialogue tab (in-game narrative).</strong></p>
+                <div id="campaignPendingNotice" class="lobby-notice" hidden>
+                  <p><strong>Awaiting GM Approval</strong></p>
+                  <p class="text-muted">You've requested to join this lobby. The GM will review your request. In the meantime, you can chat here and check the Discord link if available.</p>
+                </div>
+                <div id="campaignLobbyChatThread" class="chat-thread chat-thread--lobby" role="log" aria-label="Lobby chat" aria-live="polite"></div>
+                <form id="campaignLobbyChatComposer" class="chat-composer" autocomplete="off">
+                  <label for="campaignLobbyChatInput" class="sr-only">Type a lobby message</label>
+                  <input
+                    id="campaignLobbyChatInput"
+                    class="chat-composer__input"
+                    type="text"
+                    placeholder="Type a message…"
+                  />
+                  <button type="submit" id="campaignLobbyChatSendBtn" class="btn btn--primary btn--small">Send</button>
+                </form>
+                <span id="campaignLobbyChatStatus" class="status" style="margin-top: 0.5rem;"></span>
+              </div>
             </section>
 
             <section id="campaignTabJournals" class="campaign-tab-panel" data-tab="journals" hidden>

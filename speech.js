@@ -74,6 +74,25 @@
   const campaignScriptGenerateBtn = document.getElementById("campaignScriptGenerateBtn");
   const campaignScriptStatusEl = document.getElementById("campaignScriptStatus");
 
+  // Campaign Lobby Chat (OOC)
+  const campaignLobbyChatThread = document.getElementById("campaignLobbyChatThread");
+  const campaignLobbyChatInput = document.getElementById("campaignLobbyChatInput");
+  const campaignLobbyChatSendBtn = document.getElementById("campaignLobbyChatSendBtn");
+  const campaignLobbyChatComposer = document.getElementById("campaignLobbyChatComposer");
+  const campaignLobbyChatStatus = document.getElementById("campaignLobbyChatStatus");
+  const campaignPendingNotice = document.getElementById("campaignPendingNotice");
+  const campaignGmQueue = document.getElementById("campaignGmQueue");
+  const campaignPendingList = document.getElementById("campaignPendingList");
+
+  // Studio publish to Hall
+  const publishCampaignForm = document.getElementById("publishCampaignForm");
+  const publishCampaignSelect = document.getElementById("publishCampaignSelect");
+  const publishTemplateSummary = document.getElementById("publishTemplateSummary");
+  const publishTemplateTags = document.getElementById("publishTemplateTags");
+  const publishCampaignStatus = document.getElementById("publishCampaignStatus");
+  const campaignAiPlayerPrompt = document.getElementById("campaignAiPlayerPrompt");
+  const aiPlayerPromptField = document.getElementById("aiPlayerPromptField");
+
   // Human Lobbies page
   const lobbiesList = document.getElementById("lobbiesList");
   const lobbiesMessage = document.getElementById("lobbiesMessage");
@@ -3421,6 +3440,24 @@
       } else {
         renderCampaignDialogueThread("");
       }
+
+      // Lobby Chat & Approval Queue
+      const lobbyChat = Array.isArray(campaign.lobbyChat) ? campaign.lobbyChat : [];
+      const pendingParticipants = Array.isArray(campaign.pendingParticipants) ? campaign.pendingParticipants : [];
+      const isPending = pendingParticipants.includes(currentUser);
+
+      renderLobbyChatMessages(lobbyChat, currentUser);
+
+      if (campaignPendingNotice) {
+        campaignPendingNotice.hidden = !isPending;
+      }
+
+      if (campaignGmQueue) {
+        campaignGmQueue.hidden = !isDm || pendingParticipants.length === 0;
+        if (isDm && pendingParticipants.length > 0) {
+          renderPendingApprovals(pendingParticipants);
+        }
+      }
     }
 
     renderCampaignCharacters(characters);
@@ -3573,6 +3610,41 @@
         ? result.data.campaigns
         : [];
     renderCampaigns(campaigns, filter, currentUser);
+
+    // Also populate the publish campaign dropdown if on studio page
+    if (publishCampaignSelect && CURRENT_PAGE === "studio") {
+      populatePublishCampaignSelect(campaigns, currentUser);
+    }
+  }
+
+  function populatePublishCampaignSelect(campaigns, currentUser) {
+    if (!publishCampaignSelect) return;
+    
+    // Clear existing options except the first placeholder
+    while (publishCampaignSelect.options.length > 1) {
+      publishCampaignSelect.remove(1);
+    }
+
+    const eligibleCampaigns = campaigns.filter(c => {
+      // Can only publish campaigns where user is DM and it's not already a template
+      return c.dm === currentUser && !c.isTemplate && Array.isArray(c.canonTimeline) && c.canonTimeline.length > 0;
+    });
+
+    if (eligibleCampaigns.length === 0) {
+      const opt = document.createElement("option");
+      opt.value = "";
+      opt.textContent = "No eligible campaigns (must have Canon Events)";
+      opt.disabled = true;
+      publishCampaignSelect.appendChild(opt);
+      return;
+    }
+
+    eligibleCampaigns.forEach(c => {
+      const opt = document.createElement("option");
+      opt.value = c.id;
+      opt.textContent = c.name;
+      publishCampaignSelect.appendChild(opt);
+    });
   }
 
   async function loadVaultCharacters({ silent = false } = {}) {
@@ -4849,6 +4921,7 @@
         participants: rawParticipants,
         isPublicLobby: campaignIsPublicLobbyToggle ? Boolean(campaignIsPublicLobbyToggle.checked) : false,
         hasAiPlayers: campaignHasAiPlayersToggle ? Boolean(campaignHasAiPlayersToggle.checked) : false,
+        aiPlayerPrompt: campaignAiPlayerPrompt ? String(campaignAiPlayerPrompt.value || "").trim() : "",
         worldTheme: campaignWorldThemeInput ? String(campaignWorldThemeInput.value || "").trim() : "",
         discordLink: campaignDiscordLinkInput ? String(campaignDiscordLinkInput.value || "").trim() : "",
       }).then((result) => {
@@ -4885,6 +4958,8 @@
         campaignParticipantsInput.value = "";
         if (campaignIsPublicLobbyToggle) campaignIsPublicLobbyToggle.checked = false;
         if (campaignHasAiPlayersToggle) campaignHasAiPlayersToggle.checked = false;
+        if (campaignAiPlayerPrompt) campaignAiPlayerPrompt.value = "";
+        if (aiPlayerPromptField) aiPlayerPromptField.hidden = true;
         if (campaignWorldThemeInput) campaignWorldThemeInput.value = "";
         if (campaignDiscordLinkInput) campaignDiscordLinkInput.value = "";
         if (campaignsMessage) campaignsMessage.textContent = "Campaign created!";
@@ -4967,6 +5042,214 @@
     campaignFilterPlayerBtn.addEventListener("click", () => {
       loadCampaigns("player");
     });
+  }
+
+  // Toggle AI Player Prompt field visibility in Studio
+  if (campaignHasAiPlayersToggle && aiPlayerPromptField) {
+    campaignHasAiPlayersToggle.addEventListener("change", () => {
+      aiPlayerPromptField.hidden = !campaignHasAiPlayersToggle.checked;
+    });
+  }
+
+  // Publish Campaign to Hall of Records (Studio)
+  if (publishCampaignForm) {
+    publishCampaignForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const currentUser = getCurrentUser();
+      if (!currentUser) {
+        if (publishCampaignStatus) publishCampaignStatus.textContent = "Please log in.";
+        return;
+      }
+
+      const campaignId = publishCampaignSelect ? publishCampaignSelect.value : "";
+      const summary = publishTemplateSummary ? publishTemplateSummary.value.trim() : "";
+      const tags = publishTemplateTags ? publishTemplateTags.value.trim() : "";
+
+      if (!campaignId) {
+        if (publishCampaignStatus) publishCampaignStatus.textContent = "Please select a campaign.";
+        return;
+      }
+
+      if (publishCampaignStatus) publishCampaignStatus.textContent = "Publishing to Hall...";
+
+      const result = await apiPost("/api/templates/publish", {
+        username: currentUser,
+        campaignId,
+        templateSummary: summary,
+        templateTags: tags,
+      });
+
+      if (!result.ok) {
+        const msg = (result.data && (result.data.error || result.data.message)) || "Could not publish.";
+        if (publishCampaignStatus) publishCampaignStatus.textContent = msg;
+        return;
+      }
+
+      if (publishCampaignStatus) publishCampaignStatus.textContent = "Published to Hall of Records!";
+      if (publishCampaignSelect) publishCampaignSelect.value = "";
+      if (publishTemplateSummary) publishTemplateSummary.value = "";
+      if (publishTemplateTags) publishTemplateTags.value = "";
+    });
+  }
+
+  // Campaign Lobby Chat (OOC)
+  if (campaignLobbyChatComposer) {
+    campaignLobbyChatComposer.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const currentUser = getCurrentUser();
+      if (!currentUser || !activeCampaignId) return;
+
+      const text = campaignLobbyChatInput ? campaignLobbyChatInput.value.trim() : "";
+      if (!text) return;
+
+      if (campaignLobbyChatStatus) campaignLobbyChatStatus.textContent = "Sending...";
+
+      const result = await apiPost("/api/lobbies/chat/send", {
+        campaignId: activeCampaignId,
+        username: currentUser,
+        text,
+      });
+
+      if (!result.ok) {
+        const msg = (result.data && result.data.error) || "Could not send message.";
+        if (campaignLobbyChatStatus) campaignLobbyChatStatus.textContent = msg;
+        return;
+      }
+
+      if (campaignLobbyChatInput) campaignLobbyChatInput.value = "";
+      if (campaignLobbyChatStatus) campaignLobbyChatStatus.textContent = "";
+
+      // Append message locally
+      const msg = result.data && result.data.message;
+      if (msg && campaignLobbyChatThread) {
+        const msgEl = createLobbyChatMessage(msg, currentUser);
+        campaignLobbyChatThread.appendChild(msgEl);
+        campaignLobbyChatThread.scrollTop = campaignLobbyChatThread.scrollHeight;
+      }
+    });
+  }
+
+  function createLobbyChatMessage(msg, currentUser) {
+    const div = document.createElement("div");
+    div.className = "chat-msg chat-msg--lobby";
+    
+    const meta = document.createElement("div");
+    meta.className = "chat-msg__meta";
+    const timestamp = new Date(msg.createdAt || Date.now()).toLocaleTimeString();
+    meta.textContent = `${msg.author} · ${timestamp}`;
+    
+    const body = document.createElement("div");
+    body.className = "chat-msg__body";
+    body.textContent = msg.text || "";
+    
+    div.appendChild(meta);
+    div.appendChild(body);
+    return div;
+  }
+
+  function renderLobbyChatMessages(messages, currentUser) {
+    if (!campaignLobbyChatThread) return;
+    campaignLobbyChatThread.innerHTML = "";
+    
+    if (!Array.isArray(messages) || messages.length === 0) {
+      const empty = document.createElement("p");
+      empty.className = "text-muted";
+      empty.textContent = "No messages yet. Start the conversation!";
+      campaignLobbyChatThread.appendChild(empty);
+      return;
+    }
+
+    messages.forEach(msg => {
+      const msgEl = createLobbyChatMessage(msg, currentUser);
+      campaignLobbyChatThread.appendChild(msgEl);
+    });
+    
+    campaignLobbyChatThread.scrollTop = campaignLobbyChatThread.scrollHeight;
+  }
+
+  function renderPendingApprovals(pendingUsers) {
+    if (!campaignPendingList) return;
+    campaignPendingList.innerHTML = "";
+
+    if (!Array.isArray(pendingUsers) || pendingUsers.length === 0) {
+      const empty = document.createElement("p");
+      empty.className = "text-muted";
+      empty.textContent = "No pending requests.";
+      campaignPendingList.appendChild(empty);
+      return;
+    }
+
+    pendingUsers.forEach(username => {
+      const item = document.createElement("div");
+      item.className = "pending-item";
+
+      const name = document.createElement("span");
+      name.className = "pending-item__name";
+      name.textContent = username;
+
+      const actions = document.createElement("div");
+      actions.className = "pending-item__actions";
+
+      const approveBtn = document.createElement("button");
+      approveBtn.className = "btn btn--primary btn--small";
+      approveBtn.textContent = "Approve";
+      approveBtn.type = "button";
+      approveBtn.addEventListener("click", async () => {
+        await handleApprovePlayer(username);
+      });
+
+      const rejectBtn = document.createElement("button");
+      rejectBtn.className = "btn btn--secondary btn--small";
+      rejectBtn.textContent = "Reject";
+      rejectBtn.type = "button";
+      rejectBtn.addEventListener("click", async () => {
+        await handleRejectPlayer(username);
+      });
+
+      actions.appendChild(approveBtn);
+      actions.appendChild(rejectBtn);
+      item.appendChild(name);
+      item.appendChild(actions);
+      campaignPendingList.appendChild(item);
+    });
+  }
+
+  async function handleApprovePlayer(username) {
+    const currentUser = getCurrentUser();
+    if (!currentUser || !activeCampaignId) return;
+
+    const result = await apiPost("/api/campaigns/approve-player", {
+      gmUsername: currentUser,
+      campaignId: activeCampaignId,
+      username,
+    });
+
+    if (!result.ok) {
+      alert((result.data && result.data.error) || "Could not approve player.");
+      return;
+    }
+
+    // Reload campaign detail to refresh pending list
+    loadCampaignDetail(activeCampaignId);
+  }
+
+  async function handleRejectPlayer(username) {
+    const currentUser = getCurrentUser();
+    if (!currentUser || !activeCampaignId) return;
+
+    const result = await apiPost("/api/lobbies/reject", {
+      gmUsername: currentUser,
+      campaignId: activeCampaignId,
+      username,
+    });
+
+    if (!result.ok) {
+      alert((result.data && result.data.error) || "Could not reject player.");
+      return;
+    }
+
+    // Reload campaign detail to refresh pending list
+    loadCampaignDetail(activeCampaignId);
   }
 
   // Expose a small, stable API for page modules (e.g., HUD).

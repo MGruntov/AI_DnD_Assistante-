@@ -287,13 +287,14 @@ type Campaign = {
 	// - The GM can approve/reject pending participants.
 	worldTheme?: string | null;
 	isPublicLobby?: boolean;
-	pendingParticipants?: string[];
+	pendingParticipants?: string[]; // Players who requested to join but are not yet approved
 	discordLink?: string | null;
-	lobbyChat?: LobbyChatMessage[];
-	// Architect Studio
-	hasAiPlayers?: boolean;
+	lobbyChat?: LobbyChatMessage[]; // Out-of-character chat distinct from AI journal
+	// Architect Studio - AI Playtester Support
+	hasAiPlayers?: boolean; // Enable AI-controlled party members for solo GM testing
+	aiPlayerPrompt?: string; // Configuration for how AI players should behave
 	createdAt: string;
-	// Community Templates ("Grand Library of Fate")
+	// Community Templates ("Grand Library of Fate" / "Hall of Records")
 	// - Templates are globally discoverable blueprints authored by an Architect.
 	// - Instances are private runs created from a template for a specific player.
 	isTemplate?: boolean;
@@ -304,13 +305,14 @@ type Campaign = {
 	canonTimeline?: CanonEvent[];
 	// Instance-only fields
 	templateId?: string;
+	sourceScenarioId?: string; // Track which Hall of Records scenario this was cloned from
 	resolvedCanonEventIds?: string[];
 	currentTurnCount?: number;
 	journalEntryIds?: string[];
 	scriptIds?: string[];
 	encounterIds?: string[];
 	linkedCharacterIds?: string[];
-	conversationTranscript?: string;
+	conversationTranscript?: string; // AI journal/narrative - separate from lobbyChat
 	status?: 'active' | 'completed';
 	completedAt?: string;
 	xpAwardedToCharacterIds?: string[];
@@ -1560,6 +1562,248 @@ function buildFallbackNarrativeFromInput(playerInput: string, adventure: Adventu
 	].join(' ');
 }
 
+// ============================================================================
+// AI PLAYER SUPPORT (Studio Playtesting Mode)
+// ============================================================================
+
+/**
+ * Builds a system prompt for AI-controlled party members.
+ * These AI players respond to DM narration and participate like real players.
+ */
+function buildAIPlayerSystemPrompt(aiPlayerPrompt?: string): string {
+	const basePrompt = [
+		'You are an AI-controlled player character in a D&D 5e campaign.',
+		'The human GM is testing their scenario with AI party members.',
+		'You respond to the DM\'s narration as your character would.',
+		'',
+		'Guidelines:',
+		'- Stay in character based on your character sheet and background',
+		'- Make reasonable tactical and roleplay decisions',
+		'- Keep responses concise (1-3 sentences)',
+		'- Describe your actions in first person ("I...")',
+		'- Ask questions when the situation is unclear',
+		'- Cooperate with other party members',
+		'',
+		'Format your response as:',
+		'[ACTION]',
+		'Your character\'s action or dialogue in 1-3 sentences.',
+		'[/ACTION]',
+	].join('\n');
+
+	if (aiPlayerPrompt && aiPlayerPrompt.trim()) {
+		return `${basePrompt}\n\nAdditional GM Instructions:\n${aiPlayerPrompt.trim()}`;
+	}
+	return basePrompt;
+}
+
+/**
+ * Builds a user prompt for an AI player turn.
+ */
+function buildAIPlayerUserPrompt(
+	character: Character,
+	dmNarration: string,
+	conversationHistory: string,
+): string {
+	const characterSummary = buildCharacterSummary(character);
+	return [
+		'Your character:',
+		characterSummary,
+		'',
+		'Recent conversation:',
+		conversationHistory || '(campaign just started)',
+		'',
+		'Latest DM narration:',
+		dmNarration,
+		'',
+		'What does your character do or say in response?',
+	].join('\n');
+}
+
+/**
+ * Calls the AI to generate a player character's response.
+ */
+async function callAIPlayer(
+	env: Env,
+	character: Character,
+	dmNarration: string,
+	conversationHistory: string,
+	aiPlayerPrompt?: string,
+): Promise<string> {
+	const systemPrompt = buildAIPlayerSystemPrompt(aiPlayerPrompt);
+	const userPrompt = buildAIPlayerUserPrompt(character, dmNarration, conversationHistory);
+	const apiKey = env.GEMINI_API_KEY;
+	if (!apiKey) {
+		throw new Error('GEMINI_API_KEY is not configured');
+	}
+	const resolved = await resolveGeminiModelName(apiKey.trim());
+
+	const url =
+		`https://generativelanguage.googleapis.com/${encodeURIComponent(GEMINI_API_VERSION)}/${resolved.modelName}:generateContent` +
+		`?key=${encodeURIComponent(apiKey.trim())}`;
+
+	const body = JSON.stringify({
+		systemInstruction: {
+			parts: [{ text: systemPrompt }],
+		},
+		contents: [
+			{
+				role: 'user',
+				parts: [{ text: userPrompt }],
+			},
+		],
+		generationConfig: {
+			temperature: 0.8,
+			maxOutputTokens: 200,
+		},
+	});
+
+	const res = await fetch(url, {
+		method: 'POST',
+		headers: {
+			'content-type': 'application/json; charset=utf-8',
+		},
+		body,
+	});
+
+	if (!res.ok) {
+		let detail = '';
+		try {
+			detail = (await res.text()).slice(0, 300);
+		} catch {
+			// ignore
+		}
+		throw new Error(`Gemini AI-Player request failed with status ${res.status}${detail ? `: ${detail}` : ''}`);
+	}
+
+	let data: any;
+	try {
+		data = await res.json();
+	} catch (err) {
+		throw new Error('Failed to parse Gemini AI-Player response JSON');
+	}
+
+	const parts: string[] =
+		data?.candidates?.[0]?.content?.parts?.map((p: any) => (p && typeof p.text === 'string' ? p.text : '')) || [];
+	const text = parts.join('').trim();
+	if (!text) {
+		throw new Error('Gemini returned an empty AI-Player response');
+	}
+	return text;
+}
+
+/**
+ * Parses AI player response to extract the action.
+ */
+function parseAIPlayerResponse(raw: string): string {
+	const text = String(raw || '');
+	const actionMatch = text.match(/\[ACTION\]([\s\S]*?)\[\/ACTION\]/i);
+	if (actionMatch) {
+		return actionMatch[1].trim();
+	}
+	// Fallback: use the raw text if no markers found
+	return text.trim();
+}
+
+/**
+ * Endpoint for generating AI player responses in Studio Playtesting Mode.
+ * The human GM provides their narration, and the system generates responses
+ * from AI-controlled party members.
+ */
+async function handleAIPlayerTurn(request: Request, env: Env, origin: string | null): Promise<Response> {
+	let body: any;
+	try {
+		body = await request.json();
+	} catch {
+		return errorResponse('Invalid JSON body', 400, origin);
+	}
+
+	const username = String(body?.username ?? '').trim();
+	const campaignId = String(body?.campaignId ?? '').trim();
+	const dmNarration = String(body?.dmNarration ?? body?.text ?? '').trim();
+
+	if (!username || !campaignId || !dmNarration) {
+		return errorResponse('username, campaignId and dmNarration are required', 400, origin);
+	}
+
+	const storedCampaign = await env.ADA_DATA.get(`campaign:${campaignId}`);
+	if (!storedCampaign) {
+		return errorResponse('Campaign not found', 404, origin);
+	}
+
+	let campaign: Campaign;
+	try {
+		campaign = JSON.parse(storedCampaign) as Campaign;
+	} catch {
+		return errorResponse('Corrupted campaign record', 500, origin);
+	}
+
+	// Only the GM can trigger AI player turns
+	if (campaign.dm !== username) {
+		return errorResponse('Only the GM can generate AI player responses', 403, origin);
+	}
+
+	// Campaign must have AI players enabled
+	if (!campaign.hasAiPlayers) {
+		return errorResponse('This campaign does not have AI players enabled', 400, origin);
+	}
+
+	// Load party characters
+	const characters = await loadCampaignPartyCharacters(env, campaign);
+	if (characters.length === 0) {
+		return errorResponse('No characters linked to this campaign', 400, origin);
+	}
+
+	// Generate responses from each AI character
+	const aiResponses: Array<{ characterId: string; characterName: string; response: string }> = [];
+	const conversationHistory = (campaign.conversationTranscript || '').slice(-2000); // Last 2000 chars
+
+	for (const character of characters) {
+		try {
+			const rawResponse = await callAIPlayer(
+				env,
+				character,
+				dmNarration,
+				conversationHistory,
+				campaign.aiPlayerPrompt,
+			);
+			const parsed = parseAIPlayerResponse(rawResponse);
+			aiResponses.push({
+				characterId: character.id,
+				characterName: character.name,
+				response: parsed,
+			});
+		} catch (err) {
+			console.error(`AI player turn failed for character ${character.id}:`, err);
+			// Provide a fallback response
+			aiResponses.push({
+				characterId: character.id,
+				characterName: character.name,
+				response: `${character.name} nods thoughtfully, considering the situation.`,
+			});
+		}
+	}
+
+	return jsonResponse(
+		{
+			ok: true,
+			aiResponses,
+			...(isDebugEnabled(env)
+				? {
+					debug: {
+						gemini: getGeminiDebugSnapshot(),
+					},
+				}
+				: {}),
+		},
+		{ status: 200 },
+		origin,
+	);
+}
+
+// ============================================================================
+// END AI PLAYER SUPPORT
+// ============================================================================
+
 function appendToSessionSummary(session: AIDMSessionState, entries: TurnEntry[]): void {
 	if (!Array.isArray(entries) || entries.length === 0) return;
 	const lines = entries.map((e) => {
@@ -1691,6 +1935,8 @@ async function handleCreateCampaign(request: Request, env: Env, origin: string |
 	const discordLink = typeof body?.discordLink === 'string' ? body.discordLink.trim() : '';
 	const isPublicLobby = Boolean(body?.isPublicLobby);
 	const hasAiPlayers = Boolean(body?.hasAiPlayers);
+	const aiPlayerPrompt = typeof body?.aiPlayerPrompt === 'string' ? body.aiPlayerPrompt.trim() : '';
+	const sourceScenarioId = typeof body?.sourceScenarioId === 'string' ? body.sourceScenarioId.trim() : '';
 	const campaign: Campaign = {
 		id,
 		name,
@@ -1706,6 +1952,8 @@ async function handleCreateCampaign(request: Request, env: Env, origin: string |
 		discordLink: discordLink || null,
 		lobbyChat: [],
 		hasAiPlayers,
+		aiPlayerPrompt: aiPlayerPrompt || undefined,
+		sourceScenarioId: sourceScenarioId || undefined,
 	};
 
 	await env.ADA_DATA.put(`campaign:${id}`, JSON.stringify(campaign));
@@ -2292,6 +2540,110 @@ async function handleDeleteTemplate(request: Request, env: Env, origin: string |
 	return jsonResponse({ ok: true }, { status: 200 }, origin);
 }
 
+async function handlePublishToHall(request: Request, env: Env, origin: string | null): Promise<Response> {
+	let body: any;
+	try {
+		body = await request.json();
+	} catch {
+		return errorResponse('Invalid JSON body', 400, origin);
+	}
+
+	const username = String(body?.username ?? '').trim();
+	const campaignId = String(body?.campaignId ?? '').trim();
+	const templateSummary = String(body?.templateSummary ?? body?.summary ?? '').trim();
+	const templateTagsRaw = body?.templateTags ?? body?.tags;
+
+	if (!username || !campaignId) {
+		return errorResponse('username and campaignId are required', 400, origin);
+	}
+
+	// Ensure the user exists
+	const userRecord = await env.ADA_DATA.get(`user:${username}`);
+	if (!userRecord) {
+		return errorResponse('Unknown user', 404, origin);
+	}
+
+	// Load the source campaign
+	const storedCampaign = await env.ADA_DATA.get(`campaign:${campaignId}`);
+	if (!storedCampaign) return errorResponse('Campaign not found', 404, origin);
+	let campaign: Campaign;
+	try {
+		campaign = JSON.parse(storedCampaign) as Campaign;
+	} catch {
+		return errorResponse('Corrupted campaign record', 500, origin);
+	}
+
+	// Only the GM/Architect can publish their campaign
+	if (campaign.dm !== username) {
+		return errorResponse('Only the campaign GM can publish to the Hall of Records', 403, origin);
+	}
+
+	// Cannot publish a campaign that is already a template
+	if (campaign.isTemplate === true) {
+		return errorResponse('This campaign is already a template', 400, origin);
+	}
+
+	// The 3-Template Limit per Architect
+	const currentCount = await getTemplatesByUserCount(env, username);
+	if (currentCount >= 3) {
+		return errorResponse('Template limit reached: you can publish at most 3 Master Templates.', 403, origin);
+	}
+
+	// Extract canon timeline (if any)
+	const canonTimeline = Array.isArray(campaign.canonTimeline) ? campaign.canonTimeline : [];
+	if (!canonTimeline.length) {
+		return errorResponse('Campaign must have at least 1 Canon Event to publish as a template', 400, origin);
+	}
+
+	// Process tags
+	const templateTags = Array.isArray(templateTagsRaw)
+		? templateTagsRaw
+				.map((t: any) => String(t || '').trim())
+				.filter(Boolean)
+				.slice(0, 12)
+		: String(templateTagsRaw || '')
+				.split(',')
+				.map((t) => t.trim())
+				.filter(Boolean)
+				.slice(0, 12);
+
+	const cleanSummary = templateSummary ? templateSummary.slice(0, 600) : '';
+
+	// Create a new template (snapshot) based on the campaign
+	const templateId = crypto.randomUUID();
+	const createdAt = new Date().toISOString();
+	const template: Campaign = {
+		id: templateId,
+		name: campaign.name,
+		dm: username,
+		participants: [username],
+		createdAt,
+		journalEntryIds: [],
+		scriptIds: [],
+		linkedCharacterIds: [],
+		isTemplate: true,
+		creatorUsername: username,
+		templateSummary: cleanSummary || undefined,
+		templateTags: templateTags.length ? templateTags : undefined,
+		canonTimeline: canonTimeline,
+		worldTheme: campaign.worldTheme,
+	};
+
+	await env.ADA_DATA.put(`campaign:${templateId}`, JSON.stringify(template));
+
+	// Add to global discovery index
+	const globalKey = 'global:templates';
+	const existingIds = await readStringArrayKV(env, globalKey);
+	if (!existingIds.includes(templateId)) {
+		existingIds.push(templateId);
+		await writeStringArrayKV(env, globalKey, existingIds);
+	}
+
+	await setTemplatesByUserCount(env, username, currentCount + 1);
+
+	return jsonResponse({ ok: true, template, message: 'Campaign published to Hall of Records' }, { status: 201 }, origin);
+}
+
 async function handleListPublicTemplates(env: Env, origin: string | null): Promise<Response> {
 	const ids = await readStringArrayKV(env, 'global:templates');
 	const templates: Campaign[] = [];
@@ -2361,6 +2713,7 @@ async function handleCloneScenario(request: Request, env: Env, origin: string | 
 		dmIsAI: false,
 		// Copy scenario metadata from the Hall.
 		templateId: template.id,
+		sourceScenarioId: template.id, // Track which Hall of Records entry was used
 		creatorUsername: template.creatorUsername || template.dm,
 		templateSummary: template.templateSummary,
 		templateTags: template.templateTags,
@@ -2371,6 +2724,7 @@ async function handleCloneScenario(request: Request, env: Env, origin: string | 
 		discordLink: null,
 		lobbyChat: [],
 		hasAiPlayers: false,
+		aiPlayerPrompt: undefined,
 	};
 
 	await env.ADA_DATA.put(`campaign:${id}`, JSON.stringify(campaign));
@@ -5300,6 +5654,9 @@ export default {
 		if (pathname === '/api/templates/delete' && method === 'POST') {
 			return handleDeleteTemplate(request, env, origin);
 		}
+		if (pathname === '/api/templates/publish' && method === 'POST') {
+			return handlePublishToHall(request, env, origin);
+		}
 		if (pathname === '/api/templates/instantiate' && method === 'POST') {
 			return handleInstantiateTemplate(request, env, origin);
 		}
@@ -5355,6 +5712,10 @@ export default {
 			return handleAIDMResolveCheck(request, env, origin);
 		}
 
+		if (pathname === '/api/ai-player/turn' && method === 'POST') {
+			return handleAIPlayerTurn(request, env, origin);
+		}
+
 		if (pathname === '/api/campaigns' && method === 'POST') {
 			return handleCreateCampaign(request, env, origin);
 		}
@@ -5369,6 +5730,10 @@ export default {
 
 		if (pathname === '/api/campaigns/details' && method === 'POST') {
 			return handlePostCampaignDetails(request, env, origin);
+		}
+
+		if (pathname === '/api/campaigns/approve-player' && method === 'POST') {
+			return handleLobbyApprove(request, env, origin);
 		}
 
 		if (pathname === '/api/gm/tool' && method === 'POST') {

@@ -65,6 +65,12 @@
               </label>
             </div>
 
+            <div class="field" id="aiPlayerPromptField" hidden>
+              <label for="campaignAiPlayerPrompt">AI Player Instructions (optional)</label>
+              <textarea id="campaignAiPlayerPrompt" rows="3" placeholder="Example: Play cautiously. Ask questions before rushing into combat. Roleplay with light humor."></textarea>
+              <p class="field__hint">Tell the AI how your test party should behave.</p>
+            </div>
+
             <div class="field">
               <label for="campaignDiscordLink">Discord invite link (optional)</label>
               <input type="url" id="campaignDiscordLink" placeholder="https://discord.gg/…" />
@@ -87,6 +93,29 @@
           <div id="studioScenarioList" class="studio-scenarios" aria-live="polite"></div>
           <p id="studioScenarioMessage" class="text-muted"></p>
           <a class="link-btn" href="hall.html">Browse the full Hall of Records →</a>
+        </section>
+
+        <section aria-label="Publish to Hall of Records">
+          <h3>Publish to Hall</h3>
+          <p class="text-muted">Snapshot one of your campaigns as a read-only Master Template in the Hall of Records. Limit: 3 published templates per Architect.</p>
+          <form id="publishCampaignForm" class="studio-form">
+            <div class="field">
+              <label for="publishCampaignSelect">Select campaign to publish</label>
+              <select id="publishCampaignSelect" required>
+                <option value="">-- Choose a campaign --</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="publishTemplateSummary">Summary (shown in Hall browser)</label>
+              <textarea id="publishTemplateSummary" rows="3" placeholder="A brief description of your scenario..."></textarea>
+            </div>
+            <div class="field">
+              <label for="publishTemplateTags">Tags (comma-separated)</label>
+              <input type="text" id="publishTemplateTags" placeholder="intrigue, urban, low-level" />
+            </div>
+            <button type="submit" class="btn btn--primary">Publish to Hall</button>
+            <p id="publishCampaignStatus" class="text-muted" style="margin-top: 0.75rem;"></p>
+          </form>
         </section>
       </div>
     </section>

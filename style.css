@@ -2046,6 +2046,95 @@ h1, h2, h3, h4,
   gap: 0.4rem;
 }
 
+/* ===================================================================
+   Lobby Chat Panel (Imperial Gold Theme)
+   =================================================================== */
+
+.campaign-tab-panel--lobby {
+  border-left: 3px solid var(--vow-gold);
+  padding-left: 1rem;
+}
+
+.lobby-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.lobby-notice {
+  padding: 0.75rem 1rem;
+  border-radius: var(--radius-md);
+  border: 2px solid var(--vow-gold);
+  background: rgba(243, 203, 112, 0.12);
+  box-shadow: inset 0 0 0 1px rgba(243, 203, 112, 0.28);
+}
+
+.lobby-notice p {
+  margin: 0.25rem 0;
+}
+
+.lobby-notice strong {
+  color: var(--vow-gold-deep);
+}
+
+.chat-thread--lobby {
+  border-color: rgba(243, 203, 112, 0.40);
+  background:
+    radial-gradient(520px 220px at 14% 0%, rgba(243, 203, 112, 0.20), transparent 62%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.88), rgba(251, 246, 236, 0.98));
+  box-shadow: inset 0 0 0 1px rgba(243, 203, 112, 0.28);
+}
+
+.chat-msg--lobby {
+  border-color: rgba(243, 203, 112, 0.32);
+  background: rgba(243, 203, 112, 0.10);
+}
+
+.text-gold {
+  color: var(--vow-gold-deep);
+  font-weight: 600;
+}
+
+/* GM Approval Queue */
+.gm-queue {
+  margin-bottom: 1.5rem;
+  padding: 1rem;
+  border-radius: var(--radius-md);
+  border: 1px solid rgba(224, 28, 41, 0.24);
+  background: rgba(224, 28, 41, 0.06);
+}
+
+.gm-queue h3 {
+  margin: 0 0 0.5rem 0;
+  color: var(--vow-red);
+}
+
+.pending-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.pending-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.5rem 0.75rem;
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.78);
+  border: 1px solid rgba(30, 23, 18, 0.14);
+}
+
+.pending-item__name {
+  font-weight: 600;
+  color: var(--ink-text);
+}
+
+.pending-item__actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
 .ai-dm__input {
   margin-top: 0.1rem;
 }
@@ -2313,6 +2402,20 @@ h1, h2, h3, h4,
   box-shadow: var(--shadow-tight);
   position: relative;
   overflow: hidden;
+}
+
+/* Dragon-scale decorative edge pattern */
+.panel::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  opacity: 0.22;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='6' height='24' viewBox='0 0 6 24'%3E%3Cpath d='M0 12 C2 6 4 6 6 12 C4 18 2 18 0 12Z' fill='%23E01C29' opacity='0.45'/%3E%3C/svg%3E");
+  background-repeat: repeat-y;
+  pointer-events: none;
 }
 
 .panel--compact {

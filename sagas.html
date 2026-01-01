@@ -33,8 +33,14 @@
       <div class="card">
         <header class="banner" aria-label="Featured quest">
           <div class="banner__content">
-            <h2 class="banner__title">Featured Quest</h2>
-            <p class="text-muted">Your recommended saga will appear here once adventures are loaded.</p>
+            <h2 class="banner__title" id="sagaFeaturedTitle">Featured Quest</h2>
+            <p class="text-muted" id="sagaFeaturedSummary">Your recommended saga will appear here once adventures are loaded.</p>
+
+            <div class="banner__controls" aria-label="Featured quest controls">
+              <select id="sagaFeaturedSelect" class="banner__select" aria-label="Choose a character for featured quest"></select>
+              <button type="button" id="sagaFeaturedBeginBtn" class="btn btn--primary btn--small">Begin</button>
+            </div>
+            <p id="sagaFeaturedStatus" class="text-muted" style="margin-top: .5rem;"></p>
           </div>
         </header>
 
@@ -71,7 +77,23 @@
             </div>
           </div>
 
-          <div id="adventuresList" class="adventures__grid" aria-live="polite"></div>
+          <section class="sagas-ledger" aria-label="Newest">
+            <h4 class="sagas-ledger__title">Newest</h4>
+            <div id="sagasNewestList" class="adventures__grid" aria-live="polite"></div>
+          </section>
+
+          <section class="sagas-ledger" aria-label="Popular">
+            <h4 class="sagas-ledger__title">Popular</h4>
+            <div id="sagasPopularList" class="adventures__grid" aria-live="polite"></div>
+          </section>
+
+          <section class="sagas-ledger" aria-label="Legendary Challenges">
+            <h4 class="sagas-ledger__title">Legendary Challenges</h4>
+            <div id="sagasLegendaryList" class="adventures__grid" aria-live="polite"></div>
+          </section>
+
+          <!-- Backwards-compatible container (unused when categorized lists are present) -->
+          <div id="adventuresList" class="adventures__grid" aria-live="polite" hidden></div>
           <p id="adventuresMessage" class="text-muted"></p>
         </section>
       </div>

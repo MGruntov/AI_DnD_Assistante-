@@ -38,9 +38,16 @@
           <p class="text-muted">Master Templates, Community Scenarios, and World Lore — read-only discovery.</p>
         </header>
 
-        <section class="library" aria-label="Master Templates">
-          <h3>Master Templates</h3>
-          <p class="text-muted">Structured world baselines authored by Architects.</p>
+        <div class="pillar-tabs" aria-label="Hall pillars">
+          <button type="button" id="hallPillarTemplatesBtn" class="btn btn--secondary btn--small" aria-pressed="true">Master Templates</button>
+          <button type="button" id="hallPillarScenariosBtn" class="btn btn--secondary btn--small" aria-pressed="false">Community Scenarios</button>
+          <button type="button" id="hallPillarLoreBtn" class="btn btn--secondary btn--small" aria-pressed="false">World Lore</button>
+        </div>
+        <p id="hallPillarHint" class="text-muted" style="margin-top: .75rem;">Showing: Master Templates</p>
+
+        <section class="library" aria-label="Hall listings">
+          <h3 id="hallPillarTitle">Master Templates</h3>
+          <p id="hallPillarDescription" class="text-muted">Structured world baselines authored by Architects.</p>
 
           <div class="library-controls" aria-label="Template search and filters">
             <div class="field">
@@ -81,16 +88,6 @@
 
           <div id="templatesList" class="templates__list" aria-live="polite"></div>
           <p id="templatesMessage" class="text-muted"></p>
-        </section>
-
-        <section aria-label="Community scenarios" style="margin-top: 1.25rem;">
-          <h3>Community Scenarios</h3>
-          <p class="text-muted">Lore-rich adventure seeds and story arcs (placeholder — will unify with Templates next).</p>
-        </section>
-
-        <section aria-label="World lore" style="margin-top: 1.25rem;">
-          <h3>World Lore</h3>
-          <p class="text-muted">Atmospheric places and legends (placeholder — will connect to Flavor Weaver).</p>
         </section>
       </div>
     </section>

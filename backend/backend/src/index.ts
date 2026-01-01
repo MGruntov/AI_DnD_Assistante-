@@ -285,6 +285,7 @@ type Campaign = {
 	// Human Lobbies (communal play)
 	// - Public campaigns can accept join requests into a pending queue.
 	// - The GM can approve/reject pending participants.
+	worldTheme?: string | null;
 	isPublicLobby?: boolean;
 	pendingParticipants?: string[];
 	discordLink?: string | null;
@@ -1686,6 +1687,7 @@ async function handleCreateCampaign(request: Request, env: Env, origin: string |
 
 	const id = crypto.randomUUID();
 	const createdAt = new Date().toISOString();
+	const worldTheme = typeof body?.worldTheme === 'string' ? body.worldTheme.trim() : '';
 	const discordLink = typeof body?.discordLink === 'string' ? body.discordLink.trim() : '';
 	const isPublicLobby = Boolean(body?.isPublicLobby);
 	const hasAiPlayers = Boolean(body?.hasAiPlayers);
@@ -1698,6 +1700,7 @@ async function handleCreateCampaign(request: Request, env: Env, origin: string |
 		journalEntryIds: [],
 		scriptIds: [],
 		linkedCharacterIds: [],
+		worldTheme: worldTheme || null,
 		isPublicLobby,
 		pendingParticipants: [],
 		discordLink: discordLink || null,
@@ -1754,14 +1757,28 @@ async function handleListPublicLobbies(env: Env, origin: string | null): Promise
 		return jsonResponse({ ok: true, lobbies: [] }, { status: 200 }, origin);
 	}
 
-	const lobbies: Array<Pick<Campaign, 'id' | 'name' | 'dm' | 'createdAt'>> = [];
+	const lobbies: Array<{
+		id: string;
+		name: string;
+		dm: string;
+		createdAt: string;
+		worldTheme: string | null;
+		hasDiscordLink: boolean;
+	}> = [];
 	for (const id of ids) {
 		const stored = await env.ADA_DATA.get(`campaign:${id}`);
 		if (!stored) continue;
 		try {
 			const c = JSON.parse(stored) as Campaign;
 			if (!isValidLobbyCampaign(c)) continue;
-			lobbies.push({ id: c.id, name: c.name, dm: c.dm, createdAt: c.createdAt });
+			lobbies.push({
+				id: c.id,
+				name: c.name,
+				dm: c.dm,
+				createdAt: c.createdAt,
+				worldTheme: c.worldTheme ?? null,
+				hasDiscordLink: Boolean((c.discordLink ?? '').trim()),
+			});
 		} catch {
 			// ignore malformed
 		}
@@ -1814,7 +1831,14 @@ async function handleGetLobbyDetails(request: Request, env: Env, origin: string 
 	return jsonResponse(
 		{
 			ok: true,
-			campaign: { id: campaign.id, name: campaign.name, dm: campaign.dm, createdAt: campaign.createdAt },
+			campaign: {
+				id: campaign.id,
+				name: campaign.name,
+				dm: campaign.dm,
+				createdAt: campaign.createdAt,
+				worldTheme: campaign.worldTheme ?? null,
+				hasDiscordLink: Boolean((campaign.discordLink ?? '').trim()),
+			},
 			access,
 			discordLink,
 			lobbyChat,

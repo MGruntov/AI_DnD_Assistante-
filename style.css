@@ -415,6 +415,39 @@ h1, h2, h3, h4,
   gap: 12px;
 }
 
+/* AI Sagas */
+.banner__controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.banner__select {
+  min-width: 220px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(224, 28, 41, 0.22);
+  background: rgba(255, 255, 255, 0.82);
+}
+
+.sagas-ledger {
+  margin-top: 1rem;
+}
+
+.sagas-ledger__title {
+  margin: 0 0 0.6rem;
+  font-family: "Cinzel", serif;
+}
+
+/* Hall of Records */
+.pillar-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 1rem;
+}
+
 .studio-scenarios {
   display: grid;
   gap: 12px;

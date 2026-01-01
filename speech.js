@@ -94,6 +94,7 @@
   // Studio page enhancements
   const campaignIsPublicLobbyToggle = document.getElementById("campaignIsPublicLobby");
   const campaignHasAiPlayersToggle = document.getElementById("campaignHasAiPlayers");
+  const campaignWorldThemeInput = document.getElementById("campaignWorldTheme");
   const campaignDiscordLinkInput = document.getElementById("campaignDiscordLink");
   const studioScenarioList = document.getElementById("studioScenarioList");
   const studioScenarioMessage = document.getElementById("studioScenarioMessage");
@@ -130,6 +131,16 @@
   const adventuresList = document.getElementById("adventuresList");
   const adventuresMessage = document.getElementById("adventuresMessage");
 
+  // AI Sagas page extras
+  const sagaFeaturedTitle = document.getElementById("sagaFeaturedTitle");
+  const sagaFeaturedSummary = document.getElementById("sagaFeaturedSummary");
+  const sagaFeaturedSelect = document.getElementById("sagaFeaturedSelect");
+  const sagaFeaturedBeginBtn = document.getElementById("sagaFeaturedBeginBtn");
+  const sagaFeaturedStatus = document.getElementById("sagaFeaturedStatus");
+  const sagasNewestList = document.getElementById("sagasNewestList");
+  const sagasPopularList = document.getElementById("sagasPopularList");
+  const sagasLegendaryList = document.getElementById("sagasLegendaryList");
+
   // Grand Library of Fate (Public Templates)
   const templatesList = document.getElementById("templatesList");
   const templatesMessage = document.getElementById("templatesMessage");
@@ -153,6 +164,16 @@
   const templateCanonEventsEl = document.getElementById("templateCanonEvents");
   const addCanonEventBtn = document.getElementById("addCanonEventBtn");
   const publishTemplateStatusEl = document.getElementById("publishTemplateStatus");
+
+  // Hall of Records pillar selector
+  const hallPillarTemplatesBtn = document.getElementById("hallPillarTemplatesBtn");
+  const hallPillarScenariosBtn = document.getElementById("hallPillarScenariosBtn");
+  const hallPillarLoreBtn = document.getElementById("hallPillarLoreBtn");
+  const hallPillarHint = document.getElementById("hallPillarHint");
+  const hallPillarTitle = document.getElementById("hallPillarTitle");
+  const hallPillarDescription = document.getElementById("hallPillarDescription");
+
+  let selectedHallPillar = "templates"; // templates | scenarios | lore
 
   // Onboarding Gate (post-login)
   const quickstartKnightBtn = document.getElementById("quickstartKnightBtn");
@@ -484,6 +505,78 @@
       return;
     }
     window.location.href = href;
+  }
+
+  function persistActiveCampaignId(campaignId) {
+    try {
+      if (campaignId) {
+        localStorage.setItem(ACTIVE_CAMPAIGN_STORAGE_KEY, String(campaignId));
+      } else {
+        localStorage.removeItem(ACTIVE_CAMPAIGN_STORAGE_KEY);
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  function openCampaignFromAnyPage(campaign) {
+    if (!campaign || !campaign.id) return;
+
+    // In multi-page mode, campaign dashboard lives on campaigns.html.
+    if (MULTI_PAGE && CURRENT_PAGE !== "campaigns") {
+      persistActiveCampaignId(campaign.id);
+      navigateTo("campaigns");
+      return;
+    }
+
+    openCampaignDashboard(campaign);
+  }
+
+  function setHallPillar(pillar) {
+    const next = pillar === "scenarios" || pillar === "lore" ? pillar : "templates";
+    selectedHallPillar = next;
+
+    const setPressed = (btn, pressed) => {
+      if (!btn) return;
+      try {
+        btn.setAttribute("aria-pressed", pressed ? "true" : "false");
+      } catch {
+        // ignore
+      }
+    };
+
+    setPressed(hallPillarTemplatesBtn, next === "templates");
+    setPressed(hallPillarScenariosBtn, next === "scenarios");
+    setPressed(hallPillarLoreBtn, next === "lore");
+
+    if (hallPillarHint) {
+      hallPillarHint.textContent = `Showing: ${next === "templates" ? "Master Templates" : next === "scenarios" ? "Community Scenarios" : "World Lore"}`;
+    }
+    if (hallPillarTitle) {
+      hallPillarTitle.textContent = next === "templates" ? "Master Templates" : next === "scenarios" ? "Community Scenarios" : "World Lore";
+    }
+    if (hallPillarDescription) {
+      hallPillarDescription.textContent =
+        next === "templates"
+          ? "Structured world baselines authored by Architects."
+          : next === "scenarios"
+            ? "Lore-rich adventure seeds and story arcs published by the community."
+            : "Atmospheric descriptions of legendary places and myths.";
+    }
+
+    // Re-render using current filters.
+    if (CURRENT_PAGE === "hall") {
+      updateTemplateTagOptions(cachedPublicTemplates);
+      applyTemplateFiltersAndRender();
+    }
+  }
+
+  function wireHallPillars() {
+    if (!hallPillarTemplatesBtn && !hallPillarScenariosBtn && !hallPillarLoreBtn) return;
+    if (hallPillarTemplatesBtn) hallPillarTemplatesBtn.addEventListener("click", () => setHallPillar("templates"));
+    if (hallPillarScenariosBtn) hallPillarScenariosBtn.addEventListener("click", () => setHallPillar("scenarios"));
+    if (hallPillarLoreBtn) hallPillarLoreBtn.addEventListener("click", () => setHallPillar("lore"));
+    setHallPillar(selectedHallPillar);
   }
 
   function setPostSelectTarget(targetPage) {
@@ -989,6 +1082,11 @@
     }
   }
 
+  function humanizeWorldTheme(theme) {
+    const t = String(theme ?? "").trim();
+    return t.length ? t : "Unspecified world";
+  }
+
   function setLobbyStatus(text) {
     if (!lobbyJoinStatus) return;
     lobbyJoinStatus.textContent = text || "";
@@ -1044,7 +1142,11 @@
     const pending = res.data && res.data.pendingParticipants;
 
     if (lobbyDetailTitle) lobbyDetailTitle.textContent = campaign?.name || "Lobby";
-    if (lobbyDetailMeta) lobbyDetailMeta.textContent = `GM: ${campaign?.dm || "Unknown"}`;
+    if (lobbyDetailMeta) {
+      const theme = humanizeWorldTheme(campaign?.worldTheme);
+      const discordAvailable = Boolean(discordLink) || Boolean(campaign?.hasDiscordLink);
+      lobbyDetailMeta.textContent = `GM: ${campaign?.dm || "Unknown"} · ${theme} · Discord: ${discordAvailable ? "available" : "none"}`;
+    }
 
     if (lobbyDiscordLink) {
       if (discordLink) {
@@ -1186,7 +1288,11 @@
       title.textContent = c.name || "Lobby";
       const meta = document.createElement("p");
       meta.className = "lobby-card__meta";
-      meta.textContent = `GM: ${c.dm || "Unknown"}`;
+      {
+        const theme = humanizeWorldTheme(c.worldTheme);
+        const discordAvailable = Boolean(c.hasDiscordLink) || Boolean(String(c.discordLink || "").trim());
+        meta.textContent = `GM: ${c.dm || "Unknown"} · ${theme} · Discord: ${discordAvailable ? "available" : "none"}`;
+      }
       left.appendChild(title);
       left.appendChild(meta);
 
@@ -1825,6 +1931,16 @@
         return { t, blob, score };
       })
       .filter(({ t, blob, score }) => {
+        // Hall pillar filter (best-effort via tags).
+        if (CURRENT_PAGE === "hall") {
+          const tags = safeArray(t?.templateTags || t?.tags).map((x) => String(x || "").trim().toLowerCase());
+          const isScenario = tags.includes("community-scenario") || tags.includes("scenario") || tags.includes("communityscenario");
+          const isLore = tags.includes("world-lore") || tags.includes("worldlore") || tags.includes("lore");
+          if (selectedHallPillar === "scenarios" && !isScenario) return false;
+          if (selectedHallPillar === "lore" && !isLore) return false;
+          if (selectedHallPillar === "templates" && (isScenario || isLore)) return false;
+        }
+
         if (query && score <= 0) return false;
         if (tag) {
           const tags = safeArray(t?.templateTags || t?.tags).map((x) => String(x || "").trim());
@@ -1875,6 +1991,215 @@
         templatesMessage.textContent = "No templates match your filters.";
       }
     }
+  }
+
+  function buildCharacterSelectOptions({ selectEl, characters, levelMin, levelMax }) {
+    if (!selectEl) return { hasEligible: false };
+    selectEl.innerHTML = "";
+    const list = Array.isArray(characters) ? characters : [];
+    const userHasCharacters = list.length > 0;
+
+    const placeholder = document.createElement("option");
+    placeholder.value = "";
+    placeholder.disabled = true;
+    placeholder.selected = true;
+    placeholder.textContent = userHasCharacters ? "Choose a character" : "Create a character first";
+    selectEl.appendChild(placeholder);
+
+    let hasEligible = false;
+    if (userHasCharacters) {
+      list.forEach((ch) => {
+        const lvl = computeCharacterTotalLevel(ch);
+        const meets = lvl >= (levelMin ?? 1) && lvl <= (levelMax ?? lvl);
+        const unlinked = characterIsUnlinked(ch);
+        const opt = document.createElement("option");
+        opt.value = ch.id;
+        opt.textContent = `${ch.name || "Unnamed"} (Lv ${lvl})`;
+        if (!unlinked) {
+          opt.disabled = true;
+          opt.textContent += " – already linked to a campaign";
+        } else if (!meets) {
+          opt.disabled = true;
+          opt.textContent += " – level out of range";
+        } else {
+          hasEligible = true;
+        }
+        selectEl.appendChild(opt);
+      });
+    }
+    return { hasEligible };
+  }
+
+  function startSoloAdventure({ adventureId, characterId, statusEl }) {
+    const currentUser = getCurrentUser();
+    if (!currentUser) {
+      if (statusEl) statusEl.textContent = "Log in to begin.";
+      return;
+    }
+    if (!adventureId || !characterId) {
+      if (statusEl) statusEl.textContent = "Choose a character first.";
+      return;
+    }
+    if (statusEl) statusEl.textContent = "Starting solo run…";
+
+    // Starting a fresh AI-solo run; clear any previous dialogue UI state
+    if (campaignDialogueTranscriptEl) campaignDialogueTranscriptEl.value = "";
+    if (aiDmMechanicsEl) aiDmMechanicsEl.textContent = "";
+
+    apiPost("/api/ai-campaigns/start", {
+      username: currentUser,
+      characterId,
+      adventureId,
+    }).then((result) => {
+      if (!result.ok) {
+        const msg = (result.data && result.data.error) || "Could not start adventure.";
+        if (statusEl) statusEl.textContent = msg;
+        return;
+      }
+      const data = result.data || {};
+      const campaign = data.campaign;
+      if (statusEl) statusEl.textContent = "Adventure started. Opening campaign…";
+      if (campaign) {
+        openCampaignFromAnyPage(campaign);
+      }
+    });
+  }
+
+  function createAdventureCard(adv, characters) {
+    const userHasCharacters = Array.isArray(characters) && characters.length > 0;
+
+    const card = document.createElement("article");
+    card.className = "adventure-card";
+
+    const header = document.createElement("div");
+    header.className = "adventure-card__header";
+
+    const title = document.createElement("h3");
+    title.className = "adventure-card__title";
+    title.textContent = adv.title || "Adventure";
+
+    const badge = document.createElement("span");
+    badge.className = "adventure-card__badge";
+    const levelMin = adv.levelMin ?? 1;
+    const levelMax = adv.levelMax ?? levelMin;
+    badge.textContent = `Lv ${levelMin}-${levelMax} · ${adv.difficulty || "Normal"}`;
+
+    header.appendChild(title);
+    header.appendChild(badge);
+
+    const meta = document.createElement("p");
+    meta.className = "adventure-card__meta";
+    meta.textContent = "Solo · ADA as your Dungeon Master";
+
+    const summary = document.createElement("p");
+    summary.className = "adventure-card__summary";
+    summary.textContent = adv.summary || "";
+
+    const controls = document.createElement("div");
+    controls.className = "adventure-card__controls";
+
+    const select = document.createElement("select");
+    select.className = "adventure-card__select";
+    const { hasEligible } = buildCharacterSelectOptions({
+      selectEl: select,
+      characters,
+      levelMin: adv.levelMin,
+      levelMax: adv.levelMax,
+    });
+
+    const startBtn = document.createElement("button");
+    startBtn.type = "button";
+    startBtn.className = "btn btn--primary btn--small";
+    startBtn.textContent = CURRENT_PAGE === "sagas" ? "Begin" : "Start solo run";
+    startBtn.disabled = !userHasCharacters || !hasEligible;
+
+    const status = document.createElement("p");
+    status.className = "adventure-card__status";
+
+    startBtn.addEventListener("click", () => {
+      const selectedId = select.value;
+      if (!selectedId) {
+        status.textContent = hasEligible
+          ? "Choose a character first."
+          : "You don't have any characters in the required level range.";
+        return;
+      }
+      startSoloAdventure({ adventureId: adv.id, characterId: selectedId, statusEl: status });
+    });
+
+    controls.appendChild(select);
+    controls.appendChild(startBtn);
+    controls.appendChild(status);
+
+    card.appendChild(header);
+    card.appendChild(meta);
+    card.appendChild(summary);
+    card.appendChild(controls);
+    return card;
+  }
+
+  function renderSagasCategorized(adventures, characters) {
+    const hasLedgerContainers = !!(sagasNewestList && sagasPopularList && sagasLegendaryList);
+    if (!hasLedgerContainers) {
+      renderAdventures(adventures, characters);
+      return;
+    }
+
+    const list = Array.isArray(adventures) ? adventures : [];
+    const chars = Array.isArray(characters) ? characters : [];
+
+    // Featured quest: prefer RED_CLOAK if present.
+    const featured = list.find((a) => String(a?.id || "") === "RED_CLOAK") || list[0] || null;
+    if (sagaFeaturedTitle) sagaFeaturedTitle.textContent = featured ? `Featured Quest: ${featured.title || "Saga"}` : "Featured Quest";
+    if (sagaFeaturedSummary) sagaFeaturedSummary.textContent = featured?.summary || "";
+
+    if (sagaFeaturedSelect) {
+      const { hasEligible } = buildCharacterSelectOptions({
+        selectEl: sagaFeaturedSelect,
+        characters: chars,
+        levelMin: featured?.levelMin,
+        levelMax: featured?.levelMax,
+      });
+      if (sagaFeaturedBeginBtn) sagaFeaturedBeginBtn.disabled = !featured || !hasEligible;
+    }
+
+    if (sagaFeaturedBeginBtn) {
+      sagaFeaturedBeginBtn.onclick = () => {
+        if (!featured) return;
+        const characterId = sagaFeaturedSelect ? sagaFeaturedSelect.value : "";
+        startSoloAdventure({ adventureId: featured.id, characterId, statusEl: sagaFeaturedStatus });
+      };
+    }
+
+    // Simple categorization heuristics.
+    const isLegendary = (adv) => {
+      const diff = String(adv?.difficulty || "").toLowerCase();
+      const lm = adv?.levelMin ?? 1;
+      return diff.includes("deadly") || diff.includes("hard") || diff.includes("legend") || lm >= 10;
+    };
+
+    const newest = list.slice(0, 6);
+    const popular = list.slice(0, 6);
+    const legendary = list.filter(isLegendary).slice(0, 6);
+
+    const fill = (container, items) => {
+      if (!container) return;
+      container.innerHTML = "";
+      if (!items.length) {
+        const p = document.createElement("p");
+        p.className = "text-muted";
+        p.textContent = "No sagas in this category yet.";
+        container.appendChild(p);
+        return;
+      }
+      items.forEach((adv) => container.appendChild(createAdventureCard(adv, chars)));
+    };
+
+    fill(sagasNewestList, newest);
+    fill(sagasPopularList, popular);
+    fill(sagasLegendaryList, legendary);
+
+    if (adventuresList) adventuresList.hidden = true;
   }
 
   function adventureSearchBlob(adv) {
@@ -1932,7 +2257,12 @@
       return String(a.adv?.title || "").localeCompare(String(b.adv?.title || ""));
     });
 
-    renderAdventures(items.map((x) => x.adv), characters);
+    const filteredAdventures = items.map((x) => x.adv);
+    if (CURRENT_PAGE === "sagas" && sagasNewestList && sagasPopularList && sagasLegendaryList) {
+      renderSagasCategorized(filteredAdventures, characters);
+    } else {
+      renderAdventures(filteredAdventures, characters);
+    }
     if (adventureResultsCount) {
       adventureResultsCount.textContent = `Showing ${items.length} of ${totalCount}`;
     }
@@ -2014,135 +2344,8 @@
 
     if (adventuresMessage) adventuresMessage.textContent = "";
 
-    const userHasCharacters = Array.isArray(characters) && characters.length > 0;
-
     adventures.forEach((adv) => {
-      const card = document.createElement("article");
-      card.className = "adventure-card";
-
-      const header = document.createElement("div");
-      header.className = "adventure-card__header";
-
-      const title = document.createElement("h3");
-      title.className = "adventure-card__title";
-      title.textContent = adv.title || "Adventure";
-
-      const badge = document.createElement("span");
-      badge.className = "adventure-card__badge";
-      const levelMin = adv.levelMin ?? 1;
-      const levelMax = adv.levelMax ?? levelMin;
-      badge.textContent = `Lv ${levelMin}-${levelMax} · ${adv.difficulty || "Normal"}`;
-
-      header.appendChild(title);
-      header.appendChild(badge);
-
-      const meta = document.createElement("p");
-      meta.className = "adventure-card__meta";
-      meta.textContent = "Solo · ADA as your Dungeon Master";
-
-      const summary = document.createElement("p");
-      summary.className = "adventure-card__summary";
-      summary.textContent = adv.summary || "";
-
-      const controls = document.createElement("div");
-      controls.className = "adventure-card__controls";
-
-      const select = document.createElement("select");
-      select.className = "adventure-card__select";
-
-      const placeholder = document.createElement("option");
-      placeholder.value = "";
-      placeholder.textContent = userHasCharacters
-        ? "Choose a character"
-        : "Create a character first";
-      placeholder.disabled = true;
-      placeholder.selected = true;
-      select.appendChild(placeholder);
-
-      let hasEligible = false;
-
-      if (userHasCharacters) {
-        characters.forEach((ch) => {
-          const lvl = computeCharacterTotalLevel(ch);
-          const meets = lvl >= (adv.levelMin ?? 1) && lvl <= (adv.levelMax ?? lvl);
-          const unlinked = characterIsUnlinked(ch);
-          const opt = document.createElement("option");
-          opt.value = ch.id;
-          opt.textContent = `${ch.name || "Unnamed"} (Lv ${lvl})`;
-          if (!unlinked) {
-            opt.disabled = true;
-            opt.textContent += " – already linked to a campaign";
-          } else if (!meets) {
-            opt.disabled = true;
-            opt.textContent += " – level out of range";
-          } else {
-            hasEligible = true;
-          }
-          select.appendChild(opt);
-        });
-      }
-
-      const startBtn = document.createElement("button");
-      startBtn.type = "button";
-      startBtn.className = "btn btn--primary btn--small";
-      startBtn.textContent = "Start solo run";
-      startBtn.disabled = !userHasCharacters || !hasEligible;
-
-      const status = document.createElement("p");
-      status.className = "adventure-card__status";
-
-      startBtn.addEventListener("click", () => {
-        const selectedId = select.value;
-        if (!selectedId) {
-          status.textContent = hasEligible
-            ? "Choose a character first."
-            : "You don't have any characters in the required level range.";
-          return;
-        }
-        // Starting a fresh AI-solo run; clear any previous dialogue UI state
-        if (campaignDialogueTranscriptEl) {
-          campaignDialogueTranscriptEl.value = "";
-        }
-        if (aiDmMechanicsEl) {
-          aiDmMechanicsEl.textContent = "";
-        }
-        status.textContent = "Starting solo run...";
-        const currentUser = getCurrentUser();
-        apiPost("/api/ai-campaigns/start", {
-          username: currentUser,
-          characterId: selectedId,
-          adventureId: adv.id,
-        }).then((result) => {
-          if (!result.ok) {
-            const msg = (result.data && result.data.error) ||
-              "Could not start adventure.";
-            status.textContent = msg;
-            return;
-          }
-          const data = result.data || {};
-          status.textContent = "Adventure started. Opening campaign...";
-          const campaign = data.campaign;
-          const opening = data.openingNarrative || (data.opening && data.opening.narrative);
-          if (campaign) {
-            openCampaignDashboard(campaign);
-            if (opening) {
-              appendAiDmLog("dm", opening);
-              setCampaignTab("dialogue");
-            }
-          }
-        });
-      });
-
-      controls.appendChild(select);
-      controls.appendChild(startBtn);
-      controls.appendChild(status);
-
-      card.appendChild(header);
-      card.appendChild(meta);
-      card.appendChild(summary);
-      card.appendChild(controls);
-
-      adventuresList.appendChild(card);
+      adventuresList.appendChild(createAdventureCard(adv, characters));
     });
   }
 
@@ -3747,6 +3950,7 @@
         loadCampaigns("all");
         loadStudioScenarios();
       } else if (CURRENT_PAGE === "hall") {
+        wireHallPillars();
         wireLibrarySearchAndFilters();
         loadPublicTemplates();
       } else if (CURRENT_PAGE === "library") {
@@ -4645,6 +4849,7 @@
         participants: rawParticipants,
         isPublicLobby: campaignIsPublicLobbyToggle ? Boolean(campaignIsPublicLobbyToggle.checked) : false,
         hasAiPlayers: campaignHasAiPlayersToggle ? Boolean(campaignHasAiPlayersToggle.checked) : false,
+        worldTheme: campaignWorldThemeInput ? String(campaignWorldThemeInput.value || "").trim() : "",
         discordLink: campaignDiscordLinkInput ? String(campaignDiscordLinkInput.value || "").trim() : "",
       }).then((result) => {
         if (!result.ok) {
@@ -4680,6 +4885,7 @@
         campaignParticipantsInput.value = "";
         if (campaignIsPublicLobbyToggle) campaignIsPublicLobbyToggle.checked = false;
         if (campaignHasAiPlayersToggle) campaignHasAiPlayersToggle.checked = false;
+        if (campaignWorldThemeInput) campaignWorldThemeInput.value = "";
         if (campaignDiscordLinkInput) campaignDiscordLinkInput.value = "";
         if (campaignsMessage) campaignsMessage.textContent = "Campaign created!";
         loadCampaigns("all");

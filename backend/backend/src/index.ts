@@ -282,6 +282,15 @@ type Campaign = {
 	name: string;
 	dm: string;
 	participants: string[];
+	// Human Lobbies (communal play)
+	// - Public campaigns can accept join requests into a pending queue.
+	// - The GM can approve/reject pending participants.
+	isPublicLobby?: boolean;
+	pendingParticipants?: string[];
+	discordLink?: string | null;
+	lobbyChat?: LobbyChatMessage[];
+	// Architect Studio
+	hasAiPlayers?: boolean;
 	createdAt: string;
 	// Community Templates ("Grand Library of Fate")
 	// - Templates are globally discoverable blueprints authored by an Architect.
@@ -308,6 +317,13 @@ type Campaign = {
 	mode?: 'ai-solo' | 'standard' | 'template-run';
 	adventureId?: string;
 	dmIsAI?: boolean;
+};
+
+type LobbyChatMessage = {
+	id: string;
+	author: string;
+	text: string;
+	createdAt: string;
 };
 
 type CanonEvent = {
@@ -1670,6 +1686,9 @@ async function handleCreateCampaign(request: Request, env: Env, origin: string |
 
 	const id = crypto.randomUUID();
 	const createdAt = new Date().toISOString();
+	const discordLink = typeof body?.discordLink === 'string' ? body.discordLink.trim() : '';
+	const isPublicLobby = Boolean(body?.isPublicLobby);
+	const hasAiPlayers = Boolean(body?.hasAiPlayers);
 	const campaign: Campaign = {
 		id,
 		name,
@@ -1679,6 +1698,11 @@ async function handleCreateCampaign(request: Request, env: Env, origin: string |
 		journalEntryIds: [],
 		scriptIds: [],
 		linkedCharacterIds: [],
+		isPublicLobby,
+		pendingParticipants: [],
+		discordLink: discordLink || null,
+		lobbyChat: [],
+		hasAiPlayers,
 	};
 
 	await env.ADA_DATA.put(`campaign:${id}`, JSON.stringify(campaign));
@@ -1702,7 +1726,286 @@ async function handleCreateCampaign(request: Request, env: Env, origin: string |
 		}
 	}
 
+	// Maintain a simple index of public lobbies.
+	// NOTE: KV doesn't provide efficient global listing without an index.
+	if (isPublicLobby) {
+		const idxKey = 'publicLobbiesIndex';
+		const ids = await readStringArrayKV(env, idxKey);
+		if (!ids.includes(id)) {
+			ids.push(id);
+			await writeStringArrayKV(env, idxKey, ids);
+		}
+	}
+
 	return jsonResponse({ ok: true, campaign }, { status: 201 }, origin);
+}
+
+function isValidLobbyCampaign(c: Campaign | null | undefined): c is Campaign {
+	if (!c) return false;
+	if (!c.id || !c.name || !c.dm) return false;
+	if (c.isTemplate) return false;
+	return Boolean(c.isPublicLobby);
+}
+
+async function handleListPublicLobbies(env: Env, origin: string | null): Promise<Response> {
+	const idxKey = 'publicLobbiesIndex';
+	const ids = await readStringArrayKV(env, idxKey);
+	if (!ids.length) {
+		return jsonResponse({ ok: true, lobbies: [] }, { status: 200 }, origin);
+	}
+
+	const lobbies: Array<Pick<Campaign, 'id' | 'name' | 'dm' | 'createdAt'>> = [];
+	for (const id of ids) {
+		const stored = await env.ADA_DATA.get(`campaign:${id}`);
+		if (!stored) continue;
+		try {
+			const c = JSON.parse(stored) as Campaign;
+			if (!isValidLobbyCampaign(c)) continue;
+			lobbies.push({ id: c.id, name: c.name, dm: c.dm, createdAt: c.createdAt });
+		} catch {
+			// ignore malformed
+		}
+	}
+
+	// Newest first (best-effort)
+	lobbies.sort((a, b) => (Date.parse(b.createdAt || '') || 0) - (Date.parse(a.createdAt || '') || 0));
+	return jsonResponse({ ok: true, lobbies }, { status: 200 }, origin);
+}
+
+async function handleGetLobbyDetails(request: Request, env: Env, origin: string | null): Promise<Response> {
+	const url = new URL(request.url);
+	const campaignId = String(url.searchParams.get('campaignId') ?? '').trim();
+	const user = String(url.searchParams.get('user') ?? '').trim();
+	if (!campaignId) return errorResponse('campaignId is required', 400, origin);
+	if (!user) return errorResponse('user is required', 400, origin);
+
+	const stored = await env.ADA_DATA.get(`campaign:${campaignId}`);
+	if (!stored) return errorResponse('Lobby not found', 404, origin);
+
+	let campaign: Campaign;
+	try {
+		campaign = JSON.parse(stored) as Campaign;
+	} catch {
+		return errorResponse('Corrupted lobby record', 500, origin);
+	}
+
+	if (!isValidLobbyCampaign(campaign)) {
+		return errorResponse('Campaign is not a public lobby', 400, origin);
+	}
+
+	const participants = Array.isArray(campaign.participants) ? campaign.participants : [];
+	const pending = Array.isArray(campaign.pendingParticipants) ? campaign.pendingParticipants : [];
+	const isDm = campaign.dm === user;
+	const isParticipant = isDm || participants.includes(user);
+	const isPending = pending.includes(user);
+
+	const access = {
+		status: isParticipant ? 'participant' : isPending ? 'pending' : 'none',
+		canManage: isDm,
+	};
+
+	const canSeePrivate = isParticipant || isPending || isDm;
+	const discordLink = canSeePrivate ? (campaign.discordLink ?? null) : null;
+	const lobbyChat = canSeePrivate
+		? (Array.isArray(campaign.lobbyChat) ? campaign.lobbyChat.slice(-50) : [])
+		: [];
+	const pendingParticipants = isDm ? pending : [];
+
+	return jsonResponse(
+		{
+			ok: true,
+			campaign: { id: campaign.id, name: campaign.name, dm: campaign.dm, createdAt: campaign.createdAt },
+			access,
+			discordLink,
+			lobbyChat,
+			pendingParticipants,
+		},
+		{ status: 200 },
+		origin,
+	);
+}
+
+async function handleLobbyJoin(request: Request, env: Env, origin: string | null): Promise<Response> {
+	let body: any;
+	try {
+		body = await request.json();
+	} catch {
+		return errorResponse('Invalid JSON body', 400, origin);
+	}
+	const username = String(body?.username ?? '').trim();
+	const campaignId = String(body?.campaignId ?? '').trim();
+	if (!username) return errorResponse('username is required', 400, origin);
+	if (!campaignId) return errorResponse('campaignId is required', 400, origin);
+
+	const userRecord = await env.ADA_DATA.get(`user:${username}`);
+	if (!userRecord) return errorResponse('Unknown user', 404, origin);
+
+	const stored = await env.ADA_DATA.get(`campaign:${campaignId}`);
+	if (!stored) return errorResponse('Lobby not found', 404, origin);
+
+	let campaign: Campaign;
+	try {
+		campaign = JSON.parse(stored) as Campaign;
+	} catch {
+		return errorResponse('Corrupted lobby record', 500, origin);
+	}
+	if (!isValidLobbyCampaign(campaign)) {
+		return errorResponse('Campaign is not a public lobby', 400, origin);
+	}
+
+	const participants = Array.isArray(campaign.participants) ? campaign.participants : [];
+	if (campaign.dm === username || participants.includes(username)) {
+		return jsonResponse({ ok: true, status: 'participant' }, { status: 200 }, origin);
+	}
+
+	const pending = Array.isArray(campaign.pendingParticipants) ? campaign.pendingParticipants : [];
+	if (!pending.includes(username)) {
+		pending.push(username);
+		campaign.pendingParticipants = Array.from(new Set(pending));
+		await env.ADA_DATA.put(`campaign:${campaignId}`, JSON.stringify(campaign));
+	}
+
+	return jsonResponse({ ok: true, status: 'pending' }, { status: 200 }, origin);
+}
+
+async function handleLobbyApprove(request: Request, env: Env, origin: string | null): Promise<Response> {
+	let body: any;
+	try {
+		body = await request.json();
+	} catch {
+		return errorResponse('Invalid JSON body', 400, origin);
+	}
+	const gmUsername = String(body?.gmUsername ?? '').trim();
+	const campaignId = String(body?.campaignId ?? '').trim();
+	const username = String(body?.username ?? '').trim();
+	if (!gmUsername) return errorResponse('gmUsername is required', 400, origin);
+	if (!campaignId) return errorResponse('campaignId is required', 400, origin);
+	if (!username) return errorResponse('username is required', 400, origin);
+
+	const stored = await env.ADA_DATA.get(`campaign:${campaignId}`);
+	if (!stored) return errorResponse('Lobby not found', 404, origin);
+
+	let campaign: Campaign;
+	try {
+		campaign = JSON.parse(stored) as Campaign;
+	} catch {
+		return errorResponse('Corrupted lobby record', 500, origin);
+	}
+	if (!isValidLobbyCampaign(campaign)) {
+		return errorResponse('Campaign is not a public lobby', 400, origin);
+	}
+
+	if (campaign.dm !== gmUsername) return errorResponse('Only the GM can approve participants', 403, origin);
+
+	const pending = Array.isArray(campaign.pendingParticipants) ? campaign.pendingParticipants : [];
+	if (!pending.includes(username)) {
+		return errorResponse('User is not pending in this lobby', 400, origin);
+	}
+
+	// Ensure user exists.
+	const userRecord = await env.ADA_DATA.get(`user:${username}`);
+	if (!userRecord) return errorResponse('Unknown user', 404, origin);
+
+	campaign.pendingParticipants = pending.filter((u) => u !== username);
+	const participants = Array.isArray(campaign.participants) ? campaign.participants : [];
+	if (!participants.includes(username)) participants.push(username);
+	campaign.participants = Array.from(new Set(participants));
+
+	await env.ADA_DATA.put(`campaign:${campaignId}`, JSON.stringify(campaign));
+
+	// Add to user's campaign index now that they're approved.
+	const idxKey = `campaignsByUser:${username}`;
+	const ids = await readStringArrayKV(env, idxKey);
+	if (!ids.includes(campaignId)) {
+		ids.push(campaignId);
+		await writeStringArrayKV(env, idxKey, ids);
+	}
+
+	return jsonResponse({ ok: true }, { status: 200 }, origin);
+}
+
+async function handleLobbyReject(request: Request, env: Env, origin: string | null): Promise<Response> {
+	let body: any;
+	try {
+		body = await request.json();
+	} catch {
+		return errorResponse('Invalid JSON body', 400, origin);
+	}
+	const gmUsername = String(body?.gmUsername ?? '').trim();
+	const campaignId = String(body?.campaignId ?? '').trim();
+	const username = String(body?.username ?? '').trim();
+	if (!gmUsername) return errorResponse('gmUsername is required', 400, origin);
+	if (!campaignId) return errorResponse('campaignId is required', 400, origin);
+	if (!username) return errorResponse('username is required', 400, origin);
+
+	const stored = await env.ADA_DATA.get(`campaign:${campaignId}`);
+	if (!stored) return errorResponse('Lobby not found', 404, origin);
+
+	let campaign: Campaign;
+	try {
+		campaign = JSON.parse(stored) as Campaign;
+	} catch {
+		return errorResponse('Corrupted lobby record', 500, origin);
+	}
+	if (!isValidLobbyCampaign(campaign)) {
+		return errorResponse('Campaign is not a public lobby', 400, origin);
+	}
+	if (campaign.dm !== gmUsername) return errorResponse('Only the GM can reject participants', 403, origin);
+
+	const pending = Array.isArray(campaign.pendingParticipants) ? campaign.pendingParticipants : [];
+	if (!pending.includes(username)) {
+		return jsonResponse({ ok: true }, { status: 200 }, origin);
+	}
+	campaign.pendingParticipants = pending.filter((u) => u !== username);
+	await env.ADA_DATA.put(`campaign:${campaignId}`, JSON.stringify(campaign));
+	return jsonResponse({ ok: true }, { status: 200 }, origin);
+}
+
+async function handleLobbyChatSend(request: Request, env: Env, origin: string | null): Promise<Response> {
+	let body: any;
+	try {
+		body = await request.json();
+	} catch {
+		return errorResponse('Invalid JSON body', 400, origin);
+	}
+	const campaignId = String(body?.campaignId ?? '').trim();
+	const username = String(body?.username ?? '').trim();
+	const text = String(body?.text ?? '').trim();
+	if (!campaignId) return errorResponse('campaignId is required', 400, origin);
+	if (!username) return errorResponse('username is required', 400, origin);
+	if (!text) return errorResponse('text is required', 400, origin);
+	if (text.length > 600) return errorResponse('text is too long', 400, origin);
+
+	const stored = await env.ADA_DATA.get(`campaign:${campaignId}`);
+	if (!stored) return errorResponse('Lobby not found', 404, origin);
+
+	let campaign: Campaign;
+	try {
+		campaign = JSON.parse(stored) as Campaign;
+	} catch {
+		return errorResponse('Corrupted lobby record', 500, origin);
+	}
+	if (!isValidLobbyCampaign(campaign)) {
+		return errorResponse('Campaign is not a public lobby', 400, origin);
+	}
+
+	const participants = Array.isArray(campaign.participants) ? campaign.participants : [];
+	const pending = Array.isArray(campaign.pendingParticipants) ? campaign.pendingParticipants : [];
+	const canChat = campaign.dm === username || participants.includes(username) || pending.includes(username);
+	if (!canChat) return errorResponse('You do not have access to lobby chat', 403, origin);
+
+	const msg: LobbyChatMessage = {
+		id: crypto.randomUUID(),
+		author: username,
+		text,
+		createdAt: new Date().toISOString(),
+	};
+	const chat = Array.isArray(campaign.lobbyChat) ? campaign.lobbyChat : [];
+	chat.push(msg);
+	// Cap chat history to last 120 messages.
+	campaign.lobbyChat = chat.slice(-120);
+	await env.ADA_DATA.put(`campaign:${campaignId}`, JSON.stringify(campaign));
+	return jsonResponse({ ok: true, message: msg }, { status: 200 }, origin);
 }
 
 function normalizeCanonEvent(raw: any): CanonEvent | null {
@@ -1981,6 +2284,91 @@ async function handleListPublicTemplates(env: Env, origin: string | null): Promi
 		}
 	}
 	return jsonResponse({ ok: true, templates }, undefined, origin);
+}
+
+async function handleCloneScenario(request: Request, env: Env, origin: string | null): Promise<Response> {
+	let body: any;
+	try {
+		body = await request.json();
+	} catch {
+		return errorResponse('Invalid JSON body', 400, origin);
+	}
+
+	const username = String(body?.username ?? '').trim();
+	const templateId = String(body?.templateId ?? '').trim();
+	const nameOverride = String(body?.name ?? '').trim();
+
+	if (!username || !templateId) {
+		return errorResponse('username and templateId are required', 400, origin);
+	}
+
+	// Ensure user exists
+	const userRecord = await env.ADA_DATA.get(`user:${username}`);
+	if (!userRecord) {
+		return errorResponse('Unknown user', 404, origin);
+	}
+
+	const storedTemplate = await env.ADA_DATA.get(`campaign:${templateId}`);
+	if (!storedTemplate) return errorResponse('Template not found', 404, origin);
+	let template: Campaign;
+	try {
+		template = JSON.parse(storedTemplate) as Campaign;
+	} catch {
+		return errorResponse('Corrupted template record', 500, origin);
+	}
+	if (template.isTemplate !== true) {
+		return errorResponse('That campaign is not a public template', 400, origin);
+	}
+
+	const id = crypto.randomUUID();
+	const createdAt = new Date().toISOString();
+	const name = nameOverride || `${template.name} (Cloned Scenario)`;
+
+	const campaign: Campaign = {
+		id,
+		name,
+		dm: username,
+		participants: [username],
+		createdAt,
+		journalEntryIds: [],
+		scriptIds: [],
+		linkedCharacterIds: [],
+		mode: 'standard',
+		dmIsAI: false,
+		// Copy scenario metadata from the Hall.
+		templateId: template.id,
+		creatorUsername: template.creatorUsername || template.dm,
+		templateSummary: template.templateSummary,
+		templateTags: template.templateTags,
+		canonTimeline: template.canonTimeline,
+		// Lobbies/studio defaults
+		isPublicLobby: false,
+		pendingParticipants: [],
+		discordLink: null,
+		lobbyChat: [],
+		hasAiPlayers: false,
+	};
+
+	await env.ADA_DATA.put(`campaign:${id}`, JSON.stringify(campaign));
+
+	// Index the campaign for the creator
+	const idxKey = `campaignsByUser:${username}`;
+	const existing = await env.ADA_DATA.get(idxKey);
+	let ids: string[] = [];
+	if (existing) {
+		try {
+			ids = JSON.parse(existing) as string[];
+			if (!Array.isArray(ids)) ids = [];
+		} catch {
+			ids = [];
+		}
+	}
+	if (!ids.includes(id)) {
+		ids.push(id);
+		await env.ADA_DATA.put(idxKey, JSON.stringify(ids));
+	}
+
+	return jsonResponse({ ok: true, campaign }, { status: 201 }, origin);
 }
 
 function buildHiddenHandSystemPrompt(): string {
@@ -4876,6 +5264,9 @@ export default {
 		if (pathname === '/api/templates/public' && method === 'GET') {
 			return handleListPublicTemplates(env, origin);
 		}
+		if (pathname === '/api/scenarios/clone' && method === 'POST') {
+			return handleCloneScenario(request, env, origin);
+		}
 		if (pathname === '/api/templates/create' && method === 'POST') {
 			return handleCreateTemplate(request, env, origin);
 		}
@@ -4887,6 +5278,26 @@ export default {
 		}
 		if (pathname === '/api/templates/instantiate' && method === 'POST') {
 			return handleInstantiateTemplate(request, env, origin);
+		}
+
+		// Human Lobbies (public campaign browser + approval workflow + OOC chat)
+		if (pathname === '/api/lobbies/public' && method === 'GET') {
+			return handleListPublicLobbies(env, origin);
+		}
+		if (pathname === '/api/lobbies/details' && method === 'GET') {
+			return handleGetLobbyDetails(request, env, origin);
+		}
+		if (pathname === '/api/lobbies/join' && method === 'POST') {
+			return handleLobbyJoin(request, env, origin);
+		}
+		if (pathname === '/api/lobbies/approve' && method === 'POST') {
+			return handleLobbyApprove(request, env, origin);
+		}
+		if (pathname === '/api/lobbies/reject' && method === 'POST') {
+			return handleLobbyReject(request, env, origin);
+		}
+		if (pathname === '/api/lobbies/chat/send' && method === 'POST') {
+			return handleLobbyChatSend(request, env, origin);
 		}
 		if (pathname === '/api/hidden-hand/turn' && method === 'POST') {
 			return handleHiddenHandTurn(request, env, origin);

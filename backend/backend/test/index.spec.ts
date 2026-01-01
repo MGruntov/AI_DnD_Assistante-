@@ -459,5 +459,199 @@ describe('ADA backend worker', () => {
 				await waitOnExecutionContext(ctx);
 			}
 		});
+
+		it('supports cloning a Hall template into a private campaign', async () => {
+			const username = 'architect_clone';
+			await env.ADA_DATA.put(`user:${username}`, JSON.stringify({ username, passwordHash: 'x' }));
+
+			// Create a template
+			const createReq = new Request('https://example.com/api/templates/create', {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({
+					username,
+					name: 'Cloneable Template',
+					canonTimeline: [
+						{ title: 'Canon One', description: 'First canon beat' },
+					],
+					templateTags: ['test'],
+				}),
+			});
+			const createRes = await worker.fetch(createReq, env);
+			expect(createRes.status).toBe(201);
+			const created = (await createRes.json()) as any;
+			const templateId = created?.template?.id;
+			expect(typeof templateId).toBe('string');
+
+			// Clone it
+			const cloneReq = new Request('https://example.com/api/scenarios/clone', {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ username, templateId }),
+			});
+			const cloneRes = await worker.fetch(cloneReq, env);
+			expect(cloneRes.status).toBe(201);
+			const cloned = (await cloneRes.json()) as any;
+			expect(cloned?.ok).toBe(true);
+			expect(cloned?.campaign?.id).toBeTruthy();
+			expect(cloned?.campaign?.isTemplate).not.toBe(true);
+			expect(cloned?.campaign?.dm).toBe(username);
+			expect(Array.isArray(cloned?.campaign?.participants)).toBe(true);
+			expect(cloned?.campaign?.participants).toContain(username);
+			expect(cloned?.campaign?.templateId).toBe(templateId);
+		});
+	});
+
+	describe('Human Lobbies', () => {
+		it('supports public lobby listing, join requests, GM approval, and OOC chat for pending users', async () => {
+			const gm = `gm_${Math.random().toString(16).slice(2)}`;
+			const player = `player_${Math.random().toString(16).slice(2)}`;
+			const password = 'testpass123';
+
+			// Register GM and player
+			for (const username of [gm, player]) {
+				const req = new Request('http://example.com/api/register', {
+					method: 'POST',
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify({ username, password }),
+				});
+				const ctx = createExecutionContext();
+				const res = await worker.fetch(req, env, ctx);
+				await waitOnExecutionContext(ctx);
+				expect(res.status).toBe(201);
+			}
+
+			// GM creates a public lobby campaign
+			let campaignId = '';
+			{
+				const req = new Request('http://example.com/api/campaigns', {
+					method: 'POST',
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify({
+						name: 'The Test Tavern',
+						dm: gm,
+						participants: [gm],
+						isPublicLobby: true,
+						discordLink: 'https://discord.gg/example',
+					}),
+				});
+				const ctx = createExecutionContext();
+				const res = await worker.fetch(req, env, ctx);
+				await waitOnExecutionContext(ctx);
+				expect(res.status).toBe(201);
+				const json = (await res.json()) as any;
+				campaignId = String(json?.campaign?.id || '');
+				expect(campaignId.length).toBeGreaterThan(0);
+			}
+
+			// Public lobbies listing should include it
+			{
+				const req = new Request('http://example.com/api/lobbies/public');
+				const ctx = createExecutionContext();
+				const res = await worker.fetch(req, env, ctx);
+				await waitOnExecutionContext(ctx);
+				expect(res.status).toBe(200);
+				const json = (await res.json()) as any;
+				const lobbies = Array.isArray(json?.lobbies) ? json.lobbies : [];
+				expect(lobbies.some((l: any) => String(l?.id || '') === campaignId)).toBe(true);
+			}
+
+			// Player sees lobby details, but no discord link before requesting
+			{
+				const req = new Request(`http://example.com/api/lobbies/details?campaignId=${encodeURIComponent(campaignId)}&user=${encodeURIComponent(player)}`);
+				const ctx = createExecutionContext();
+				const res = await worker.fetch(req, env, ctx);
+				await waitOnExecutionContext(ctx);
+				expect(res.status).toBe(200);
+				const json = (await res.json()) as any;
+				expect(json?.ok).toBe(true);
+				expect(String(json?.access?.status || '')).toBe('none');
+				expect(json?.discordLink).toBe(null);
+			}
+
+			// Player requests to join (pending)
+			{
+				const req = new Request('http://example.com/api/lobbies/join', {
+					method: 'POST',
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify({ username: player, campaignId }),
+				});
+				const ctx = createExecutionContext();
+				const res = await worker.fetch(req, env, ctx);
+				await waitOnExecutionContext(ctx);
+				expect(res.status).toBe(200);
+				const json = (await res.json()) as any;
+				expect(json?.ok).toBe(true);
+				expect(String(json?.status || '')).toBe('pending');
+			}
+
+			// Pending player can see discord link and send chat
+			{
+				const sendReq = new Request('http://example.com/api/lobbies/chat/send', {
+					method: 'POST',
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify({ campaignId, username: player, text: 'OOC: What time works for session 0?' }),
+				});
+				const ctx = createExecutionContext();
+				const sendRes = await worker.fetch(sendReq, env, ctx);
+				await waitOnExecutionContext(ctx);
+				expect(sendRes.status).toBe(200);
+				const sendJson = (await sendRes.json()) as any;
+				expect(sendJson?.ok).toBe(true);
+				const msg = sendJson?.message;
+				expect(String(msg?.author || '')).toBe(player);
+			}
+			{
+				const req = new Request(`http://example.com/api/lobbies/details?campaignId=${encodeURIComponent(campaignId)}&user=${encodeURIComponent(player)}`);
+				const ctx = createExecutionContext();
+				const res = await worker.fetch(req, env, ctx);
+				await waitOnExecutionContext(ctx);
+				expect(res.status).toBe(200);
+				const json = (await res.json()) as any;
+				expect(String(json?.access?.status || '')).toBe('pending');
+				expect(String(json?.discordLink || '')).toMatch(/discord\.gg/);
+				const chat = Array.isArray(json?.lobbyChat) ? json.lobbyChat : [];
+				expect(chat.length).toBeGreaterThan(0);
+				expect(String(chat[chat.length - 1]?.author || '')).toBe(player);
+			}
+
+			// GM sees pending queue and approves player
+			{
+				const req = new Request(`http://example.com/api/lobbies/details?campaignId=${encodeURIComponent(campaignId)}&user=${encodeURIComponent(gm)}`);
+				const ctx = createExecutionContext();
+				const res = await worker.fetch(req, env, ctx);
+				await waitOnExecutionContext(ctx);
+				expect(res.status).toBe(200);
+				const json = (await res.json()) as any;
+				expect(json?.access?.canManage).toBe(true);
+				const pending = Array.isArray(json?.pendingParticipants) ? json.pendingParticipants : [];
+				expect(pending).toContain(player);
+			}
+			{
+				const req = new Request('http://example.com/api/lobbies/approve', {
+					method: 'POST',
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify({ gmUsername: gm, campaignId, username: player }),
+				});
+				const ctx = createExecutionContext();
+				const res = await worker.fetch(req, env, ctx);
+				await waitOnExecutionContext(ctx);
+				expect(res.status).toBe(200);
+				const json = (await res.json()) as any;
+				expect(json?.ok).toBe(true);
+			}
+
+			// Player should now appear in /api/campaigns listing
+			{
+				const req = new Request(`http://example.com/api/campaigns?user=${encodeURIComponent(player)}`);
+				const ctx = createExecutionContext();
+				const res = await worker.fetch(req, env, ctx);
+				await waitOnExecutionContext(ctx);
+				expect(res.status).toBe(200);
+				const json = (await res.json()) as any;
+				const campaigns = Array.isArray(json?.campaigns) ? json.campaigns : [];
+				expect(campaigns.some((c: any) => String(c?.id || '') === campaignId)).toBe(true);
+			}
+		});
 	});
 });

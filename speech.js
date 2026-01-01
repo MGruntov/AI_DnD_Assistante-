@@ -43,6 +43,7 @@
   const profilePortraitEl = document.getElementById("profilePortrait");
   const campaignsList = document.getElementById("campaignsList");
   const campaignsMessage = document.getElementById("campaignsMessage");
+  const campaignsMessageList = document.getElementById("campaignsMessageList");
   const createCampaignForm = document.getElementById("createCampaignForm");
   const campaignNameInput = document.getElementById("campaignName");
   const campaignParticipantsInput = document.getElementById("campaignParticipants");
@@ -72,6 +73,32 @@
   const campaignScriptPromptInput = document.getElementById("campaignScriptPrompt");
   const campaignScriptGenerateBtn = document.getElementById("campaignScriptGenerateBtn");
   const campaignScriptStatusEl = document.getElementById("campaignScriptStatus");
+
+  // Human Lobbies page
+  const lobbiesList = document.getElementById("lobbiesList");
+  const lobbiesMessage = document.getElementById("lobbiesMessage");
+  const lobbyDetail = document.getElementById("lobbyDetail");
+  const lobbyDetailTitle = document.getElementById("lobbyDetailTitle");
+  const lobbyDetailMeta = document.getElementById("lobbyDetailMeta");
+  const lobbyDiscordLink = document.getElementById("lobbyDiscordLink");
+  const lobbyJoinBtn = document.getElementById("lobbyJoinBtn");
+  const lobbyJoinStatus = document.getElementById("lobbyJoinStatus");
+  const lobbyPendingNotice = document.getElementById("lobbyPendingNotice");
+  const lobbyChatThread = document.getElementById("lobbyChatThread");
+  const lobbyChatInput = document.getElementById("lobbyChatInput");
+  const lobbyChatSendBtn = document.getElementById("lobbyChatSendBtn");
+  const lobbyChatStatus = document.getElementById("lobbyChatStatus");
+  const lobbyGmQueue = document.getElementById("lobbyGmQueue");
+  const lobbyPendingList = document.getElementById("lobbyPendingList");
+
+  // Studio page enhancements
+  const campaignIsPublicLobbyToggle = document.getElementById("campaignIsPublicLobby");
+  const campaignHasAiPlayersToggle = document.getElementById("campaignHasAiPlayers");
+  const campaignDiscordLinkInput = document.getElementById("campaignDiscordLink");
+  const studioScenarioList = document.getElementById("studioScenarioList");
+  const studioScenarioMessage = document.getElementById("studioScenarioMessage");
+
+  let activeLobbyId = null;
 
   // GM Tactical Dashboard (Campaigns -> Script tab)
   const gmPartySummaryEl = document.getElementById("gmPartySummary");
@@ -127,6 +154,157 @@
   const addCanonEventBtn = document.getElementById("addCanonEventBtn");
   const publishTemplateStatusEl = document.getElementById("publishTemplateStatus");
 
+  // Onboarding Gate (post-login)
+  const quickstartKnightBtn = document.getElementById("quickstartKnightBtn");
+  const quickstartMageBtn = document.getElementById("quickstartMageBtn");
+  const quickstartRogueBtn = document.getElementById("quickstartRogueBtn");
+  const onboardingToForgeBtn = document.getElementById("onboardingToForgeBtn");
+  const onboardingArchitectPassBtn = document.getElementById("onboardingArchitectPassBtn");
+  const onboardingStatusEl = document.getElementById("onboardingStatus");
+
+  const IS_ARCHITECT_STORAGE_KEY = "adaIsArchitect";
+
+  function isArchitect() {
+    try {
+      return localStorage.getItem(IS_ARCHITECT_STORAGE_KEY) === "true";
+    } catch {
+      return false;
+    }
+  }
+
+  function setArchitect(flag) {
+    try {
+      if (flag) localStorage.setItem(IS_ARCHITECT_STORAGE_KEY, "true");
+      else localStorage.removeItem(IS_ARCHITECT_STORAGE_KEY);
+    } catch {
+      // ignore
+    }
+  }
+
+  function setOnboardingStatus(text) {
+    if (!onboardingStatusEl) return;
+    onboardingStatusEl.textContent = text || "";
+  }
+
+  function quickstartPortraitSvg(kind) {
+    const accent = "#E01C29";
+    const gold = "#F3CB70";
+    const ink = "#1E1712";
+    const title = kind === "knight" ? "Knight" : kind === "mage" ? "Mage" : "Rogue";
+    const glyph = kind === "knight" ? "⚔" : kind === "mage" ? "✦" : "🗡";
+    const svg = `<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#FEFEFE"/>
+      <stop offset="1" stop-color="#FBF6EC"/>
+    </linearGradient>
+    <radialGradient id="seal" cx="30%" cy="25%" r="80%">
+      <stop offset="0" stop-color="${gold}" stop-opacity="0.55"/>
+      <stop offset="1" stop-color="${accent}" stop-opacity="0.10"/>
+    </radialGradient>
+  </defs>
+  <rect width="256" height="256" rx="18" fill="url(#bg)"/>
+  <rect x="14" y="14" width="228" height="228" rx="16" fill="url(#seal)" stroke="${accent}" stroke-opacity="0.55"/>
+  <circle cx="128" cy="108" r="44" fill="#ffffff" fill-opacity="0.70" stroke="${ink}" stroke-opacity="0.25"/>
+  <path d="M70 212c12-38 40-58 58-58s46 20 58 58" fill="#ffffff" fill-opacity="0.65" stroke="${ink}" stroke-opacity="0.22"/>
+  <text x="128" y="118" text-anchor="middle" font-family="Cinzel, serif" font-size="44" fill="${ink}" fill-opacity="0.78">${glyph}</text>
+  <text x="128" y="46" text-anchor="middle" font-family="Cinzel, serif" font-size="18" fill="${ink}" fill-opacity="0.75">${title}</text>
+</svg>`;
+    return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
+  }
+
+  async function createQuickstartCharacter(archetype) {
+    const user = getCurrentUser();
+    if (!user) {
+      setOnboardingStatus("Please log in again.");
+      navigateTo("auth-login");
+      return;
+    }
+
+    setOnboardingStatus("Forging your hero…");
+
+    const defs = {
+      knight: {
+        name: "Quickstart Knight",
+        narrativeText: "A stalwart knight, sworn to uphold oaths and shield the innocent. Fighter." ,
+        portraitUrl: quickstartPortraitSvg("knight"),
+      },
+      mage: {
+        name: "Quickstart Mage",
+        narrativeText: "A disciplined mage of the old towers, hungry for secrets. Wizard.",
+        portraitUrl: quickstartPortraitSvg("mage"),
+      },
+      rogue: {
+        name: "Quickstart Rogue",
+        narrativeText: "A clever rogue of the back alleys and shadowed courts. Rogue.",
+        portraitUrl: quickstartPortraitSvg("rogue"),
+      },
+    };
+
+    const d = defs[archetype];
+    if (!d) {
+      setOnboardingStatus("Unknown archetype.");
+      return;
+    }
+
+    const result = await apiPost("/api/characters/forge", {
+      username: user,
+      narrativeText: d.narrativeText,
+      name: d.name,
+      portraitUrl: d.portraitUrl,
+    });
+
+    if (!result.ok) {
+      const msg = (result.data && (result.data.error || result.data.message)) || "Could not create quickstart hero.";
+      setOnboardingStatus(msg);
+      return;
+    }
+
+    const ch = result.data && result.data.character;
+    if (ch && ch.id) {
+      setActiveCharacter(ch);
+      try {
+        if (ch.portraitUrl) localStorage.setItem(PORTRAIT_STORAGE_KEY, String(ch.portraitUrl));
+      } catch {
+        // ignore
+      }
+    }
+
+    setOnboardingStatus("Hero created. Opening the Portal…");
+    navigateTo("portal");
+  }
+
+  // Portal Hub
+  const portalSoloBtn = document.getElementById("portalSoloBtn");
+  const portalLobbiesBtn = document.getElementById("portalLobbiesBtn");
+  const portalStudioBtn = document.getElementById("portalStudioBtn");
+
+  function wireOnboardingGate() {
+    if (quickstartKnightBtn) quickstartKnightBtn.addEventListener("click", () => createQuickstartCharacter("knight"));
+    if (quickstartMageBtn) quickstartMageBtn.addEventListener("click", () => createQuickstartCharacter("mage"));
+    if (quickstartRogueBtn) quickstartRogueBtn.addEventListener("click", () => createQuickstartCharacter("rogue"));
+
+    if (onboardingToForgeBtn)
+      onboardingToForgeBtn.addEventListener("click", () => {
+        // After forging a character, steer them to the Portal (via vault detail).
+        if (MULTI_PAGE) setPostSelectTarget("portal");
+        navigateTo("forge");
+      });
+
+    if (onboardingArchitectPassBtn)
+      onboardingArchitectPassBtn.addEventListener("click", () => {
+        setArchitect(true);
+        navigateTo("portal");
+      });
+  }
+
+  function wirePortalHub() {
+    if (portalSoloBtn) portalSoloBtn.addEventListener("click", () => navigateTo("sagas"));
+    if (portalLobbiesBtn) portalLobbiesBtn.addEventListener("click", () => navigateTo("lobbies"));
+    if (portalStudioBtn) portalStudioBtn.addEventListener("click", () => navigateTo("studio"));
+  }
+
   const vaultListView = document.getElementById("vaultListView");
   const vaultDetailView = document.getElementById("vaultDetailView");
   const vaultCharactersGrid = document.getElementById("vaultCharactersGrid");
@@ -181,6 +359,18 @@
       case "auth-login":
       case "auth-register":
         return "index.html";
+      case "onboarding":
+        return "onboarding.html";
+      case "portal":
+        return "portal.html";
+      case "sagas":
+        return "sagas.html";
+      case "lobbies":
+        return "lobbies.html";
+      case "studio":
+        return "studio.html";
+      case "hall":
+        return "hall.html";
       case "forge":
         return "forge.html";
       case "hud":
@@ -799,12 +989,315 @@
     }
   }
 
+  function setLobbyStatus(text) {
+    if (!lobbyJoinStatus) return;
+    lobbyJoinStatus.textContent = text || "";
+  }
+
+  function setLobbyChatStatus(text) {
+    if (!lobbyChatStatus) return;
+    lobbyChatStatus.textContent = text || "";
+  }
+
+  function renderLobbyChat(messages) {
+    if (!lobbyChatThread) return;
+    lobbyChatThread.innerHTML = "";
+    const list = Array.isArray(messages) ? messages : [];
+    if (!list.length) {
+      const empty = document.createElement("p");
+      empty.className = "text-muted";
+      empty.textContent = "No OOC messages yet.";
+      lobbyChatThread.appendChild(empty);
+      return;
+    }
+    list.forEach((m) => {
+      const wrap = document.createElement("div");
+      wrap.className = "lobby-chat__msg";
+      const meta = document.createElement("div");
+      meta.className = "lobby-chat__msg-meta";
+      const when = m && m.createdAt ? new Date(m.createdAt).toLocaleString() : "";
+      meta.textContent = `${m?.author || "Unknown"}${when ? ` · ${when}` : ""}`;
+      const body = document.createElement("div");
+      body.textContent = String(m?.text || "");
+      wrap.appendChild(meta);
+      wrap.appendChild(body);
+      lobbyChatThread.appendChild(wrap);
+    });
+    lobbyChatThread.scrollTop = lobbyChatThread.scrollHeight;
+  }
+
+  async function loadLobbyDetails(lobbyId) {
+    const user = getCurrentUser();
+    if (!user || !lobbyId) return;
+
+    setLobbyStatus("Loading lobby…");
+    const res = await apiGet(`/api/lobbies/details?campaignId=${encodeURIComponent(lobbyId)}&user=${encodeURIComponent(user)}`);
+    if (!res.ok) {
+      setLobbyStatus((res.data && res.data.error) || "Could not load lobby.");
+      return;
+    }
+
+    const campaign = res.data && res.data.campaign;
+    const access = res.data && res.data.access;
+    const discordLink = res.data && res.data.discordLink;
+    const chat = res.data && res.data.lobbyChat;
+    const pending = res.data && res.data.pendingParticipants;
+
+    if (lobbyDetailTitle) lobbyDetailTitle.textContent = campaign?.name || "Lobby";
+    if (lobbyDetailMeta) lobbyDetailMeta.textContent = `GM: ${campaign?.dm || "Unknown"}`;
+
+    if (lobbyDiscordLink) {
+      if (discordLink) {
+        lobbyDiscordLink.hidden = false;
+        lobbyDiscordLink.href = String(discordLink);
+      } else {
+        lobbyDiscordLink.hidden = true;
+        lobbyDiscordLink.href = "#";
+      }
+    }
+
+    const status = access && access.status ? String(access.status) : "none";
+    const canManage = !!(access && access.canManage);
+    const isPending = status === "pending";
+    const isParticipant = status === "participant";
+    const canChat = canManage || isPending || isParticipant;
+
+    if (lobbyPendingNotice) lobbyPendingNotice.hidden = !isPending;
+    if (lobbyJoinBtn) {
+      if (isParticipant) {
+        lobbyJoinBtn.textContent = "Joined";
+        lobbyJoinBtn.disabled = true;
+      } else if (isPending) {
+        lobbyJoinBtn.textContent = "Pending…";
+        lobbyJoinBtn.disabled = true;
+      } else {
+        lobbyJoinBtn.textContent = "Request to Join";
+        lobbyJoinBtn.disabled = false;
+      }
+    }
+
+    if (lobbyGmQueue) lobbyGmQueue.hidden = !canManage;
+    if (canManage && lobbyPendingList) {
+      lobbyPendingList.innerHTML = "";
+      const list = Array.isArray(pending) ? pending : [];
+      if (!list.length) {
+        const p = document.createElement("p");
+        p.className = "text-muted";
+        p.textContent = "No pending participants.";
+        lobbyPendingList.appendChild(p);
+      } else {
+        list.forEach((u) => {
+          const row = document.createElement("div");
+          row.className = "lobby-queue__row";
+          const label = document.createElement("div");
+          label.textContent = String(u);
+
+          const actions = document.createElement("div");
+          actions.style.display = "inline-flex";
+          actions.style.gap = "8px";
+
+          const approve = document.createElement("button");
+          approve.type = "button";
+          approve.className = "btn btn--primary btn--small";
+          approve.textContent = "Approve";
+          approve.addEventListener("click", async () => {
+            approve.disabled = true;
+            const r = await apiPost("/api/lobbies/approve", { gmUsername: user, campaignId: lobbyId, username: u });
+            if (!r.ok) {
+              approve.disabled = false;
+              setLobbyStatus((r.data && r.data.error) || "Failed to approve.");
+              return;
+            }
+            setLobbyStatus("Approved.");
+            loadLobbyDetails(lobbyId);
+          });
+
+          const reject = document.createElement("button");
+          reject.type = "button";
+          reject.className = "btn btn--secondary btn--small";
+          reject.textContent = "Reject";
+          reject.addEventListener("click", async () => {
+            reject.disabled = true;
+            const r = await apiPost("/api/lobbies/reject", { gmUsername: user, campaignId: lobbyId, username: u });
+            if (!r.ok) {
+              reject.disabled = false;
+              setLobbyStatus((r.data && r.data.error) || "Failed to reject.");
+              return;
+            }
+            setLobbyStatus("Rejected.");
+            loadLobbyDetails(lobbyId);
+          });
+
+          actions.appendChild(approve);
+          actions.appendChild(reject);
+
+          row.appendChild(label);
+          row.appendChild(actions);
+          lobbyPendingList.appendChild(row);
+        });
+      }
+    }
+
+    renderLobbyChat(chat);
+
+    if (lobbyChatInput) lobbyChatInput.disabled = !canChat;
+    if (lobbyChatSendBtn) lobbyChatSendBtn.disabled = !canChat;
+    setLobbyStatus("");
+  }
+
+  async function joinLobby(lobbyId) {
+    const user = getCurrentUser();
+    if (!user || !lobbyId) return;
+    setLobbyStatus("Requesting to join…");
+    const res = await apiPost("/api/lobbies/join", { username: user, campaignId: lobbyId });
+    if (!res.ok) {
+      setLobbyStatus((res.data && res.data.error) || "Could not request to join.");
+      return;
+    }
+    setLobbyStatus("Requested. Waiting for GM approval…");
+    loadLobbyDetails(lobbyId);
+  }
+
+  async function loadPublicLobbies() {
+    if (!lobbiesList) return;
+    if (lobbiesMessage) lobbiesMessage.textContent = "Loading lobbies…";
+    lobbiesList.innerHTML = "";
+
+    const res = await apiGet("/api/lobbies/public");
+    if (!res.ok) {
+      if (lobbiesMessage) lobbiesMessage.textContent = (res.data && res.data.error) || "Could not load lobbies.";
+      return;
+    }
+
+    const lobbies = res.data && Array.isArray(res.data.lobbies) ? res.data.lobbies : [];
+    if (!lobbies.length) {
+      if (lobbiesMessage) lobbiesMessage.textContent = "No public lobbies yet.";
+      return;
+    }
+    if (lobbiesMessage) lobbiesMessage.textContent = "";
+
+    lobbies.forEach((c) => {
+      const card = document.createElement("div");
+      card.className = "lobby-card";
+
+      const left = document.createElement("div");
+      const title = document.createElement("h3");
+      title.className = "lobby-card__title";
+      title.textContent = c.name || "Lobby";
+      const meta = document.createElement("p");
+      meta.className = "lobby-card__meta";
+      meta.textContent = `GM: ${c.dm || "Unknown"}`;
+      left.appendChild(title);
+      left.appendChild(meta);
+
+      const right = document.createElement("div");
+      right.style.display = "inline-flex";
+      right.style.gap = "10px";
+      right.style.flexWrap = "wrap";
+
+      const viewBtn = document.createElement("button");
+      viewBtn.type = "button";
+      viewBtn.className = "btn btn--secondary btn--small";
+      viewBtn.textContent = "View";
+      viewBtn.addEventListener("click", () => {
+        activeLobbyId = c.id;
+        if (lobbyDetail) lobbyDetail.hidden = false;
+        loadLobbyDetails(c.id);
+      });
+
+      right.appendChild(viewBtn);
+      card.appendChild(left);
+      card.appendChild(right);
+      lobbiesList.appendChild(card);
+    });
+  }
+
+  async function sendLobbyChat() {
+    const user = getCurrentUser();
+    const lobbyId = activeLobbyId;
+    if (!user || !lobbyId) return;
+    const text = lobbyChatInput ? String(lobbyChatInput.value || "").trim() : "";
+    if (!text) return;
+    setLobbyChatStatus("Sending…");
+    if (lobbyChatSendBtn) lobbyChatSendBtn.disabled = true;
+    const res = await apiPost("/api/lobbies/chat/send", { campaignId: lobbyId, username: user, text });
+    if (lobbyChatSendBtn) lobbyChatSendBtn.disabled = false;
+    if (!res.ok) {
+      setLobbyChatStatus((res.data && res.data.error) || "Failed to send.");
+      return;
+    }
+    if (lobbyChatInput) lobbyChatInput.value = "";
+    setLobbyChatStatus("");
+    loadLobbyDetails(lobbyId);
+  }
+
+  async function loadStudioScenarios() {
+    if (!studioScenarioList) return;
+    studioScenarioList.innerHTML = "";
+    if (studioScenarioMessage) studioScenarioMessage.textContent = "Loading scenarios…";
+
+    const res = await apiGet("/api/templates/public");
+    if (!res.ok) {
+      if (studioScenarioMessage) studioScenarioMessage.textContent = "Could not load Hall scenarios.";
+      return;
+    }
+    const templates = res.data && Array.isArray(res.data.templates) ? res.data.templates : [];
+    if (!templates.length) {
+      if (studioScenarioMessage) studioScenarioMessage.textContent = "No Hall templates yet.";
+      return;
+    }
+    if (studioScenarioMessage) studioScenarioMessage.textContent = "";
+
+    templates.slice(0, 12).forEach((t) => {
+      const row = document.createElement("div");
+      row.className = "studio-scenario";
+      const left = document.createElement("div");
+      const title = document.createElement("h4");
+      title.style.margin = "0 0 6px";
+      title.textContent = t.name || "Template";
+      const meta = document.createElement("p");
+      meta.className = "text-muted";
+      meta.style.margin = "0";
+      meta.textContent = `Architect: ${t.creatorUsername || t.dm || "Unknown"}`;
+      left.appendChild(title);
+      left.appendChild(meta);
+
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "btn btn--primary btn--small";
+      btn.textContent = "Clone";
+      btn.addEventListener("click", async () => {
+        const user = getCurrentUser();
+        if (!user) return;
+        btn.disabled = true;
+        if (studioScenarioMessage) studioScenarioMessage.textContent = "Cloning scenario…";
+        const r = await apiPost("/api/scenarios/clone", { username: user, templateId: t.id });
+        btn.disabled = false;
+        if (!r.ok) {
+          if (studioScenarioMessage) studioScenarioMessage.textContent = (r.data && r.data.error) || "Could not clone.";
+          return;
+        }
+        if (studioScenarioMessage) studioScenarioMessage.textContent = "Scenario cloned. See My Active Worlds.";
+        loadCampaigns("all");
+      });
+
+      row.appendChild(left);
+      row.appendChild(btn);
+      studioScenarioList.appendChild(row);
+    });
+  }
+
   function getCurrentUser() {
     try {
       return localStorage.getItem(CURRENT_USER_STORAGE_KEY);
     } catch {
       return null;
     }
+  }
+
+  function getCampaignsStatusEl() {
+    // Studio uses a separate status line for the campaign list.
+    return campaignsMessageList || campaignsMessage;
   }
 
   function setCurrentUser(username) {
@@ -2765,6 +3258,8 @@
 
   function renderCampaigns(campaigns, filter, currentUser) {
     if (!campaignsList) return;
+
+    const statusEl = getCampaignsStatusEl();
     campaignsList.innerHTML = "";
 
     if (!Array.isArray(campaigns) || campaigns.length === 0) {
@@ -2785,21 +3280,21 @@
     });
 
     if (filtered.length === 0) {
-      if (campaignsMessage) {
+      if (statusEl) {
         if (filter === "dm") {
-          campaignsMessage.textContent =
+          statusEl.textContent =
             "You're not a DM in any campaigns yet.";
         } else if (filter === "player") {
-          campaignsMessage.textContent =
+          statusEl.textContent =
             "You're not listed as a player in any campaigns yet.";
         } else {
-          campaignsMessage.textContent = "No campaigns yet.";
+          statusEl.textContent = "No campaigns yet.";
         }
       }
       return;
     }
 
-    if (campaignsMessage) campaignsMessage.textContent = "";
+    if (statusEl) statusEl.textContent = "";
 
     filtered.forEach((c) => {
       const card = document.createElement("article");
@@ -2850,24 +3345,22 @@
 
   async function loadCampaigns(filter) {
     const currentUser = getCurrentUser();
+    const statusEl = getCampaignsStatusEl();
     if (!currentUser) {
-      if (campaignsMessage)
-        campaignsMessage.textContent =
+      if (statusEl) statusEl.textContent =
           "You need to be logged in to see campaigns.";
       if (campaignsList) campaignsList.innerHTML = "";
       return;
     }
 
-    if (campaignsMessage)
-      campaignsMessage.textContent = "Loading campaigns...";
+    if (statusEl) statusEl.textContent = "Loading campaigns...";
     if (campaignsList) campaignsList.innerHTML = "";
 
     const result = await apiGet(
       `/api/campaigns?user=${encodeURIComponent(currentUser)}`
     );
     if (!result.ok) {
-      if (campaignsMessage)
-        campaignsMessage.textContent =
+      if (statusEl) statusEl.textContent =
           "Could not load campaigns. Please try again later.";
       return;
     }
@@ -3135,6 +3628,10 @@
         navigateTo("hud");
         return;
       }
+      if (target === "portal") {
+        navigateTo("portal");
+        return;
+      }
     }
 
     if (awaitingHudCharacterSelect) {
@@ -3196,9 +3693,9 @@
       updateNav(initialUser);
       if (profileUsernameEl) profileUsernameEl.textContent = initialUser;
 
-      // If already logged in and they hit the auth page, send them to the Forge.
+      // If already logged in and they hit the auth page, send them to the Portal.
       if (CURRENT_PAGE === "auth") {
-        navigateTo("forge");
+        navigateTo("portal");
         return;
       }
 
@@ -3215,6 +3712,43 @@
       if (CURRENT_PAGE === "vault") {
         loadVaultCharacters();
         loadUserCampaignsForVault();
+      } else if (CURRENT_PAGE === "onboarding") {
+        wireOnboardingGate();
+      } else if (CURRENT_PAGE === "portal") {
+        wirePortalHub();
+      } else if (CURRENT_PAGE === "sagas") {
+        wireLibrarySearchAndFilters();
+        loadAdventuresAndCharacters();
+      } else if (CURRENT_PAGE === "lobbies") {
+        if (lobbyDetail) lobbyDetail.hidden = true;
+        if (lobbyChatInput) lobbyChatInput.disabled = true;
+        if (lobbyChatSendBtn) lobbyChatSendBtn.disabled = true;
+
+        if (lobbyJoinBtn)
+          lobbyJoinBtn.addEventListener("click", () => {
+            if (!activeLobbyId) {
+              setLobbyStatus("Select a lobby first.");
+              return;
+            }
+            joinLobby(activeLobbyId);
+          });
+
+        if (lobbyChatSendBtn) lobbyChatSendBtn.addEventListener("click", () => sendLobbyChat());
+        if (lobbyChatInput)
+          lobbyChatInput.addEventListener("keydown", (e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              sendLobbyChat();
+            }
+          });
+
+        loadPublicLobbies();
+      } else if (CURRENT_PAGE === "studio") {
+        loadCampaigns("all");
+        loadStudioScenarios();
+      } else if (CURRENT_PAGE === "hall") {
+        wireLibrarySearchAndFilters();
+        loadPublicTemplates();
       } else if (CURRENT_PAGE === "library") {
         wireLibraryCreateModeToggle();
         wireLibrarySearchAndFilters();
@@ -3458,7 +3992,7 @@
         updateNav(username);
         if (profileUsernameEl) profileUsernameEl.textContent = username;
         setAuthMessage("");
-        showView("home");
+        showView("onboarding");
       });
     });
   }
@@ -4109,6 +4643,9 @@
         name,
         dm: currentUser,
         participants: rawParticipants,
+        isPublicLobby: campaignIsPublicLobbyToggle ? Boolean(campaignIsPublicLobbyToggle.checked) : false,
+        hasAiPlayers: campaignHasAiPlayersToggle ? Boolean(campaignHasAiPlayersToggle.checked) : false,
+        discordLink: campaignDiscordLinkInput ? String(campaignDiscordLinkInput.value || "").trim() : "",
       }).then((result) => {
         if (!result.ok) {
           if (
@@ -4141,6 +4678,9 @@
 
         campaignNameInput.value = "";
         campaignParticipantsInput.value = "";
+        if (campaignIsPublicLobbyToggle) campaignIsPublicLobbyToggle.checked = false;
+        if (campaignHasAiPlayersToggle) campaignHasAiPlayersToggle.checked = false;
+        if (campaignDiscordLinkInput) campaignDiscordLinkInput.value = "";
         if (campaignsMessage) campaignsMessage.textContent = "Campaign created!";
         loadCampaigns("all");
       });

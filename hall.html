@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>ADA — Hall of Records</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;800&family=MedievalSharp&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body data-page="hall">
+  <main class="app">
+    <header class="app__header">
+      <div class="app__header-main">
+        <h1>ADA</h1>
+        <p>Hall of Records — the global archive.</p>
+      </div>
+      <div class="app__header-user">
+        <span id="currentUserLabel" class="user-label" hidden></span>
+        <nav id="appNav" class="nav" aria-label="Primary">
+          <a class="nav__link" href="portal.html">Portal</a>
+          <a class="nav__link" href="sagas.html">AI Sagas</a>
+          <a class="nav__link" href="lobbies.html">Human Lobbies</a>
+          <a class="nav__link" href="studio.html">Architect’s Studio</a>
+          <a class="nav__link" href="vault.html">My Characters</a>
+          <a class="nav__link" href="campaigns.html">My Campaigns</a>
+          <a class="nav__link" href="profile.html">Profile</a>
+          <button type="button" class="nav__link nav__link--danger" id="logoutBtn">Logout</button>
+        </nav>
+      </div>
+    </header>
+
+    <section class="view">
+      <div class="card">
+        <header>
+          <h2>The Hall of Records</h2>
+          <p class="text-muted">Master Templates, Community Scenarios, and World Lore — read-only discovery.</p>
+        </header>
+
+        <section class="library" aria-label="Master Templates">
+          <h3>Master Templates</h3>
+          <p class="text-muted">Structured world baselines authored by Architects.</p>
+
+          <div class="library-controls" aria-label="Template search and filters">
+            <div class="field">
+              <label for="templateSearchInput">Search templates</label>
+              <input type="text" id="templateSearchInput" placeholder="Search by name, architect, tags, or canon..." />
+            </div>
+            <div class="library-controls__row">
+              <div class="field">
+                <label for="templateTagFilter">Tag</label>
+                <select id="templateTagFilter">
+                  <option value="">All tags</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="templateSortSelect">Sort</label>
+                <select id="templateSortSelect">
+                  <option value="relevance">Relevance</option>
+                  <option value="newest">Newest</option>
+                  <option value="canon">Canon events</option>
+                  <option value="architect">Architect</option>
+                  <option value="title">Title</option>
+                </select>
+              </div>
+              <div class="field">
+                <label>&nbsp;</label>
+                <label class="checkbox">
+                  <input type="checkbox" id="templateEligibleOnly" />
+                  Show only templates I can start
+                </label>
+              </div>
+            </div>
+
+            <div class="library-controls__meta" aria-live="polite">
+              <span id="templateResultsCount" class="text-muted">Showing 0 of 0</span>
+              <button type="button" id="templateClearFiltersBtn" class="btn btn--secondary btn--small">Clear filters</button>
+            </div>
+          </div>
+
+          <div id="templatesList" class="templates__list" aria-live="polite"></div>
+          <p id="templatesMessage" class="text-muted"></p>
+        </section>
+
+        <section aria-label="Community scenarios" style="margin-top: 1.25rem;">
+          <h3>Community Scenarios</h3>
+          <p class="text-muted">Lore-rich adventure seeds and story arcs (placeholder — will unify with Templates next).</p>
+        </section>
+
+        <section aria-label="World lore" style="margin-top: 1.25rem;">
+          <h3>World Lore</h3>
+          <p class="text-muted">Atmospheric places and legends (placeholder — will connect to Flavor Weaver).</p>
+        </section>
+      </div>
+    </section>
+  </main>
+
+  <script src="speech.js"></script>
+</body>
+</html>

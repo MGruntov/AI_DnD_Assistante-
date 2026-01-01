@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>ADA — Architect’s Studio</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;800&family=MedievalSharp&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body data-page="studio">
+  <main class="app">
+    <header class="app__header">
+      <div class="app__header-main">
+        <h1>ADA</h1>
+        <p>Architect’s Studio — Master a World.</p>
+      </div>
+      <div class="app__header-user">
+        <span id="currentUserLabel" class="user-label" hidden></span>
+        <nav id="appNav" class="nav" aria-label="Primary">
+          <a class="nav__link" href="portal.html">Portal</a>
+          <a class="nav__link" href="hall.html">Hall of Records</a>
+          <a class="nav__link" href="campaigns.html">My Campaigns</a>
+          <a class="nav__link" href="profile.html">Profile</a>
+          <button type="button" class="nav__link nav__link--danger" id="logoutBtn">Logout</button>
+        </nav>
+      </div>
+    </header>
+
+    <section class="view">
+      <div class="card">
+        <header>
+          <h2>World Management</h2>
+          <p class="text-muted">Build campaigns, import scenarios, and test with AI players. (Studio wiring is landing in phases.)</p>
+        </header>
+
+        <section aria-label="Create a campaign">
+          <h3>Create a Campaign</h3>
+          <form id="createCampaignForm" class="campaigns__form">
+            <div class="field">
+              <label for="campaignName">Campaign name</label>
+              <input type="text" id="campaignName" name="campaignName" placeholder="The Sapphire Marches" required />
+            </div>
+            <div class="field">
+              <label for="campaignParticipants">Participants (comma-separated usernames)</label>
+              <input type="text" id="campaignParticipants" name="campaignParticipants" placeholder="alice, bob" />
+              <p class="field__hint">You’ll be set as the Dungeon Master.</p>
+            </div>
+
+            <div class="studio-options">
+              <label class="checkbox">
+                <input type="checkbox" id="campaignIsPublicLobby" />
+                Publish as a public lobby (Human Lobbies)
+              </label>
+              <label class="checkbox">
+                <input type="checkbox" id="campaignHasAiPlayers" />
+                Populate with AI Players (Playtester)
+              </label>
+            </div>
+
+            <div class="field">
+              <label for="campaignDiscordLink">Discord invite link (optional)</label>
+              <input type="url" id="campaignDiscordLink" placeholder="https://discord.gg/…" />
+              <p class="field__hint">Highly recommended for party coordination. Visible to pending applicants.</p>
+            </div>
+            <button type="submit" class="btn btn--primary">Create campaign</button>
+            <p id="campaignsMessage" class="text-muted" style="margin-top: .75rem;"></p>
+          </form>
+        </section>
+
+        <section aria-label="Campaign management">
+          <h3>My Active Worlds</h3>
+          <div id="campaignsList" class="campaigns__list" aria-live="polite"></div>
+          <p id="campaignsMessageList" class="text-muted"></p>
+        </section>
+
+        <section aria-label="Import a scenario">
+          <h3>Import Scenario</h3>
+          <p class="text-muted">Clone a Master Template from the Hall into a private Architect campaign.</p>
+          <div id="studioScenarioList" class="studio-scenarios" aria-live="polite"></div>
+          <p id="studioScenarioMessage" class="text-muted"></p>
+          <a class="link-btn" href="hall.html">Browse the full Hall of Records →</a>
+        </section>
+      </div>
+    </section>
+  </main>
+
+  <script src="speech.js"></script>
+</body>
+</html>

@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>ADA — Human Lobbies</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;800&family=MedievalSharp&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body data-page="lobbies">
+  <main class="app">
+    <header class="app__header">
+      <div class="app__header-main">
+        <h1>ADA</h1>
+        <p>Human Lobbies — Join a Party.</p>
+      </div>
+      <div class="app__header-user">
+        <span id="currentUserLabel" class="user-label" hidden></span>
+        <nav id="appNav" class="nav" aria-label="Primary">
+          <a class="nav__link" href="portal.html">Portal</a>
+          <a class="nav__link" href="hall.html">Hall of Records</a>
+          <a class="nav__link" href="campaigns.html">My Campaigns</a>
+          <a class="nav__link" href="profile.html">Profile</a>
+          <button type="button" class="nav__link nav__link--danger" id="logoutBtn">Logout</button>
+        </nav>
+      </div>
+    </header>
+
+    <section class="view">
+      <div class="card">
+        <header>
+          <h2>The Tavern Board</h2>
+          <p class="text-muted">Browse public campaigns hosted by human GMs. Request entry and wait for approval.</p>
+        </header>
+
+        <div id="lobbiesList" class="lobbies__list" aria-live="polite"></div>
+        <p id="lobbiesMessage" class="text-muted">Loading lobbies…</p>
+
+        <section id="lobbyDetail" class="lobby-detail" aria-label="Selected lobby" hidden>
+          <header class="lobby-detail__header">
+            <div>
+              <h3 id="lobbyDetailTitle">Lobby</h3>
+              <p id="lobbyDetailMeta" class="text-muted"></p>
+            </div>
+            <div class="lobby-detail__actions">
+              <a id="lobbyDiscordLink" class="btn btn--secondary btn--small" href="#" target="_blank" rel="noopener" hidden>Discord</a>
+              <button type="button" id="lobbyJoinBtn" class="btn btn--primary btn--small">Request to Join</button>
+            </div>
+          </header>
+
+          <p id="lobbyJoinStatus" class="text-muted"></p>
+
+          <div id="lobbyPendingNotice" class="notice notice--gold" hidden>
+            Pending Approval: you can see Lobby Chat and the Discord link while the GM reviews your request.
+          </div>
+
+          <section id="lobbyGmQueue" class="lobby-queue" aria-label="Pending participants" hidden>
+            <h4 class="ooc-title">Gatekeeper Queue</h4>
+            <div id="lobbyPendingList" class="lobby-queue__list"></div>
+          </section>
+        </section>
+
+        <hr class="divider" />
+
+        <section aria-label="Lobby chat (OOC)">
+          <h3 class="ooc-title">Lobby Chat (OOC)</h3>
+          <div id="lobbyChatThread" class="lobby-chat" aria-live="polite"></div>
+          <div class="lobby-chat__composer">
+            <input type="text" id="lobbyChatInput" placeholder="OOC message (scheduling, logistics)…" />
+            <button type="button" id="lobbyChatSendBtn" class="btn btn--secondary btn--small">Send</button>
+          </div>
+          <p id="lobbyChatStatus" class="text-muted"></p>
+        </section>
+      </div>
+    </section>
+  </main>
+
+  <script src="speech.js"></script>
+</body>
+</html>

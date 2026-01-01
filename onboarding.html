@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>ADA — Onboarding Gate</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;800&family=MedievalSharp&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body data-page="onboarding">
+  <main class="app">
+    <header class="app__header">
+      <div class="app__header-main">
+        <div class="brand">
+          <div class="brand__mark" aria-hidden="true"></div>
+          <div>
+            <h1>ADA</h1>
+            <p>The Onboarding Gate — choose your path.</p>
+          </div>
+        </div>
+      </div>
+      <div class="app__header-user">
+        <span id="currentUserLabel" class="user-label" hidden></span>
+        <nav id="appNav" class="nav" aria-label="Primary">
+          <a class="nav__link" href="portal.html">Portal</a>
+          <a class="nav__link" href="vault.html">My Characters</a>
+          <a class="nav__link" href="hall.html">Hall of Records</a>
+          <a class="nav__link" href="profile.html">Profile</a>
+          <button type="button" class="nav__link nav__link--danger" id="logoutBtn">Logout</button>
+        </nav>
+      </div>
+    </header>
+
+    <section class="view">
+      <div class="card">
+        <header class="journey-header">
+          <h2>The Journey Choice</h2>
+          <p class="text-muted">Choose a path worthy of your legend. You can change course later in the Portal.</p>
+        </header>
+
+        <div class="journey-grid" role="list">
+          <article class="journey-card" role="listitem" aria-label="Quickstart Hero">
+            <div class="journey-card__header">
+              <h3 class="journey-card__title">The Quickstart Hero</h3>
+              <p class="text-muted">Three ready-made heroes — instant action.</p>
+            </div>
+
+            <div class="quickstart-grid" aria-label="Quickstart archetypes">
+              <button type="button" id="quickstartKnightBtn" class="quickstart" aria-label="Quickstart Knight">
+                <span class="quickstart__portrait quickstart__portrait--knight" aria-hidden="true"></span>
+                <span class="quickstart__name">Knight</span>
+                <span class="quickstart__meta">Fighter · Lv 1</span>
+              </button>
+
+              <button type="button" id="quickstartMageBtn" class="quickstart" aria-label="Quickstart Mage">
+                <span class="quickstart__portrait quickstart__portrait--mage" aria-hidden="true"></span>
+                <span class="quickstart__name">Mage</span>
+                <span class="quickstart__meta">Wizard · Lv 1</span>
+              </button>
+
+              <button type="button" id="quickstartRogueBtn" class="quickstart" aria-label="Quickstart Rogue">
+                <span class="quickstart__portrait quickstart__portrait--rogue" aria-hidden="true"></span>
+                <span class="quickstart__name">Rogue</span>
+                <span class="quickstart__meta">Rogue · Lv 1</span>
+              </button>
+            </div>
+
+            <p id="onboardingStatus" class="text-muted" style="margin-top: .75rem;"></p>
+          </article>
+
+          <article class="journey-card" role="listitem" aria-label="Master Forge">
+            <div class="journey-card__header">
+              <h3 class="journey-card__title">The Master Forge</h3>
+              <p class="text-muted">Speak your legend into existence with ADA’s character forge.</p>
+            </div>
+            <button type="button" id="onboardingToForgeBtn" class="btn btn--primary">Enter the Forge</button>
+          </article>
+
+          <article class="journey-card" role="listitem" aria-label="Architect Pass">
+            <div class="journey-card__header">
+              <h3 class="journey-card__title">The Architect’s Pass</h3>
+              <p class="text-muted">Skip hero-making. Mark yourself as an Architect and master worlds.</p>
+            </div>
+            <button type="button" id="onboardingArchitectPassBtn" class="btn btn--secondary">Claim the Pass</button>
+          </article>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script src="speech.js"></script>
+</body>
+</html>

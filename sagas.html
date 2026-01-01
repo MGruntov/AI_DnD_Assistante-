@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>ADA — AI Sagas</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;800&family=MedievalSharp&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body data-page="sagas">
+  <main class="app">
+    <header class="app__header">
+      <div class="app__header-main">
+        <h1>ADA</h1>
+        <p>AI Sagas — Venture Alone.</p>
+      </div>
+      <div class="app__header-user">
+        <span id="currentUserLabel" class="user-label" hidden></span>
+        <nav id="appNav" class="nav" aria-label="Primary">
+          <a class="nav__link" href="portal.html">Portal</a>
+          <a class="nav__link" href="vault.html">My Characters</a>
+          <a class="nav__link" href="hall.html">Hall of Records</a>
+          <a class="nav__link" href="campaigns.html">My Campaigns</a>
+          <a class="nav__link" href="profile.html">Profile</a>
+          <button type="button" class="nav__link nav__link--danger" id="logoutBtn">Logout</button>
+        </nav>
+      </div>
+    </header>
+
+    <section class="view">
+      <div class="card">
+        <header class="banner" aria-label="Featured quest">
+          <div class="banner__content">
+            <h2 class="banner__title">Featured Quest</h2>
+            <p class="text-muted">Your recommended saga will appear here once adventures are loaded.</p>
+          </div>
+        </header>
+
+        <section aria-label="Quest ledger">
+          <h3>The Quest Ledger</h3>
+          <p class="text-muted">Pick a saga, choose a character in-range, and begin instantly.</p>
+
+          <div class="library-controls" aria-label="Adventure search and filters">
+            <div class="field">
+              <label for="adventureSearchInput">Search adventures</label>
+              <input type="text" id="adventureSearchInput" placeholder="Search by title, summary, or difficulty..." />
+            </div>
+            <div class="library-controls__row">
+              <div class="field">
+                <label for="adventureSortSelect">Sort</label>
+                <select id="adventureSortSelect">
+                  <option value="relevance">Relevance</option>
+                  <option value="title">Title</option>
+                  <option value="level">Level range</option>
+                </select>
+              </div>
+              <div class="field">
+                <label>&nbsp;</label>
+                <label class="checkbox">
+                  <input type="checkbox" id="adventureEligibleOnly" />
+                  Show only sagas I can start
+                </label>
+              </div>
+            </div>
+
+            <div class="library-controls__meta" aria-live="polite">
+              <span id="adventureResultsCount" class="text-muted">Showing 0 of 0</span>
+              <button type="button" id="adventureClearFiltersBtn" class="btn btn--secondary btn--small">Clear filters</button>
+            </div>
+          </div>
+
+          <div id="adventuresList" class="adventures__grid" aria-live="polite"></div>
+          <p id="adventuresMessage" class="text-muted"></p>
+        </section>
+      </div>
+    </section>
+  </main>
+
+  <script src="speech.js"></script>
+</body>
+</html>

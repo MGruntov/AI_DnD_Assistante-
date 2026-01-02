@@ -518,6 +518,65 @@ import { apiGetJson, apiPostJson } from "./js/api-client.js";
       .split("{seed}").join(encodeURIComponent(String(seed)));
   }
 
+  function buildPortraitImageCandidates(prompt, seed) {
+    const encodedPrompt = encodeURIComponent(prompt);
+    const provider = String(getPortraitImageProvider() || "").toLowerCase();
+
+    const pollinations = applyUrlTemplate(
+      getPortraitImageUrlTemplate("pollinations"),
+      { encodedPrompt, seed }
+    );
+
+    // If Pollinations is selected, don't add a fallback (it already *is* the fallback).
+    if (provider === "pollinations") {
+      return { primaryUrl: pollinations, fallbackUrl: "" };
+    }
+
+    // nanobanana/custom: try configured template first.
+    // If not configured and provider is nanobanana, default to our backend Worker route
+    // that calls Gemini (keeps API keys off the client).
+    const primaryTemplate = getPortraitImageUrlTemplate(provider);
+    let primaryUrl = primaryTemplate
+      ? applyUrlTemplate(primaryTemplate, { encodedPrompt, seed })
+      : "";
+
+    if (!primaryUrl && provider === "nanobanana") {
+      // This endpoint is served by the backend Worker.
+      primaryUrl = `${BACKEND_BASE_URL}/api/portraits/generate?prompt=${encodedPrompt}&seed=${encodeURIComponent(String(seed))}`;
+    }
+
+    return { primaryUrl, fallbackUrl: pollinations };
+  }
+
+  function setImageSrcWithFallback(img, { primaryUrl, fallbackUrl }) {
+    if (!img) return;
+
+    // Always clear any previous handlers from earlier generations.
+    img.onerror = null;
+
+    // If we don't have a primary URL, go straight to fallback.
+    if (!primaryUrl) {
+      img.src = fallbackUrl || "";
+      return;
+    }
+
+    // Attach a one-shot fallback handler.
+    // Important: avoid infinite loops if the fallback also fails.
+    img.dataset.adaPortraitFallbackTried = "0";
+    img.onerror = () => {
+      const alreadyTried = img.dataset.adaPortraitFallbackTried === "1";
+      if (alreadyTried) return;
+      img.dataset.adaPortraitFallbackTried = "1";
+
+      if (fallbackUrl && fallbackUrl !== primaryUrl) {
+        img.src = fallbackUrl;
+      }
+    };
+
+    // Trigger the primary request.
+    img.src = primaryUrl;
+  }
+
   const CURRENT_PAGE = (() => {
     try {
       return String(document.body && document.body.dataset && document.body.dataset.page ? document.body.dataset.page : "spa");
@@ -1020,9 +1079,9 @@ import { apiGetJson, apiPostJson } from "./js/api-client.js";
     portraitImgs.forEach((img, index) => {
       if (!img) return;
       const seed = baseSeed + index;
-      const url = buildPortraitImageUrl(prompt, seed);
       img.hidden = false;
-      img.src = url;
+      const candidates = buildPortraitImageCandidates(prompt, seed);
+      setImageSrcWithFallback(img, candidates);
     });
 
     enablePortraitSelection();
@@ -1712,23 +1771,8 @@ import { apiGetJson, apiPostJson } from "./js/api-client.js";
   }
 
   function buildPortraitImageUrl(prompt, seed) {
-    const encodedPrompt = encodeURIComponent(prompt);
-    const provider = String(getPortraitImageProvider() || "").toLowerCase();
-
-    // Resolve template for the requested provider.
-    let template = getPortraitImageUrlTemplate(provider);
-
-    // If Nanobanana/custom isn't configured, fall back to Pollinations so the UI doesn't break.
-    if (!template) {
-      if (provider === "nanobanana" || provider === "custom") {
-        console.warn(
-          `[ADA] Portrait provider '${provider}' selected but no URL template configured; falling back to Pollinations.`
-        );
-      }
-      template = getPortraitImageUrlTemplate("pollinations");
-    }
-
-    return applyUrlTemplate(template, { encodedPrompt, seed });
+    const { primaryUrl, fallbackUrl } = buildPortraitImageCandidates(prompt, seed);
+    return primaryUrl || fallbackUrl || "";
   }
 
   function clearPortraitSelection() {

@@ -54,6 +54,11 @@ Character portrait thumbnails are generated client-side by building an image URL
 - Default provider: **Pollinations**
 - To switch providers (e.g. to **Nanobanana**), set these keys in the browser console:
 	- `localStorage.setItem("adaPortraitImageProvider", "nanobanana")`
+
+By default, `nanobanana` uses the backend Worker endpoint (`/api/portraits/generate`) which calls Gemini server-side (so your API key stays private).
+
+If you *do* have a direct image URL template you want to use instead, you can override it with:
+
 	- `localStorage.setItem("adaPortraitImageUrlTemplate", "<YOUR_IMAGE_URL_TEMPLATE>")`
 
 The URL template must include:
@@ -65,7 +70,9 @@ Example (Pollinations):
 
 - `https://image.pollinations.ai/prompt/{prompt}?seed={seed}`
 
-If `nanobanana`/`custom` is selected but no template is configured, the UI will automatically fall back to Pollinations.
+ If `nanobanana`/`custom` is selected but no template is configured, the UI will automatically fall back to Pollinations.
+
+When `adaPortraitImageProvider` is set to `nanobanana` (or `custom`), the client will **try that URL first**; if the image request fails to load, it will automatically **retry with Pollinations**.
 
 ### Backend (Cloudflare Worker)
 

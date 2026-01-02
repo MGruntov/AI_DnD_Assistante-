@@ -59,6 +59,11 @@ function normalizeGeminiModelName(name: string): string {
 	return `models/${trimmed}`;
 }
 
+function isGemmaFamilyModel(modelName: string): boolean {
+	const n = String(modelName || '').toLowerCase();
+	return n.includes('models/gemma-') || n.startsWith('gemma-') || n.includes('/gemma-');
+}
+
 function isSupportedForGenerateContent(model: GeminiModelInfo): boolean {
 	const methods = Array.isArray(model.supportedGenerationMethods)
 		? model.supportedGenerationMethods
@@ -1407,7 +1412,8 @@ async function handleAIHealth(env: Env, origin: string | null): Promise<Response
 			temperature: 0.0,
 			maxOutputTokens: 32,
 			// Avoid "thinking" consuming the entire tiny output budget.
-			thinkingConfig: { thinkingBudget: 0 },
+			// NOTE: Some Gemma endpoints reject thinkingConfig entirely.
+			...(isGemmaFamilyModel(resolved.modelName) ? {} : { thinkingConfig: { thinkingBudget: 0 } }),
 		},
 	});
 
@@ -2473,21 +2479,31 @@ async function callAIDungeonMaster(
 		`https://generativelanguage.googleapis.com/${encodeURIComponent(GEMINI_API_VERSION)}/${resolved.modelName}:generateContent` +
 		`?key=${encodeURIComponent(apiKey.trim())}`;
 
-	const body = JSON.stringify({
-		systemInstruction: {
-			parts: [{ text: systemPrompt }],
-		},
+	// Some Gemma endpoints reject features that Gemini models accept (e.g. systemInstruction).
+	// To keep compatibility across both families, inline the system prompt for Gemma.
+	const isGemma = isGemmaFamilyModel(resolved.modelName);
+	const bodyObj: any = {
 		contents: [
 			{
 				role: 'user',
-				parts: [{ text: userPrompt }],
+				parts: [
+					{
+						text: isGemma
+							? `${systemPrompt}\n\n---\n\n${userPrompt}`
+							: userPrompt,
+					},
+				],
 			},
 		],
 		generationConfig: {
 			temperature: 0.7,
 			maxOutputTokens: 1200,
 		},
-	});
+	};
+	if (!isGemma) {
+		bodyObj.systemInstruction = { parts: [{ text: systemPrompt }] };
+	}
+	const body = JSON.stringify(bodyObj);
 
 	const res = await fetch(url, {
 		method: 'POST',
@@ -2747,21 +2763,29 @@ async function callAIPlayer(
 		`https://generativelanguage.googleapis.com/${encodeURIComponent(GEMINI_API_VERSION)}/${resolved.modelName}:generateContent` +
 		`?key=${encodeURIComponent(apiKey.trim())}`;
 
-	const body = JSON.stringify({
-		systemInstruction: {
-			parts: [{ text: systemPrompt }],
-		},
+	const isGemma = isGemmaFamilyModel(resolved.modelName);
+	const bodyObj: any = {
 		contents: [
 			{
 				role: 'user',
-				parts: [{ text: userPrompt }],
+				parts: [
+					{
+						text: isGemma
+							? `${systemPrompt}\n\n---\n\n${userPrompt}`
+							: userPrompt,
+					},
+				],
 			},
 		],
 		generationConfig: {
 			temperature: 0.8,
 			maxOutputTokens: 200,
 		},
-	});
+	};
+	if (!isGemma) {
+		bodyObj.systemInstruction = { parts: [{ text: systemPrompt }] };
+	}
+	const body = JSON.stringify(bodyObj);
 
 	const res = await fetch(url, {
 		method: 'POST',

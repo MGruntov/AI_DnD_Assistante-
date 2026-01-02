@@ -20,16 +20,35 @@
 	"kv_namespaces": [
 		{
 			"binding": "ADA_DATA",
-			"id": "67c4f4854243498db6ca0309c924ebb2"
+			"id": "67c4f4854243498db6ca0309c924ebb2",
+			"preview_id": "881dc94fc8b54ce89413765545e81315"
 		}
 	],
 	"d1_databases": [
 		{
 			"binding": "ADA_DB",
 			"database_name": "ada-db",
-			"database_id": "REPLACE_WITH_YOUR_D1_DATABASE_ID"
+			"database_id": "e48ed60f-5cf4-46c9-8f5e-be0b983174ee"
 		}
-	]
+	],
+	"env": {
+		"dev": {
+			"kv_namespaces": [
+				{
+					"binding": "ADA_DATA",
+					"id": "67c4f4854243498db6ca0309c924ebb2",
+					"preview_id": "881dc94fc8b54ce89413765545e81315"
+				}
+			],
+			"d1_databases": [
+				{
+					"binding": "ADA_DB",
+					"database_name": "ada-db-preview",
+					"database_id": "a6459b57-9501-40f4-a750-4e6f0aea9c15"
+				}
+			]
+		}
+	}
 	/**
 	 * Smart Placement
 	 * https://developers.cloudflare.com/workers/configuration/smart-placement/#smart-placement

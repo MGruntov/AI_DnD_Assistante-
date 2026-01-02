@@ -1,0 +1,11 @@
+# Root-level secrets and local overrides
+.env
+.env.*
+!.env.example
+
+.dev.vars
+.dev.vars.*
+!.dev.vars.example
+
+# Common local files
+.DS_Store

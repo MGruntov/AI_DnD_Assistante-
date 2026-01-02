@@ -70,6 +70,9 @@ export function registerAuthRoutes(app: Hono<{ Bindings: Env }>): void {
 			const now = new Date().toISOString();
 			const id = crypto.randomUUID();
 			const pw = await hashPasswordPBKDF2(password);
+			// NOTE: The salt is not a secret; it must be stored alongside the password hash to verify passwords.
+			const passwordSaltB64 = pw.saltB64;
+			const passwordHashB64 = pw.hashB64;
 
 			// Attempt D1 insert if configured.
 			try {
@@ -78,8 +81,8 @@ export function registerAuthRoutes(app: Hono<{ Bindings: Env }>): void {
 						id,
 						username,
 						password_algo: pw.algo,
-						password_hash: pw.hashB64,
-						password_salt: pw.saltB64,
+						password_hash: passwordHashB64,
+						password_salt: passwordSaltB64,
 						password_iterations: pw.iterations,
 						created_at: now,
 						updated_at: now,
@@ -95,7 +98,12 @@ export function registerAuthRoutes(app: Hono<{ Bindings: Env }>): void {
 				username,
 				createdAt: now,
 				updatedAt: now,
-				password: pw,
+				password: {
+					...pw,
+					// Keep KV record explicit so accidental logging can be redacted more easily.
+					saltB64: passwordSaltB64,
+					hashB64: passwordHashB64,
+				},
 			});
 
 			// Preserve existing API behavior (tests rely on 201)
@@ -159,11 +167,13 @@ export function registerAuthRoutes(app: Hono<{ Bindings: Env }>): void {
 					try {
 						if (c.env.ADA_DB && kvUser.password) {
 							const now = new Date().toISOString();
-							await dbUpdateUserPassword(c.env, {
+								const repairedSaltB64 = kvUser.password.saltB64;
+								const repairedHashB64 = kvUser.password.hashB64;
+								await dbUpdateUserPassword(c.env, {
 								id: d1User.id,
 								password_algo: kvUser.password.algo,
-								password_hash: kvUser.password.hashB64,
-								password_salt: kvUser.password.saltB64,
+									password_hash: repairedHashB64,
+									password_salt: repairedSaltB64,
 								password_iterations: kvUser.password.iterations,
 								updated_at: now,
 							});
@@ -211,12 +221,14 @@ export function registerAuthRoutes(app: Hono<{ Bindings: Env }>): void {
 					const existing = await dbGetUserByUsername(c.env, kvUser.username);
 					if (!existing && kvUser.password) {
 						const now = new Date().toISOString();
+						const backfillSaltB64 = kvUser.password.saltB64;
+						const backfillHashB64 = kvUser.password.hashB64;
 						await dbInsertUser(c.env, {
 							id: kvUser.id,
 							username: kvUser.username,
 							password_algo: kvUser.password.algo,
-							password_hash: kvUser.password.hashB64,
-							password_salt: kvUser.password.saltB64,
+							password_hash: backfillHashB64,
+							password_salt: backfillSaltB64,
 							password_iterations: kvUser.password.iterations,
 							created_at: kvUser.createdAt || now,
 							updated_at: now,

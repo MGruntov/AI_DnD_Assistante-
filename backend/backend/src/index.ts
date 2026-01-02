@@ -1777,11 +1777,25 @@ function safeParseJsonStringArrayText(value: string): string[] {
 	}
 }
 
+function timingSafeEqual(a: string, b: string): boolean {
+	// Best-effort constant-time compare for short shared-secret strings.
+	// Prevents trivial timing probes from leaking prefix matches.
+	const enc = new TextEncoder();
+	const ab = enc.encode(String(a ?? ''));
+	const bb = enc.encode(String(b ?? ''));
+	const max = Math.max(ab.length, bb.length);
+	let diff = 0;
+	for (let i = 0; i < max; i++) {
+		diff |= (ab[i] ?? 0) ^ (bb[i] ?? 0);
+	}
+	return diff === 0 && ab.length === bb.length;
+}
+
 function isArchitectAuthorized(request: Request, env: Env): boolean {
 	const expected = String(env.ARCHITECT_SECRET ?? '').trim();
 	if (!expected) return false;
 	const provided = String(request.headers.get('X-Architect-Secret') ?? '').trim();
-	return provided === expected;
+	return timingSafeEqual(provided, expected);
 }
 
 function buildArchitectScenarioSystemPrompt(): string {

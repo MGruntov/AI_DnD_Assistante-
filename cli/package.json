@@ -1,0 +1,23 @@
+{
+  "name": "ada-cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "CLI utilities for ADA (scenario generation + ops)",
+  "bin": {
+    "ada": "./generator.js"
+  },
+  "scripts": {
+    "start": "node ./generator.js",
+    "generate": "node ./generator.js generate",
+    "bulk-generate": "node ./generator.js bulk-generate"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "commander": "^12.1.0",
+    "dotenv": "^16.4.5",
+    "ora": "^8.0.1"
+  }
+}

@@ -772,6 +772,11 @@ type AdventureTemplate = {
 	checkpoints: string[];
 	victoryConditions: string[];
 	defeatConditions: string[];
+	// New D1-backed metadata fields.
+	alignment?: string;
+	theme?: string;
+	creatorUserId?: string | null;
+	createdAt?: string;
 };
 
 type TurnEntry = {
@@ -1258,53 +1263,347 @@ function normalizeStringList(
 }
 
 async function listPublishedAdventures(env: Env): Promise<AdventureTemplate[]> {
-	const ids = await readStringArrayKV(env, 'global:adventures');
-	const adventures: AdventureTemplate[] = [];
-	for (const id of ids) {
-		const stored = await env.ADA_DATA.get(`adventure:${id}`);
-		if (!stored) continue;
+	// Deprecated (KV adventures). Adventures are now stored in D1.
+	return [];
+}
+
+type DbAdventureRow = {
+	id: string;
+	title: string;
+	level_min: number;
+	level_max: number;
+	difficulty: string;
+	summary: string;
+	primer: string;
+	checkpoints_json: string;
+	victory_conditions_json: string;
+	defeat_conditions_json: string;
+	alignment: string | null;
+	theme: string | null;
+	creator_user_id: string | null;
+	created_at: string;
+};
+
+function safeParseJsonStringArray(raw: unknown): string[] {
+	if (Array.isArray(raw)) {
+		return raw.map((v) => String(v || '').trim()).filter(Boolean);
+	}
+	if (typeof raw !== 'string') return [];
+	try {
+		const parsed = JSON.parse(raw);
+		if (!Array.isArray(parsed)) return [];
+		return parsed.map((v) => String(v || '').trim()).filter(Boolean);
+	} catch {
+		return [];
+	}
+}
+
+function normalizeDbDifficulty(raw: unknown): AdventureDifficulty {
+	const v = String(raw ?? '').trim().toLowerCase();
+	if (v === 'easy') return 'Easy';
+	if (v === 'hard') return 'Hard';
+	return 'Normal';
+}
+
+function dbAdventureRowToTemplate(row: DbAdventureRow): AdventureTemplate {
+	return {
+		id: String(row.id),
+		title: String(row.title),
+		levelMin: Number(row.level_min) || 1,
+		levelMax: Number(row.level_max) || Math.max(1, Number(row.level_min) || 1),
+		difficulty: normalizeDbDifficulty(row.difficulty),
+		summary: String(row.summary || ''),
+		primer: String(row.primer || ''),
+		checkpoints: safeParseJsonStringArray(row.checkpoints_json),
+		victoryConditions: safeParseJsonStringArray(row.victory_conditions_json),
+		defeatConditions: safeParseJsonStringArray(row.defeat_conditions_json),
+		alignment: row.alignment != null ? String(row.alignment) : '',
+		theme: row.theme != null ? String(row.theme) : '',
+		creatorUserId: row.creator_user_id,
+		createdAt: String(row.created_at || ''),
+	};
+}
+
+async function ensureAdventuresD1Schema(env: Env): Promise<void> {
+	const db = env.ADA_DB;
+	if (!db) return;
+	// Best-effort bootstrap for dev/test environments where migrations may not be applied.
+	try {
+		const usersTableRes = await db
+			.prepare("SELECT 1 AS ok FROM sqlite_master WHERE type='table' AND name='users' LIMIT 1")
+			.all<{ ok: number }>();
+		const hasUsersTable = Array.isArray(usersTableRes.results) && usersTableRes.results.length > 0;
+
+		await db
+			.prepare(
+				`CREATE TABLE IF NOT EXISTS adventures (
+				  id TEXT PRIMARY KEY,
+				  title TEXT NOT NULL,
+				  level_min INTEGER NOT NULL,
+				  level_max INTEGER NOT NULL,
+				  difficulty TEXT NOT NULL,
+				  summary TEXT NOT NULL,
+				  primer TEXT NOT NULL,
+				  checkpoints_json TEXT NOT NULL,
+				  victory_conditions_json TEXT NOT NULL,
+				  defeat_conditions_json TEXT NOT NULL,
+				  alignment TEXT NOT NULL DEFAULT '',
+				  theme TEXT NOT NULL DEFAULT '',
+				  creator_user_id TEXT,
+				  created_at TEXT NOT NULL${hasUsersTable ? ',\n\t\t\t\t  FOREIGN KEY (creator_user_id) REFERENCES users(id) ON DELETE SET NULL' : ''}
+				)`
+			)
+			.run();
+		await db
+			.prepare('CREATE INDEX IF NOT EXISTS idx_adventures_created_at ON adventures(created_at)')
+			.run();
+		await db
+			.prepare('CREATE INDEX IF NOT EXISTS idx_adventures_level_min ON adventures(level_min)')
+			.run();
+
+		// Seed RED_CLOAK for backwards compatibility (frontend + tests rely on it).
+		await db
+			.prepare(
+				`INSERT OR IGNORE INTO adventures (
+				  id, title, level_min, level_max, difficulty, summary, primer,
+				  checkpoints_json, victory_conditions_json, defeat_conditions_json,
+				  alignment, theme, creator_user_id, created_at
+				) VALUES (
+				  ?1, ?2, ?3, ?4, ?5, ?6, ?7,
+				  ?8, ?9, ?10,
+				  ?11, ?12, ?13, ?14
+				)`
+			)
+			.bind(
+				'RED_CLOAK',
+				'The Red Cloak and the Shadow-Touched Wolf',
+				1,
+				2,
+				'Normal',
+				'A short, spooky solo adventure in the Whispering Woods where you must deliver spirit-warding herbs to your Grandmother while a corrupted wolf stalks the paths.',
+				'You are acting as an AI Dungeon Master for D&D 5e. You are running a contained adventure in the Whispering Woods. The player is a low-level messenger wearing a red cloak, tasked with carrying spirit-warding herbs to their Grandmother. The forest is haunted by a Shadow-Touched Wolf that corrupts spirits and hunts travelers. Keep the tone atmospheric and slightly eerie, but not grotesque.',
+				JSON.stringify(['crossroads', 'snaring_vines', 'cottage']),
+				JSON.stringify([
+					"The player successfully reaches Grandmother's cottage and delivers the spirit-warding herbs.",
+					'The Shadow-Touched Wolf is neutralized, driven away, or otherwise no longer a threat.',
+				]),
+				JSON.stringify([
+					'The player character is reduced to 0 hit points with no clear rescue available.',
+					'The herbs are irretrievably lost or destroyed before reaching Grandmother.',
+				]),
+				'',
+				'Whispering Woods',
+				null,
+				'2026-01-02T00:00:00.000Z',
+			)
+			.run();
+	} catch {
+		// ignore bootstrap failures
+	}
+}
+
+async function dbListAdventures(env: Env): Promise<AdventureTemplate[]> {
+	const db = env.ADA_DB;
+	if (!db) return [];
+	try {
+		const res = await db
+			.prepare(
+				`SELECT id, title, level_min, level_max, difficulty, summary, primer,
+				        checkpoints_json, victory_conditions_json, defeat_conditions_json,
+				        alignment, theme, creator_user_id, created_at
+				 FROM adventures
+				 ORDER BY created_at DESC`,
+			)
+			.all<DbAdventureRow>();
+		const rows = Array.isArray(res.results) ? res.results : [];
+		if (rows.length === 0) {
+			// Handle partially-initialized dev/test D1 databases.
+			await ensureAdventuresD1Schema(env);
+			const res2 = await db
+				.prepare(
+					`SELECT id, title, level_min, level_max, difficulty, summary, primer,
+					        checkpoints_json, victory_conditions_json, defeat_conditions_json,
+					        alignment, theme, creator_user_id, created_at
+					 FROM adventures
+					 ORDER BY created_at DESC`,
+				)
+				.all<DbAdventureRow>();
+			const rows2 = Array.isArray(res2.results) ? res2.results : [];
+			return rows2.map(dbAdventureRowToTemplate).filter((a) => a.id && a.title);
+		}
+		return rows.map(dbAdventureRowToTemplate).filter((a) => a.id && a.title);
+	} catch {
+		// Migration-safe: table may not exist yet.
+		await ensureAdventuresD1Schema(env);
 		try {
-			const parsed = JSON.parse(stored) as AdventureTemplate;
-			if (parsed && parsed.id && parsed.title && Array.isArray(parsed.checkpoints)) {
-				adventures.push(parsed);
-			}
+			const res = await db
+				.prepare(
+					`SELECT id, title, level_min, level_max, difficulty, summary, primer,
+					        checkpoints_json, victory_conditions_json, defeat_conditions_json,
+					        alignment, theme, creator_user_id, created_at
+					 FROM adventures
+					 ORDER BY created_at DESC`,
+				)
+				.all<DbAdventureRow>();
+			const rows = Array.isArray(res.results) ? res.results : [];
+			return rows.map(dbAdventureRowToTemplate).filter((a) => a.id && a.title);
 		} catch {
-			// ignore malformed
+			return [];
 		}
 	}
-	return adventures;
+}
+
+async function dbGetAdventureById(env: Env, id: string): Promise<AdventureTemplate | null> {
+	const db = env.ADA_DB;
+	if (!db) return null;
+	try {
+		const res = await db
+			.prepare(
+				`SELECT id, title, level_min, level_max, difficulty, summary, primer,
+				        checkpoints_json, victory_conditions_json, defeat_conditions_json,
+				        alignment, theme, creator_user_id, created_at
+				 FROM adventures
+				 WHERE id = ?1
+				 LIMIT 1`,
+			)
+			.bind(id)
+			.all<DbAdventureRow>();
+		const row = res.results?.[0] ?? null;
+		return row ? dbAdventureRowToTemplate(row) : null;
+	} catch {
+		await ensureAdventuresD1Schema(env);
+		try {
+			const res = await db
+				.prepare(
+					`SELECT id, title, level_min, level_max, difficulty, summary, primer,
+					        checkpoints_json, victory_conditions_json, defeat_conditions_json,
+					        alignment, theme, creator_user_id, created_at
+					 FROM adventures
+					 WHERE id = ?1
+					 LIMIT 1`,
+				)
+				.bind(id)
+				.all<DbAdventureRow>();
+			const row = res.results?.[0] ?? null;
+			return row ? dbAdventureRowToTemplate(row) : null;
+		} catch {
+			return null;
+		}
+	}
+}
+
+async function dbInsertAdventure(
+	env: Env,
+	row: {
+		id: string;
+		title: string;
+		level_min: number;
+		level_max: number;
+		difficulty: string;
+		summary: string;
+		primer: string;
+		checkpoints_json: string;
+		victory_conditions_json: string;
+		defeat_conditions_json: string;
+		alignment: string;
+		theme: string;
+		creator_user_id: string | null;
+		created_at: string;
+	},
+): Promise<void> {
+	const db = env.ADA_DB;
+	if (!db) throw new Error('D1 not configured');
+	try {
+		await db
+			.prepare(
+			`INSERT INTO adventures (
+				id, title, level_min, level_max, difficulty, summary, primer,
+				checkpoints_json, victory_conditions_json, defeat_conditions_json,
+				alignment, theme, creator_user_id, created_at
+			) VALUES (
+				?1, ?2, ?3, ?4, ?5, ?6, ?7,
+				?8, ?9, ?10,
+				?11, ?12, ?13, ?14
+			)`,
+			)
+			.bind(
+				row.id,
+				row.title,
+				row.level_min,
+				row.level_max,
+				row.difficulty,
+				row.summary,
+				row.primer,
+				row.checkpoints_json,
+				row.victory_conditions_json,
+				row.defeat_conditions_json,
+				row.alignment,
+				row.theme,
+				row.creator_user_id,
+				row.created_at,
+			)
+			.run();
+	} catch {
+		await ensureAdventuresD1Schema(env);
+		await db
+			.prepare(
+				`INSERT INTO adventures (
+					id, title, level_min, level_max, difficulty, summary, primer,
+					checkpoints_json, victory_conditions_json, defeat_conditions_json,
+					alignment, theme, creator_user_id, created_at
+				) VALUES (
+					?1, ?2, ?3, ?4, ?5, ?6, ?7,
+					?8, ?9, ?10,
+					?11, ?12, ?13, ?14
+				)`,
+			)
+			.bind(
+				row.id,
+				row.title,
+				row.level_min,
+				row.level_max,
+				row.difficulty,
+				row.summary,
+				row.primer,
+				row.checkpoints_json,
+				row.victory_conditions_json,
+				row.defeat_conditions_json,
+				row.alignment,
+				row.theme,
+				row.creator_user_id,
+				row.created_at,
+			)
+			.run();
+	}
 }
 
 async function getAdventureById(env: Env, adventureId: string): Promise<AdventureTemplate | null> {
 	const id = String(adventureId || '').trim();
 	if (!id) return null;
-	const builtIn = ADVENTURES.find((a) => a.id === id);
-	if (builtIn) return builtIn;
+
+	// D1 source of truth.
+	const fromD1 = await dbGetAdventureById(env, id);
+	if (fromD1) return fromD1;
+
+	// Migration-safe fallback: legacy KV record (read-only).
 	const stored = await env.ADA_DATA.get(`adventure:${id}`);
-	if (!stored) return null;
-	try {
-		const parsed = JSON.parse(stored) as AdventureTemplate;
-		if (parsed && parsed.id === id && parsed.title && Array.isArray(parsed.checkpoints)) {
-			return parsed;
+	if (stored) {
+		try {
+			const parsed = JSON.parse(stored) as AdventureTemplate;
+			if (parsed && parsed.id === id && parsed.title && Array.isArray(parsed.checkpoints)) {
+				return parsed;
+			}
+		} catch {
+			// ignore malformed
 		}
-	} catch {
-		// ignore malformed
 	}
+
 	return null;
 }
 
 async function handleListAdventures(env: Env, origin: string | null): Promise<Response> {
-	const published = await listPublishedAdventures(env);
-	const byId = new Map<string, AdventureTemplate>();
-	for (const a of ADVENTURES) {
-		byId.set(String(a.id), a);
-	}
-	for (const a of published) {
-		const id = String(a?.id || '').trim();
-		if (!id) continue;
-		if (!byId.has(id)) byId.set(id, a);
-	}
-	return jsonResponse({ ok: true, adventures: Array.from(byId.values()) }, undefined, origin);
+	const adventures = await dbListAdventures(env);
+	return jsonResponse({ ok: true, adventures }, undefined, origin);
 }
 
 async function handlePublishAdventure(request: Request, env: Env, origin: string | null): Promise<Response> {
@@ -1332,9 +1631,10 @@ async function handlePublishAdventure(request: Request, env: Env, origin: string
 		return errorResponse('username, title and summary are required', 400, origin);
 	}
 
-	// Ensure user exists.
+	// Ensure the caller exists. During the D1 migration, users may still live in KV,
+	// so we don't hard-require a D1 user row here.
 	const userRecord = await env.ADA_DATA.get(`user:${username}`);
-	if (!userRecord) {
+	if (!userRecord && !env.ADA_DB) {
 		return errorResponse('Unknown user', 404, origin);
 	}
 
@@ -1366,7 +1666,9 @@ async function handlePublishAdventure(request: Request, env: Env, origin: string
 
 	const id = crypto.randomUUID();
 	const createdAt = new Date().toISOString();
-	const adventure: AdventureTemplate & { creatorUsername?: string; createdAt?: string; tags?: string[] } = {
+	const alignment = String(body?.alignment ?? '').trim().slice(0, 80);
+	const theme = String(body?.theme ?? '').trim().slice(0, 80);
+	const adventure: AdventureTemplate & { creatorUsername?: string; tags?: string[] } = {
 		id,
 		title: title.slice(0, 120),
 		levelMin,
@@ -1379,44 +1681,347 @@ async function handlePublishAdventure(request: Request, env: Env, origin: string
 		defeatConditions: normalizedDefeat,
 		creatorUsername: username,
 		createdAt,
+		alignment,
+		theme,
 		...(tags.length ? { tags } : {}),
 	};
 
-	await env.ADA_DATA.put(`adventure:${id}`, JSON.stringify(adventure));
-
-	// Add to global discovery index
-	const globalKey = 'global:adventures';
-	const existingIds = await readStringArrayKV(env, globalKey);
-	if (!existingIds.includes(id)) {
-		existingIds.push(id);
-		await writeStringArrayKV(env, globalKey, existingIds);
+	// D1 source of truth.
+	try {
+		if (!env.ADA_DB) {
+			return errorResponse('D1 database binding ADA_DB is not configured', 500, origin);
+		}
+		await dbInsertAdventure(env, {
+			id,
+			title: adventure.title,
+			level_min: adventure.levelMin,
+			level_max: adventure.levelMax,
+			difficulty: adventure.difficulty,
+			summary: adventure.summary,
+			primer: adventure.primer,
+			checkpoints_json: JSON.stringify(adventure.checkpoints || []),
+			victory_conditions_json: JSON.stringify(adventure.victoryConditions || []),
+			defeat_conditions_json: JSON.stringify(adventure.defeatConditions || []),
+			alignment: alignment || '',
+			theme: theme || '',
+			creator_user_id: null,
+			created_at: createdAt,
+		});
+	} catch (e) {
+		console.error('[adventures] D1 insert failed', e);
+		return errorResponse('Failed to publish adventure', 500, origin);
 	}
 
 	return jsonResponse({ ok: true, adventure }, { status: 201 }, origin);
 }
 
-const ADVENTURES: AdventureTemplate[] = [
-	{
-		id: 'RED_CLOAK',
-		title: 'The Red Cloak and the Shadow-Touched Wolf',
-		levelMin: 1,
-		levelMax: 2,
-		difficulty: 'Normal',
-		summary:
-			'A short, spooky solo adventure in the Whispering Woods where you must deliver spirit-warding herbs to your Grandmother while a corrupted wolf stalks the paths.',
-		primer:
-			'You are acting as an AI Dungeon Master for D&D 5e. You are running a contained adventure in the Whispering Woods. The player is a low-level messenger wearing a red cloak, tasked with carrying spirit-warding herbs to their Grandmother. The forest is haunted by a Shadow-Touched Wolf that corrupts spirits and hunts travelers. Keep the tone atmospheric and slightly eerie, but not grotesque.',
-		checkpoints: ['crossroads', 'snaring_vines', 'cottage'],
-		victoryConditions: [
-			'The player successfully reaches Grandmother\'s cottage and delivers the spirit-warding herbs.',
-			'The Shadow-Touched Wolf is neutralized, driven away, or otherwise no longer a threat.',
-		],
-		defeatConditions: [
-			'The player character is reduced to 0 hit points with no clear rescue available.',
-			'The herbs are irretrievably lost or destroyed before reaching Grandmother.',
-		],
-	},
-];
+function extractFirstJsonObject(text: string): string | null {
+	const s = String(text || '').trim();
+	if (!s) return null;
+	// Fast-path: already a standalone object.
+	if (s.startsWith('{') && s.endsWith('}')) return s;
+	const start = s.indexOf('{');
+	if (start < 0) return null;
+	let depth = 0;
+	let inString = false;
+	let escaped = false;
+	for (let i = start; i < s.length; i++) {
+		const ch = s[i];
+		if (inString) {
+			if (escaped) {
+				escaped = false;
+				continue;
+			}
+			if (ch === '\\') {
+				escaped = true;
+				continue;
+			}
+			if (ch === '"') {
+				inString = false;
+			}
+			continue;
+		}
+		if (ch === '"') {
+			inString = true;
+			continue;
+		}
+		if (ch === '{') depth++;
+		if (ch === '}') {
+			depth--;
+			if (depth === 0) {
+				return s.slice(start, i + 1);
+			}
+		}
+	}
+	return null;
+}
+
+function normalizeJsonArrayText(value: any): string {
+	if (Array.isArray(value)) return JSON.stringify(value.map((x) => String(x || '').trim()).filter(Boolean));
+	const s = String(value ?? '').trim();
+	if (!s) return '[]';
+	// If it looks like a JSON array string, keep it; otherwise, wrap as a single-item array.
+	if (s.startsWith('[') && s.endsWith(']')) return s;
+	return JSON.stringify([s]);
+}
+
+function safeParseJsonStringArrayText(value: string): string[] {
+	const s = String(value || '').trim();
+	if (!s) return [];
+	try {
+		const parsed = JSON.parse(s);
+		if (!Array.isArray(parsed)) return [];
+		return parsed.map((x) => String(x || '').trim()).filter(Boolean);
+	} catch {
+		return [];
+	}
+}
+
+function isArchitectAuthorized(request: Request, env: Env): boolean {
+	const expected = String(env.ARCHITECT_SECRET ?? '').trim();
+	if (!expected) return false;
+	const provided = String(request.headers.get('X-Architect-Secret') ?? '').trim();
+	return provided === expected;
+}
+
+function buildArchitectScenarioSystemPrompt(): string {
+	return [
+		'You are a senior D&D 5e scenario architect and adventure designer.',
+		'',
+		'You MUST output a STRICT JSON object and NOTHING ELSE (no markdown, no prose, no code fences).',
+		'If you output anything other than a single JSON object, the system will treat it as a failure.',
+		'',
+		'Your JSON MUST match the Cloudflare D1 `adventures` table schema using these exact keys:',
+		'- title (string, <= 120 chars)',
+		'- level_min (integer, 1..20)',
+		'- level_max (integer, 1..20, >= level_min)',
+		'- difficulty (string: "Normal" | "Hard" | "Deadly")',
+		'- summary (string, <= 600 chars)',
+		'- primer (string, <= 2200 chars)',
+		'- checkpoints_json (string containing a valid JSON array of short checkpoint ids, 3..10 items, <= 48 chars each)',
+		'- victory_conditions_json (string containing a valid JSON array of 2..6 victory condition strings)',
+		'- defeat_conditions_json (string containing a valid JSON array of 2..6 defeat condition strings)',
+		'- alignment (string)',
+		'- theme (string)',
+		'- creator_user_id (string or null)',
+		'- created_at (ISO-8601 string)',
+		'',
+		'Alignment tailoring requirement (MANDATORY):',
+		'- You MUST tailor BOTH the primer and the checkpoints to the provided alignment.',
+		'- Examples: Lawful Good scenarios should emphasize heroism, duty, protection, and fair choices.',
+		'  Chaotic Evil scenarios should emphasize subversion, conquest, cruelty, and self-serving opportunism.',
+		'- The alignment should materially change the moral framing, NPC motivations, and the types of conflicts.',
+		'',
+		'Hard constraints:',
+		'- No sexual content.',
+		'- Keep it playable as a solo scenario with clear escalation across checkpoints.',
+		'- checkpoints_json MUST be a JSON string (e.g., "[\"opening\",\"complication\",\"finale\"]").',
+		'- Do NOT include an id field; the server will assign it.',
+	].join('\n');
+}
+
+function buildArchitectScenarioUserPrompt(params: {
+	alignment: string;
+	minLevel: number;
+	maxLevel: number;
+	theme: string;
+}): string {
+	return [
+		'Generate one adventure scenario using these inputs:',
+		`alignment: ${params.alignment}`,
+		`minLevel: ${params.minLevel}`,
+		`maxLevel: ${params.maxLevel}`,
+		`theme: ${params.theme}`,
+		'',
+		'Rules:',
+		`- Set alignment exactly to "${params.alignment}"`,
+		`- Set theme exactly to "${params.theme}"`,
+		`- level_min must be ${params.minLevel} and level_max must be ${params.maxLevel}`,
+		'- Make checkpoints_json reflect the alignment and theme, and ensure each checkpoint is a short id-like label.',
+		'- Keep summary and primer aligned to the same premise.',
+	].join('\n');
+}
+
+async function callArchitectScenarioGenerator(env: Env, systemPrompt: string, userPrompt: string): Promise<string> {
+	const apiKey = typeof env.GEMINI_API_KEY === 'string' ? env.GEMINI_API_KEY.trim() : '';
+	if (!apiKey) throw new Error('GEMINI_API_KEY is not configured');
+	const resolved = await resolveGeminiModelName(apiKey);
+	const url =
+		`https://generativelanguage.googleapis.com/${encodeURIComponent(GEMINI_API_VERSION)}/${resolved.modelName}:generateContent` +
+		`?key=${encodeURIComponent(apiKey)}`;
+
+	const body = JSON.stringify({
+		systemInstruction: { parts: [{ text: systemPrompt }] },
+		contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
+		generationConfig: {
+			// Keep temperature low to improve schema compliance.
+			temperature: 0.2,
+			maxOutputTokens: 1600,
+			// Encourage the API to return parseable JSON.
+			responseMimeType: 'application/json',
+		},
+	});
+
+	const res = await fetch(url, {
+		method: 'POST',
+		headers: { 'content-type': 'application/json; charset=utf-8' },
+		body,
+	});
+	if (!res.ok) {
+		const errText = await res.text().catch(() => '');
+		throw new Error(`Gemini error (${res.status}): ${errText}`);
+	}
+	const data = (await res.json().catch(() => null)) as any;
+	const parts: string[] =
+		data?.candidates?.[0]?.content?.parts?.map((p: any) => (p && typeof p.text === 'string' ? p.text : '')) || [];
+	return parts.join('').trim();
+}
+
+function buildArchitectScenarioRepairSystemPrompt(): string {
+	return [
+		'You are a strict JSON repair tool.',
+		'You will be given a broken or non-compliant model output.',
+		'',
+		'Your job: return ONLY a single valid JSON object that can be parsed by JSON.parse().',
+		'- No markdown, no prose, no code fences.',
+		'- Use double quotes for all JSON strings.',
+		'- Do not include trailing commas.',
+		'',
+		'The JSON object MUST contain EXACTLY these keys (no extra keys):',
+		'title, level_min, level_max, difficulty, summary, primer, checkpoints_json, victory_conditions_json, defeat_conditions_json, alignment, theme, creator_user_id, created_at',
+		'',
+		'For checkpoints_json, victory_conditions_json, defeat_conditions_json:',
+		'- Each must be a STRING containing a valid JSON array, e.g. "[\"opening\",\"finale\"]".',
+	].join('\n');
+}
+
+function buildArchitectScenarioRepairUserPrompt(params: {
+	alignment: string;
+	minLevel: number;
+	maxLevel: number;
+	theme: string;
+	brokenOutput: string;
+}): string {
+	return [
+		'Repair the following output into a valid JSON object that satisfies the requirements.',
+		`Required alignment: ${params.alignment}`,
+		`Required theme: ${params.theme}`,
+		`Required level_min: ${params.minLevel}`,
+		`Required level_max: ${params.maxLevel}`,
+		'',
+		'Broken output (may contain extra text/markdown):',
+		params.brokenOutput.slice(0, 8000),
+	].join('\n');
+}
+
+async function handleArchitectGenerateScenario(request: Request, env: Env, origin: string | null): Promise<Response> {
+	const expected = String(env.ARCHITECT_SECRET ?? '').trim();
+	if (!expected) return errorResponse('ARCHITECT_SECRET is not configured', 500, origin);
+	if (!isArchitectAuthorized(request, env)) return errorResponse('Unauthorized', 401, origin);
+
+	let body: any;
+	try {
+		body = await request.json();
+	} catch {
+		return errorResponse('Invalid JSON body', 400, origin);
+	}
+
+	const alignment = String(body?.alignment ?? '').trim().slice(0, 80);
+	const theme = String(body?.theme ?? '').trim().slice(0, 80);
+	const minLevel = normalizeBoundedInt(body?.minLevel, 1, 1, 20);
+	const maxLevel = normalizeBoundedInt(body?.maxLevel, Math.max(1, minLevel), 1, 20);
+	if (!alignment || !theme) return errorResponse('alignment and theme are required', 400, origin);
+	if (!env.ADA_DB) return errorResponse('D1 database binding ADA_DB is not configured', 500, origin);
+
+	const systemPrompt = buildArchitectScenarioSystemPrompt();
+	const userPrompt = buildArchitectScenarioUserPrompt({ alignment, minLevel, maxLevel, theme });
+
+	let raw: string;
+	try {
+		raw = await callArchitectScenarioGenerator(env, systemPrompt, userPrompt);
+	} catch (e: any) {
+		console.error('[architect] Gemini generation failed', e);
+		return errorResponse('Scenario generation failed', 502, origin);
+	}
+
+	let jsonText = extractFirstJsonObject(raw) || raw;
+	let obj: any;
+	try {
+		obj = JSON.parse(jsonText);
+	} catch {
+		// One automatic repair attempt: ask Gemini to output strict JSON only.
+		try {
+			const repairSystem = buildArchitectScenarioRepairSystemPrompt();
+			const repairUser = buildArchitectScenarioRepairUserPrompt({
+				alignment,
+				minLevel,
+				maxLevel,
+				theme,
+				brokenOutput: raw,
+			});
+			const repaired = await callArchitectScenarioGenerator(env, repairSystem, repairUser);
+			jsonText = extractFirstJsonObject(repaired) || repaired;
+			obj = JSON.parse(jsonText);
+		} catch (e) {
+			console.error('[architect] Failed to parse generated JSON (after repair)', {
+				raw: raw?.slice(0, 800),
+			});
+			return errorResponse('Model did not return valid JSON', 502, origin);
+		}
+	}
+	if (!obj || typeof obj !== 'object' || Array.isArray(obj)) {
+		return errorResponse('Model returned invalid JSON shape', 502, origin);
+	}
+
+	const title = String(obj?.title ?? '').trim().slice(0, 120);
+	const summary = String(obj?.summary ?? '').trim().slice(0, 600);
+	const primer = String(obj?.primer ?? '').trim().slice(0, 2200);
+	const difficulty = normalizeAdventureDifficulty(obj?.difficulty);
+	const level_min = normalizeBoundedInt(obj?.level_min, minLevel, 1, 20);
+	const level_max = normalizeBoundedInt(obj?.level_max, maxLevel, 1, 20);
+	if (!title || !summary || !primer) return errorResponse('Model output missing required fields', 502, origin);
+
+	const checkpoints_json = normalizeJsonArrayText(obj?.checkpoints_json);
+	const victory_conditions_json = normalizeJsonArrayText(obj?.victory_conditions_json);
+	const defeat_conditions_json = normalizeJsonArrayText(obj?.defeat_conditions_json);
+
+	// Validate that the *_json fields are parseable arrays of strings.
+	const checkpoints = safeParseJsonStringArrayText(checkpoints_json);
+	const victoryConditions = safeParseJsonStringArrayText(victory_conditions_json);
+	const defeatConditions = safeParseJsonStringArrayText(defeat_conditions_json);
+	if (checkpoints.length < 3) return errorResponse('Model output checkpoints_json must include at least 3 checkpoints', 502, origin);
+	if (victoryConditions.length < 2) return errorResponse('Model output victory_conditions_json must include at least 2 items', 502, origin);
+	if (defeatConditions.length < 2) return errorResponse('Model output defeat_conditions_json must include at least 2 items', 502, origin);
+
+	const id = crypto.randomUUID();
+	const createdAt = new Date().toISOString();
+
+	try {
+		// Ensure table exists in dev/test.
+		await ensureAdventuresD1Schema(env);
+		await dbInsertAdventure(env, {
+			id,
+			title,
+			level_min: Math.max(1, Math.min(level_min, 20)),
+			level_max: Math.max(Math.max(1, level_min), Math.min(level_max, 20)),
+			difficulty,
+			summary,
+			primer,
+			checkpoints_json: JSON.stringify(checkpoints.slice(0, 10).map((c) => c.slice(0, 48))),
+			victory_conditions_json: JSON.stringify(victoryConditions.slice(0, 6).map((c) => c.slice(0, 220))),
+			defeat_conditions_json: JSON.stringify(defeatConditions.slice(0, 6).map((c) => c.slice(0, 220))),
+			alignment,
+			theme,
+			creator_user_id: null,
+			created_at: createdAt,
+		});
+	} catch (e) {
+		console.error('[architect] D1 insert failed', e);
+		return errorResponse('Failed to persist scenario', 500, origin);
+	}
+
+	return jsonResponse({ ok: true, id, title }, { status: 201 }, origin);
+}
 
 function buildCharacterSummary(character: Character): string {
 	const name = character.name || 'Unnamed adventurer';
@@ -5806,6 +6411,9 @@ async function legacyFetch(request: Request, env: Env, _ctx?: ExecutionContext):
 	}
 	if (pathname === '/api/adventures/publish' && method === 'POST') {
 		return handlePublishAdventure(request, env, origin);
+	}
+	if (pathname === '/api/architect/generate-scenario' && method === 'POST') {
+		return handleArchitectGenerateScenario(request, env, origin);
 	}
 
 	// Grand Library of Fate (Public Templates)

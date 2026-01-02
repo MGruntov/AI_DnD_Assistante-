@@ -150,7 +150,9 @@ async function resolveGeminiModelName(apiKey: string): Promise<{
 			.filter((m) => m.name && isSupportedForGenerateContent(m));
 
 		// Prefer the requested base model id; pick the highest numeric suffix (e.g. -002 over -001).
-		const preferred = candidates.filter((m) => m.baseModelId === GEMINI_PREFERRED_BASE_MODEL_ID);
+		// NOTE: baseModelId values can be either an exact id ("gemini-1.5-flash") or a versioned variant,
+		// so use startsWith instead of strict equality.
+		const preferred = candidates.filter((m) => (m.baseModelId || '').startsWith(GEMINI_PREFERRED_BASE_MODEL_ID));
 		if (preferred.length) {
 			preferred.sort((a, b) => {
 				const an = extractNumericSuffix(a.name || '') ?? -1;
@@ -170,13 +172,15 @@ async function resolveGeminiModelName(apiKey: string): Promise<{
 			};
 		}
 
-		// Otherwise, pick any model that supports generateContent, preferring a modern "flash" model.
+		// Otherwise, pick any model that supports generateContent.
+		// Preference is tuned for free-tier stability: try 1.5 Flash first (often larger free tier),
+		// then newer flash variants.
 		const preferenceOrder = [
+			'gemini-1.5-flash',
 			'gemini-2.5-flash',
 			'gemini-2.0-flash',
 			'gemini-2.0-flash-lite',
 			'gemini-3-flash',
-			'gemini-1.5-flash',
 			'gemini-1.5-pro',
 		];
 		for (const base of preferenceOrder) {

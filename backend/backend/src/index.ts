@@ -173,9 +173,14 @@ async function resolveGeminiModelName(apiKey: string): Promise<{
 		}
 
 		// Otherwise, pick any model that supports generateContent.
-		// Preference is tuned for free-tier stability: try 1.5 Flash first (often larger free tier),
-		// then newer flash variants.
+		// Preference is tuned for stability/cost. If Gemma 3 is available for this key, prefer it first.
+		// (Many users report more consistent availability/free-tier behavior on Gemma than newest Gemini Flash.)
 		const preferenceOrder = [
+			// Gemma 3 family (instruction-tuned variants typically include "-it" suffixes)
+			'gemma-3-12b',
+			'gemma-3-2b',
+			'gemma-3-1b',
+			// Gemini family
 			'gemini-1.5-flash',
 			'gemini-2.5-flash',
 			'gemini-2.0-flash',

@@ -734,11 +734,50 @@ import { apiGetJson, apiPostJson } from "./js/api-client.js";
   let lastAutoPortraitSignature = "";
   let extractionUpdateTimer = null;
   // Backend API base URL (Cloudflare Worker)
-  // Automatically use localhost for development, production URL otherwise
-  const isDevelopment = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' || window.location.hostname === '0.0.0.0';
-  const BACKEND_BASE_URL = isDevelopment
-    ? "http://localhost:8787"
-    : "https://backend.ada-assistante.workers.dev";
+  // 
+  // IMPORTANT:
+  // - When the frontend is opened on localhost (e.g. Live Server), most users still expect
+  //   to hit the deployed Worker backend.
+  // - Local Worker dev (http://localhost:8787) should be opt-in to avoid "Network error"
+  //   when no dev server is running.
+  const PROD_BACKEND_BASE_URL = "https://backend.ada-assistante.workers.dev";
+  const LOCAL_WORKER_BACKEND_BASE_URL = "http://localhost:8787";
+
+  function resolveBackendBaseUrl() {
+    // Optional override: localStorage key or ?backend=... query param.
+    // Examples:
+    // - ?backend=local  -> http://localhost:8787
+    // - ?backend=https://your-worker.example.com
+    try {
+      const params = new URLSearchParams(window.location.search || "");
+      const q = String(params.get("backend") || "").trim();
+      if (q) {
+        const v = q.toLowerCase() === "local" ? LOCAL_WORKER_BACKEND_BASE_URL : q;
+        localStorage.setItem("adaBackendBaseUrl", v);
+      }
+    } catch {
+      // ignore
+    }
+
+    try {
+      const stored = String(localStorage.getItem("adaBackendBaseUrl") || "").trim();
+      if (stored) return stored;
+    } catch {
+      // ignore
+    }
+
+    const host = String(window.location.hostname || "").toLowerCase();
+    const port = String(window.location.port || "");
+    const isWorkerDev = (host === "localhost" || host === "127.0.0.1") && port === "8787";
+
+    // If you're literally viewing the site from the Worker dev server, use same-origin.
+    if (isWorkerDev) return "";
+
+    // Default to production backend.
+    return PROD_BACKEND_BASE_URL;
+  }
+
+  const BACKEND_BASE_URL = resolveBackendBaseUrl();
   let cachedAdventures = [];
   let cachedAdventureCharacters = [];
   let cachedPublicTemplates = [];

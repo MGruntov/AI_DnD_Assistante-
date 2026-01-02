@@ -58,6 +58,11 @@ import { apiGetJson, apiPostJson } from "./js/api-client.js";
   const campaignBackBtn = document.getElementById("campaignBackBtn");
   const campaignDetailTitle = document.getElementById("campaignDetailTitle");
   const campaignDetailMeta = document.getElementById("campaignDetailMeta");
+  const campaignProgressMeta = document.getElementById("campaignProgressMeta");
+  const campaignXpRewardEl = document.getElementById("campaignXpReward");
+  const campaignCheckpointProgressEl = document.getElementById("campaignCheckpointProgress");
+  const campaignCheckpointDetailsEl = document.getElementById("campaignCheckpointDetails");
+  const campaignCheckpointListEl = document.getElementById("campaignCheckpointList");
   const campaignDeleteBtn = document.getElementById("campaignDeleteBtn");
   const campaignLeaveBtn = document.getElementById("campaignLeaveBtn");
   const campaignCompleteBtn = document.getElementById("campaignCompleteBtn");
@@ -170,6 +175,9 @@ import { apiGetJson, apiPostJson } from "./js/api-client.js";
   const aiDmPanelEl = document.getElementById("aiDmPanel");
   const aiDmRollBtn = document.getElementById("aiDmRollBtn");
   const aiDmMechanicsEl = document.getElementById("aiDmMechanics");
+  const aiDmQuotaHintEl = document.getElementById("aiDmQuotaHint");
+  const aiDmPoiPanelEl = document.getElementById("aiDmPointsOfInterest");
+  const aiDmPoiListEl = document.getElementById("aiDmPointsOfInterestList");
 
   const adventuresList = document.getElementById("adventuresList");
   const adventuresMessage = document.getElementById("adventuresMessage");
@@ -228,6 +236,10 @@ import { apiGetJson, apiPostJson } from "./js/api-client.js";
 
   const IS_ARCHITECT_STORAGE_KEY = "adaIsArchitect";
   const STUDIO_PANEL_STORAGE_KEY = "adaStudioPanel";
+
+  // Gemini free-tier quota is opaque and can vary by region/project; keep a pragmatic hint visible during play.
+  const DEFAULT_GEMINI_QUOTA_HINT = "Gemini free-tier is rate-limited (429 = quota exceeded; partial text may mean output limit).";
+  let activeGeminiQuotaHint = DEFAULT_GEMINI_QUOTA_HINT;
 
   function isArchitect() {
     try {
@@ -1260,40 +1272,62 @@ import { apiGetJson, apiPostJson } from "./js/api-client.js";
 
   function parseCampaignDialogueTranscript(transcript, currentUser, playerLabel) {
     const raw = typeof transcript === "string" ? transcript : "";
-    const chunks = raw
-      .split(/\n\s*\n+/g)
-      .map((c) => c.trim())
-      .filter(Boolean);
+    const lines = raw.split(/\r?\n/);
+
+    const currentUserLower = (currentUser || "").toLowerCase();
+    const playerLabelLower = (playerLabel || "").toLowerCase();
 
     const messages = [];
-    chunks.forEach((chunk) => {
-      const m = chunk.match(/^([A-Za-z0-9_\-\s]{1,40}):\s*([\s\S]+)$/);
+    let current = null;
+
+    function speakerRole(speaker) {
+      const s = String(speaker || "").trim().toLowerCase();
+      if (s === "ada" || s === "dm" || s === "dungeon master") return "dm";
+      if (
+        s === "you" ||
+        (playerLabelLower && s === playerLabelLower) ||
+        (currentUserLower && s === currentUserLower)
+      ) {
+        return "player";
+      }
+      return "other";
+    }
+
+    function flushCurrent() {
+      if (!current) return;
+      const text = String(current.text || "").trim();
+      if (text) messages.push({ role: current.role, speaker: current.speaker, text });
+      current = null;
+    }
+
+    lines.forEach((line) => {
+      const rawLine = typeof line === "string" ? line : "";
+      const m = rawLine.match(/^([A-Za-z0-9_\-\s]{1,40}):\s*(.*)$/);
       if (m) {
+        // New speaker turn.
+        flushCurrent();
         const speaker = String(m[1] || "").trim();
-        const body = String(m[2] || "").trim();
-        const speakerLower = speaker.toLowerCase();
-        const currentUserLower = (currentUser || "").toLowerCase();
-        const playerLabelLower = (playerLabel || "").toLowerCase();
-
-        let role = "other";
-        if (speakerLower === "ada" || speakerLower === "dm" || speakerLower === "dungeon master") {
-          role = "dm";
-        } else if (
-          speakerLower === "you" ||
-          (playerLabelLower && speakerLower === playerLabelLower) ||
-          (currentUserLower && speakerLower === currentUserLower)
-        ) {
-          role = "player";
-        }
-
-        messages.push({ role, speaker, text: body });
+        const body = String(m[2] || "");
+        current = { speaker, role: speakerRole(speaker), text: body };
         return;
       }
 
-      // Untagged transcript chunks (e.g., raw voice capture) are shown as a neutral system message.
-      messages.push({ role: "system", speaker: "Transcript", text: chunk });
+      // Continuation line (including blank lines) belongs to the current speaker if present.
+      if (current) {
+        if (rawLine.trim().length === 0) {
+          current.text = `${current.text}\n`;
+        } else {
+          current.text = current.text ? `${current.text}\n${rawLine}` : rawLine;
+        }
+        return;
+      }
+
+      // No current speaker yet: treat as neutral transcript/system line.
+      const trimmed = rawLine.trim();
+      if (trimmed) messages.push({ role: "system", speaker: "Transcript", text: trimmed });
     });
 
+    flushCurrent();
     return messages;
   }
 
@@ -1317,7 +1351,13 @@ import { apiGetJson, apiPostJson } from "./js/api-client.js";
 
       const meta = document.createElement("div");
       meta.className = "chat-msg__meta";
-      meta.textContent = msg.speaker;
+      if (msg.role === "dm") {
+        meta.textContent = activeGeminiQuotaHint
+          ? `${msg.speaker} · ${activeGeminiQuotaHint}`
+          : msg.speaker;
+      } else {
+        meta.textContent = msg.speaker;
+      }
 
       const body = document.createElement("div");
       body.className = "chat-msg__body";
@@ -1329,6 +1369,84 @@ import { apiGetJson, apiPostJson } from "./js/api-client.js";
     });
 
     dialogueContainerEl.scrollTop = dialogueContainerEl.scrollHeight;
+  }
+
+  function renderAiDmCampaignProgress({ campaign, ai }) {
+    const isAi = campaign && isAIDmCampaign(campaign);
+    if (!campaignProgressMeta) return;
+
+    if (!isAi) {
+      campaignProgressMeta.hidden = true;
+      if (campaignCheckpointDetailsEl) campaignCheckpointDetailsEl.hidden = true;
+      return;
+    }
+
+    const xpReward = (campaign && campaign.xpReward != null) ? campaign.xpReward : ai && ai.xpReward != null ? ai.xpReward : null;
+    const checkpointIndex = (campaign && campaign.checkpointIndex != null) ? campaign.checkpointIndex : ai && ai.checkpointIndex != null ? ai.checkpointIndex : null;
+    const checkpointTotal = (campaign && campaign.checkpointTotal != null) ? campaign.checkpointTotal : ai && ai.checkpointTotal != null ? ai.checkpointTotal : null;
+
+    if (campaignXpRewardEl) {
+      campaignXpRewardEl.textContent = xpReward != null ? `${xpReward} XP` : "—";
+    }
+    if (campaignCheckpointProgressEl) {
+      if (checkpointIndex != null && checkpointTotal != null) {
+        const current = Math.min(Math.max(0, Number(checkpointIndex) + 1), Number(checkpointTotal));
+        campaignCheckpointProgressEl.textContent = `${current}/${checkpointTotal}`;
+      } else {
+        campaignCheckpointProgressEl.textContent = "—";
+      }
+    }
+
+    campaignProgressMeta.hidden = false;
+
+    const checkpoints = ai && Array.isArray(ai.checkpoints) ? ai.checkpoints : null;
+    if (campaignCheckpointDetailsEl && campaignCheckpointListEl) {
+      if (checkpoints && checkpoints.length > 0) {
+        campaignCheckpointDetailsEl.hidden = false;
+        campaignCheckpointListEl.innerHTML = "";
+        const idx = checkpointIndex != null ? Number(checkpointIndex) : 0;
+        checkpoints.forEach((cp, i) => {
+          const li = document.createElement("li");
+          li.className = "checkpoint-item";
+          if (i < idx) li.classList.add("checkpoint-item--done");
+          if (i === idx) li.classList.add("checkpoint-item--current");
+          li.textContent = String(cp || "").trim() || `Checkpoint ${i + 1}`;
+          campaignCheckpointListEl.appendChild(li);
+        });
+      } else {
+        campaignCheckpointDetailsEl.hidden = true;
+      }
+    }
+  }
+
+  function renderAiDmPointsOfInterest(points) {
+    if (!aiDmPoiPanelEl || !aiDmPoiListEl) return;
+    const list = Array.isArray(points)
+      ? points.map((p) => String(p || "").trim()).filter(Boolean)
+      : [];
+
+    if (list.length === 0) {
+      aiDmPoiPanelEl.hidden = true;
+      aiDmPoiListEl.innerHTML = "";
+      return;
+    }
+
+    aiDmPoiPanelEl.hidden = false;
+    aiDmPoiListEl.innerHTML = "";
+    list.slice(0, 8).forEach((p) => {
+      const li = document.createElement("li");
+      li.textContent = p;
+      aiDmPoiListEl.appendChild(li);
+    });
+  }
+
+  function setGeminiQuotaHint(hint) {
+    const resolved = String(hint || "").trim() || DEFAULT_GEMINI_QUOTA_HINT;
+    activeGeminiQuotaHint = resolved;
+    if (aiDmQuotaHintEl) {
+      aiDmQuotaHintEl.hidden = false;
+      aiDmQuotaHintEl.textContent = resolved;
+    }
   }
 
   let renderCampaignDialogueTimer = null;
@@ -2934,6 +3052,20 @@ import { apiGetJson, apiPostJson } from "./js/api-client.js";
       const debug = payload.debug || null;
       lastAiMechanics = mechanics;
 
+      // Quota hint: the free tier is opaque; keep a visible reminder during play.
+      setGeminiQuotaHint(payload.quotaHint || DEFAULT_GEMINI_QUOTA_HINT);
+
+      // If the backend returns updated campaign metadata (xp/checkpoints/status), merge it into the active campaign.
+      const campaignPatch = payload.campaignPatch && typeof payload.campaignPatch === "object" ? payload.campaignPatch : null;
+      if (campaignPatch && activeCampaign && typeof activeCampaign === "object") {
+        Object.assign(activeCampaign, campaignPatch);
+        renderAiDmCampaignProgress({ campaign: activeCampaign, ai: payload.ai || null });
+      }
+
+      // Points of interest: show a small, actionable list below ADA's response.
+      const poi = mechanics && Array.isArray(mechanics.pointsOfInterest) ? mechanics.pointsOfInterest : null;
+      renderAiDmPointsOfInterest(poi);
+
       if (narrative) {
         appendMessage("dm", narrative);
       }
@@ -3573,6 +3705,7 @@ import { apiGetJson, apiPostJson } from "./js/api-client.js";
 
     const data = result.data || {};
     const campaign = data.campaign;
+    const ai = data.ai || null;
     const characters = Array.isArray(data.characters) ? data.characters : [];
     const partyStatus = data.partyStatus || null;
     const encounters = Array.isArray(data.encounters) ? data.encounters : [];
@@ -3600,12 +3733,23 @@ import { apiGetJson, apiPostJson } from "./js/api-client.js";
         ).filter((p) => p !== currentUser);
         const othersLabel = others.length ? ` · With ${others.join(", ")}` : "";
         const created = new Date(campaign.createdAt || Date.now()).toLocaleString();
-        campaignDetailMeta.textContent = `${role} · Created ${created}${othersLabel}`;
+        const xpReward = campaign.xpReward != null ? campaign.xpReward : ai && ai.xpReward != null ? ai.xpReward : null;
+        const xpLabel = xpReward != null ? ` · Possible XP: ${xpReward}` : "";
+        campaignDetailMeta.textContent = `${role} · Created ${created}${othersLabel}${xpLabel}`;
       }
 
       const isAi = isAIDmCampaign(campaign);
       if (aiDmNoticeEl) aiDmNoticeEl.hidden = !isAi;
       if (aiDmPanelEl) aiDmPanelEl.hidden = !isAi;
+
+      if (isAi) {
+        setGeminiQuotaHint(ai && ai.quotaHint ? ai.quotaHint : DEFAULT_GEMINI_QUOTA_HINT);
+        renderAiDmCampaignProgress({ campaign, ai });
+        renderAiDmPointsOfInterest(ai && Array.isArray(ai.pointsOfInterest) ? ai.pointsOfInterest : null);
+      } else {
+        renderAiDmCampaignProgress({ campaign: null, ai: null });
+        renderAiDmPointsOfInterest(null);
+      }
       if (dialogueTextInputEl) dialogueTextInputEl.disabled = false;
       if (dialogueSendBtn) dialogueSendBtn.disabled = false;
       if (aiDmRollBtn) aiDmRollBtn.disabled = isAi && campaign.mode === "template-run";

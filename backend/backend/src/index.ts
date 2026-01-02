@@ -911,6 +911,18 @@ function applyProgressDirective(
 	};
 }
 
+function inferQuotaHintFromAIDMError(err: unknown): string | null {
+	const msg = err && typeof (err as any).message === 'string' ? String((err as any).message) : String(err || '');
+	if (!msg) return null;
+	if (msg.includes('status 429') || /\b429\b/.test(msg)) {
+		return 'Gemini is rate-limited right now (HTTP 429). The free tier quota can be unpredictable; try again later or use a different key/model.';
+	}
+	if (msg.includes('GEMINI_API_KEY is not configured')) {
+		return 'AI key is not configured on the server; using a built-in fallback response.';
+	}
+	return null;
+}
+
 async function handleAIDMResolveCheck(request: Request, env: Env, origin: string | null): Promise<Response> {
 	let body: any;
 	try {
@@ -1026,8 +1038,10 @@ async function handleAIDMResolveCheck(request: Request, env: Env, origin: string
 		skill: null as string | null,
 		advantage: null as 'none' | 'advantage' | 'disadvantage' | null,
 		progress: null as 'stay' | 'advance' | 'complete' | 'fail' | null,
+		pointsOfInterest: null as string[] | null,
 	};
 	let completionJustOccurred = false;
+	let quotaHint: string | null = null;
 	try {
 		const rawResponse = await callAIDungeonMaster(env, adventure, session, character, playerResultText);
 		const parsed = parseAIDMResponse(rawResponse);
@@ -1053,24 +1067,85 @@ async function handleAIDMResolveCheck(request: Request, env: Env, origin: string
 		}
 	} catch (err) {
 		console.error('AI-DM follow-up after check failed', err);
+		quotaHint = inferQuotaHintFromAIDMError(err);
 		dmNarrative = success
 			? 'You steady your breath and push onward, the momentary tension easing as the path opens ahead.'
 			: 'A misstep sends a jolt of panic through you—something shifts in the brush, and the woods feel suddenly closer.';
 		session.pendingCheck = null;
 	}
 
-	if (completionJustOccurred) {
+	if (completionJustOccurred && !session.xpAwarded) {
 		try {
 			const xpAmount = await xpAwardForCampaign(env, campaign);
 			await awardXpToCharacter(env, session.characterId, xpAmount);
+			session.xpAwarded = { amount: xpAmount, at: new Date().toISOString() };
+			// Persist campaign completion so the UI can allow "quit" / archive flows.
+			campaign.status = 'completed';
+			campaign.completedAt = campaign.completedAt || new Date().toISOString();
+			const prev = Array.isArray(campaign.xpAwardedToCharacterIds) ? campaign.xpAwardedToCharacterIds : [];
+			if (!prev.includes(session.characterId)) prev.push(session.characterId);
+			campaign.xpAwardedToCharacterIds = prev;
+			(campaign as any).xpReward = xpAmount;
 		} catch (err) {
 			console.error('Failed to award XP on completion (resolve-check)', err);
+		}
+	}
+
+	// Persist checkpoint metadata for UI (best-effort; keep minimal writes).
+	let didCampaignWrite = false;
+	if (!campaign.status) {
+		campaign.status = 'active';
+		didCampaignWrite = true;
+	}
+	if (session.status === 'completed' && campaign.status !== 'completed') {
+		campaign.status = 'completed';
+		campaign.completedAt = campaign.completedAt || new Date().toISOString();
+		didCampaignWrite = true;
+	}
+	const checkpointTotal = Array.isArray(adventure.checkpoints) ? adventure.checkpoints.length : 0;
+	if ((campaign as any).checkpointIndex !== session.checkpointIndex) {
+		(campaign as any).checkpointIndex = session.checkpointIndex;
+		didCampaignWrite = true;
+	}
+	if ((campaign as any).checkpointTotal !== checkpointTotal) {
+		(campaign as any).checkpointTotal = checkpointTotal;
+		didCampaignWrite = true;
+	}
+	if (didCampaignWrite) {
+		try {
+			await env.ADA_DATA.put(`campaign:${campaignId}`, JSON.stringify(campaign));
+		} catch (e) {
+			console.error('Failed to persist AI-solo campaign progress metadata (resolve-check)', e);
 		}
 	}
 
 	session.log.push({ role: 'dm', text: dmNarrative, timestamp: new Date().toISOString() });
 	trimSessionLog(session);
 	await env.ADA_DATA.put(sessionKey, JSON.stringify(session));
+
+	let xpReward: number | null = null;
+	try {
+		const storedXp = (campaign as any)?.xpReward;
+		xpReward = typeof storedXp === 'number' ? storedXp : await xpAwardForCampaign(env, campaign);
+	} catch {
+		xpReward = null;
+	}
+
+	const campaignPatch = {
+		xpReward: typeof xpReward === 'number' ? xpReward : null,
+		checkpointIndex: session.checkpointIndex,
+		checkpointTotal,
+		status: campaign.status || null,
+		completedAt: campaign.completedAt || null,
+	};
+	const ai = {
+		xpReward: campaignPatch.xpReward,
+		checkpointIndex: session.checkpointIndex,
+		checkpointTotal,
+		checkpoints: Array.isArray(adventure.checkpoints) ? adventure.checkpoints : [],
+		status: session.status,
+		completedAt: campaign.completedAt || null,
+	};
 
 	return jsonResponse(
 		{
@@ -1087,6 +1162,9 @@ async function handleAIDMResolveCheck(request: Request, env: Env, origin: string
 			},
 			narrative: dmNarrative,
 			mechanics: dmMechanics,
+			ai,
+			campaignPatch,
+			quotaHint,
 			...(isDebugEnabled(env)
 				? {
 					debug: {
@@ -2120,6 +2198,7 @@ function buildAIDMSystemPrompt(): string {
 		'- skill: the skill used, or "none" if no check (for ability checks or saving throws)',
 		'- advantage: one of "none", "advantage", or "disadvantage"',
 		'- progress: one of "stay", "advance", "complete", or "fail"',
+		'- pointsOfInterest: a semicolon-separated list of 0–4 short, actionable points of interest the player could investigate next, or "none"',
 		'[/MECHANICS]',
 		'',
 		'Do not include any other sections or markup.',
@@ -2205,7 +2284,7 @@ async function callAIDungeonMaster(
 		],
 		generationConfig: {
 			temperature: 0.7,
-			maxOutputTokens: 800,
+			maxOutputTokens: 1200,
 		},
 	});
 
@@ -2252,6 +2331,7 @@ function parseAIDMResponse(raw: string): {
 		skill: string | null;
 		advantage: 'none' | 'advantage' | 'disadvantage' | null;
 		progress: 'stay' | 'advance' | 'complete' | 'fail' | null;
+		pointsOfInterest: string[] | null;
 	};
 } {
 	const text = String(raw || '');
@@ -2266,6 +2346,7 @@ function parseAIDMResponse(raw: string): {
 	let skill: string | null = null;
 	let advantage: 'none' | 'advantage' | 'disadvantage' | null = null;
 	let progress: 'stay' | 'advance' | 'complete' | 'fail' | null = null;
+	let pointsOfInterest: string[] | null = null;
 
 	if (mechanicsBlock) {
 		const checkMatch = mechanicsBlock.match(/check\s*[:\-]\s*([^\n]+)/i);
@@ -2292,11 +2373,25 @@ function parseAIDMResponse(raw: string): {
 		if (progMatch) {
 			progress = progMatch[1].toLowerCase() as 'stay' | 'advance' | 'complete' | 'fail';
 		}
+		const poiMatch = mechanicsBlock.match(/points\s*of\s*interest|pointsOfInterest/i)
+			? mechanicsBlock.match(/(?:points\s*of\s*interest|pointsOfInterest)\s*[:\-]\s*([^\n]+)/i)
+			: null;
+		if (poiMatch) {
+			const rawPoi = poiMatch[1].trim();
+			if (rawPoi && rawPoi.toLowerCase() !== 'none') {
+				const items = rawPoi
+					.split(/\s*;\s*|\s*,\s*/g)
+					.map((s) => s.trim())
+					.filter(Boolean)
+					.slice(0, 6);
+				pointsOfInterest = items.length ? items : null;
+			}
+		}
 	}
 
 	return {
 		narrative,
-		mechanics: { checkDescription, dc, ability, skill, advantage, progress },
+		mechanics: { checkDescription, dc, ability, skill, advantage, progress, pointsOfInterest },
 	};
 }
 
@@ -4273,7 +4368,9 @@ async function handleAIDMTurn(request: Request, env: Env, origin: string | null)
 		skill: null as string | null,
 		advantage: null as 'none' | 'advantage' | 'disadvantage' | null,
 		progress: null as 'stay' | 'advance' | 'complete' | 'fail' | null,
+		pointsOfInterest: null as string[] | null,
 	};
+	let quotaHint: string | null = null;
 	try {
 		const rawResponse = await callAIDungeonMaster(env, adventure, session, character, playerInput);
 		const parsed = parseAIDMResponse(rawResponse);
@@ -4332,6 +4429,7 @@ async function handleAIDMTurn(request: Request, env: Env, origin: string | null)
 		}
 	} catch (err) {
 		console.error('AI-DM call failed', err);
+		quotaHint = inferQuotaHintFromAIDMError(err);
 		// Fallback: generate a simple, deterministic DM response so play can
 		// continue even if the external AI service is down.
 		parsedNarrative = buildFallbackNarrativeFromInput(playerInput, adventure);
@@ -4341,13 +4439,68 @@ async function handleAIDMTurn(request: Request, env: Env, origin: string | null)
 	session.log.push({ role: 'dm', text: parsedNarrative, timestamp: new Date().toISOString() });
 	trimSessionLog(session);
 
+	// Persist checkpoint metadata for UI (best-effort; keep minimal writes).
+	let didCampaignWrite = false;
+	if (!campaign.status) {
+		campaign.status = 'active';
+		didCampaignWrite = true;
+	}
+	if (session.status === 'completed' && campaign.status !== 'completed') {
+		campaign.status = 'completed';
+		campaign.completedAt = campaign.completedAt || new Date().toISOString();
+		didCampaignWrite = true;
+	}
+	const checkpointTotal = Array.isArray(adventure.checkpoints) ? adventure.checkpoints.length : 0;
+	if ((campaign as any).checkpointIndex !== session.checkpointIndex) {
+		(campaign as any).checkpointIndex = session.checkpointIndex;
+		didCampaignWrite = true;
+	}
+	if ((campaign as any).checkpointTotal !== checkpointTotal) {
+		(campaign as any).checkpointTotal = checkpointTotal;
+		didCampaignWrite = true;
+	}
+	if (didCampaignWrite) {
+		try {
+			await env.ADA_DATA.put(`campaign:${campaignId}`, JSON.stringify(campaign));
+		} catch (e) {
+			console.error('Failed to persist AI-solo campaign progress metadata (turn)', e);
+		}
+	}
+
 	await env.ADA_DATA.put(sessionKey, JSON.stringify(session));
+
+	let xpReward: number | null = null;
+	try {
+		const storedXp = (campaign as any)?.xpReward;
+		xpReward = typeof storedXp === 'number' ? storedXp : await xpAwardForCampaign(env, campaign);
+	} catch {
+		xpReward = null;
+	}
+
+	const campaignPatch = {
+		xpReward: typeof xpReward === 'number' ? xpReward : null,
+		checkpointIndex: session.checkpointIndex,
+		checkpointTotal,
+		status: campaign.status || null,
+		completedAt: campaign.completedAt || null,
+	};
+	const ai = {
+		xpReward: campaignPatch.xpReward,
+		checkpointIndex: session.checkpointIndex,
+		checkpointTotal,
+		checkpoints: Array.isArray(adventure.checkpoints) ? adventure.checkpoints : [],
+		status: session.status,
+		completedAt: campaign.completedAt || null,
+	};
 
 	return jsonResponse(
 		{
 			ok: true,
 			narrative: parsedNarrative,
 			mechanics: parsedMechanics,
+			ai,
+			campaignPatch,
+			quotaHint,
 			...(isDebugEnabled(env)
 				? {
 					debug: {
@@ -4627,7 +4780,39 @@ async function handleGetCampaignDetails(request: Request, env: Env, origin: stri
 	const characters = await loadCampaignPartyCharacters(env, campaign);
 	const partyStatus = computePartyStatus(characters);
 
-	return jsonResponse({ ok: true, campaign, characters, partyStatus, journals, scripts, encounters }, undefined, origin);
+	// AI-solo metadata for richer UI (XP, checkpoints, etc.).
+	let ai: any = null;
+	try {
+		const storedSession = await env.ADA_DATA.get(`aiSession:${id}`);
+		if (storedSession) {
+			const session = JSON.parse(storedSession) as AIDMSessionState;
+			const adventureId = String(session?.adventureId || campaign.adventureId || '').trim();
+			const adventure = adventureId ? await getAdventureById(env, adventureId) : null;
+			const checkpoints = adventure && Array.isArray(adventure.checkpoints) ? adventure.checkpoints : [];
+			const rawIdx = typeof session?.checkpointIndex === 'number' ? session.checkpointIndex : 0;
+			const checkpointIndex = checkpoints.length ? clampCheckpointIndex(rawIdx, checkpoints) : rawIdx;
+			const checkpointTotal = checkpoints.length || (Number.isFinite(Number((campaign as any)?.checkpointTotal)) ? Number((campaign as any).checkpointTotal) : 0);
+			let xpReward: number | null = null;
+			try {
+				const storedXp = (campaign as any)?.xpReward;
+				xpReward = typeof storedXp === 'number' ? storedXp : await xpAwardForCampaign(env, campaign);
+			} catch {
+				xpReward = null;
+			}
+			ai = {
+				xpReward: typeof xpReward === 'number' ? xpReward : null,
+				checkpointIndex,
+				checkpointTotal,
+				checkpoints,
+				status: session?.status || campaign.status || 'active',
+				completedAt: campaign.completedAt || null,
+			};
+		}
+	} catch {
+		ai = null;
+	}
+
+	return jsonResponse({ ok: true, campaign, characters, partyStatus, journals, scripts, encounters, ai }, undefined, origin);
 }
 
 function basicPolishJournal(raw: string): string {

@@ -2046,6 +2046,64 @@ h1, h2, h3, h4,
   gap: 0.4rem;
 }
 
+.campaign-progress {
+  margin: 0.5rem 0 0.25rem;
+  display: flex;
+  gap: 0.65rem;
+  flex-wrap: wrap;
+}
+
+.campaign-progress__item {
+  padding: 0.25rem 0.5rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(30, 23, 18, 0.14);
+  background: rgba(255, 255, 255, 0.72);
+  font-size: 0.9rem;
+}
+
+.campaign-checkpoints {
+  margin: 0.25rem 0 0.75rem;
+}
+
+.checkpoint-list {
+  margin: 0.55rem 0 0 1.25rem;
+  padding: 0;
+}
+
+.checkpoint-item {
+  margin: 0.18rem 0;
+}
+
+.checkpoint-item--done {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+
+.checkpoint-item--current {
+  font-weight: 700;
+}
+
+.ai-dm__quota {
+  font-size: 0.78rem;
+  line-height: 1.25;
+}
+
+.ai-dm__poi {
+  padding: 0.6rem 0.75rem;
+  border-radius: var(--radius-md);
+  border: 1px dashed rgba(148, 163, 184, 0.55);
+  background: rgba(30, 23, 18, 0.04);
+}
+
+.ai-dm__poi-title {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.ai-dm__poi-list {
+  margin: 0.35rem 0 0 1.25rem;
+}
+
 /* ===================================================================
    Lobby Chat Panel (Imperial Gold Theme)
    =================================================================== */

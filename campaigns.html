@@ -57,6 +57,14 @@
           <button type="button" id="campaignBackBtn" class="btn btn--secondary btn--small campaign-detail__back">&larr; Back to My Campaigns</button>
           <h2 id="campaignDetailTitle">Campaign Dashboard</h2>
           <p id="campaignDetailMeta" class="text-muted"></p>
+          <div id="campaignProgressMeta" class="campaign-progress" hidden>
+            <div class="campaign-progress__item"><strong>Possible XP:</strong> <span id="campaignXpReward">—</span></div>
+            <div class="campaign-progress__item"><strong>Checkpoint:</strong> <span id="campaignCheckpointProgress">—</span></div>
+          </div>
+          <details id="campaignCheckpointDetails" class="campaign-checkpoints" hidden>
+            <summary class="text-muted">Checkpoints</summary>
+            <ol id="campaignCheckpointList" class="checkpoint-list"></ol>
+          </details>
           <div class="campaign-detail__actions">
             <button type="button" id="campaignDeleteBtn" class="btn btn--danger btn--small" hidden>Delete campaign</button>
             <button type="button" id="campaignLeaveBtn" class="btn btn--secondary btn--small" hidden>Leave campaign</button>
@@ -253,6 +261,11 @@
                     <button type="button" id="aiDmRollBtn" class="btn btn--secondary btn--small">Roll d20</button>
                     <span id="aiDmMechanics" class="ai-dm__mechanics text-muted"></span>
                   </div>
+                  <div id="aiDmQuotaHint" class="ai-dm__quota text-muted"></div>
+                  <section id="aiDmPointsOfInterest" class="ai-dm__poi" hidden>
+                    <h4 class="ai-dm__poi-title">Points of interest</h4>
+                    <ul id="aiDmPointsOfInterestList" class="ai-dm__poi-list"></ul>
+                  </section>
                 </div>
               </div>
             </section>

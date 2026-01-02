@@ -2392,6 +2392,7 @@ function buildAIDMSystemPrompt(): string {
 		'[/NARRATIVE]',
 		'',
 		'[MECHANICS]',
+		'IMPORTANT: Do NOT write headings like "Narrative:" or "Mechanics:" and do NOT put lines like "check:" or "dc:" outside the [MECHANICS] block.',
 		'- check: a short description of any roll the player should make, or "none"',
 		'- dc: the DC for the check, or 0 if none',
 		'- ability: STR, DEX, CON, INT, WIS, or CHA, or "none" if no check',
@@ -2572,8 +2573,65 @@ function parseAIDMResponse(raw: string): {
 	const text = String(raw || '');
 	const narrativeMatch = text.match(/\[NARRATIVE\]([\s\S]*?)\[\/NARRATIVE\]/i);
 	const mechanicsMatch = text.match(/\[MECHANICS\]([\s\S]*?)\[\/MECHANICS\]/i);
-	const narrative = narrativeMatch ? narrativeMatch[1].trim() : text.trim();
-	const mechanicsBlock = mechanicsMatch ? mechanicsMatch[1].trim() : '';
+
+	let narrative = narrativeMatch ? narrativeMatch[1].trim() : '';
+	let mechanicsBlock = mechanicsMatch ? mechanicsMatch[1].trim() : '';
+
+	// Fallback parsing for models that ignore the bracketed section format and instead emit:
+	// Narrative:
+	// ...
+	// Mechanics:
+	// check: ...
+	// dc: ...
+	if (!narrative && !mechanicsBlock) {
+		const lines = text.split(/\r?\n/);
+		let inNarrative = false;
+		let inMechanics = false;
+		const narrativeLines: string[] = [];
+		const mechanicsLines: string[] = [];
+
+		const isNarrativeHeader = (line: string) => /^\s*\[?narrative\]?\s*[:\]]\s*$/i.test(line);
+		const isMechanicsHeader = (line: string) => /^\s*\[?mechanics\]?\s*[:\]]\s*$/i.test(line);
+		const isMechanicsKeyLine = (line: string) =>
+			/^\s*(check|dc|ability|skill|advantage|progress|points\s*of\s*interest|pointsOfInterest)\s*[:\-]/i.test(
+				line,
+			);
+
+		for (const line of lines) {
+			if (isNarrativeHeader(line)) {
+				inNarrative = true;
+				inMechanics = false;
+				continue;
+			}
+			if (isMechanicsHeader(line)) {
+				inNarrative = false;
+				inMechanics = true;
+				continue;
+			}
+
+			// If we never saw headers but we start seeing mechanics key lines, treat the remainder as mechanics.
+			if (!inNarrative && !inMechanics && isMechanicsKeyLine(line)) {
+				inMechanics = true;
+			}
+
+			if (inMechanics) {
+				mechanicsLines.push(line);
+			} else {
+				narrativeLines.push(line);
+			}
+		}
+
+		narrative = narrativeLines.join('\n').trim();
+		mechanicsBlock = mechanicsLines.join('\n').trim();
+
+		// As a final cleanup, if narrative still contains leading "Narrative:" or "Mechanics:" lines, strip them.
+		narrative = narrative
+			.replace(/^\s*\[?narrative\]?\s*[:\]]\s*\n+/i, '')
+			.replace(/\n+\s*\[?mechanics\]?\s*[:\]]\s*[\s\S]*$/i, '')
+			.trim();
+	}
+
+	if (!narrative) narrative = text.trim();
 
 	let checkDescription: string | null = null;
 	let dc: number | null = null;

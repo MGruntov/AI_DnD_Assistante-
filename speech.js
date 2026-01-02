@@ -3071,7 +3071,19 @@ import { apiGetJson, apiPostJson } from "./js/api-client.js";
       }
 
       const payload = result.data || {};
-      const narrative = payload.narrative || payload.text || "";
+      function sanitizeAiDmNarrative(rawText) {
+        const t = String(rawText || "");
+        if (!t.trim()) return "";
+        const lines = t.split(/\r?\n/);
+        const stopAt = lines.findIndex((line) => {
+          return /^\s*(\[?mechanics\]?\s*[:\]]\s*)$/i.test(line) ||
+            /^\s*(check|dc|ability|skill|advantage|progress|points\s*of\s*interest|pointsOfInterest)\s*[:\-]/i.test(line);
+        });
+        const kept = stopAt >= 0 ? lines.slice(0, stopAt) : lines;
+        return kept.join("\n").trim();
+      }
+
+      const narrative = sanitizeAiDmNarrative(payload.narrative || payload.text || "");
       const mechanics = isHiddenHand ? null : payload.mechanics || null;
       const canon = isHiddenHand ? payload.canon || null : null;
       const debug = payload.debug || null;

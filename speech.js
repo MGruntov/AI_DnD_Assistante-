@@ -484,6 +484,26 @@ import { apiGetJson, apiPostJson } from "./js/api-client.js";
     nanobanana: "",
     custom: "",
   };
+
+  const PORTRAIT_DEBUG_STORAGE_KEY = "adaPortraitDebug";
+
+  function isPortraitDebugEnabled() {
+    try {
+      const v = String(localStorage.getItem(PORTRAIT_DEBUG_STORAGE_KEY) || "").trim().toLowerCase();
+      return v === "1" || v === "true" || v === "yes" || v === "on";
+    } catch {
+      return false;
+    }
+  }
+
+  function portraitDebugLog(...args) {
+    if (!isPortraitDebugEnabled()) return;
+    try {
+      console.debug("[ADA][portrait]", ...args);
+    } catch {
+      // ignore
+    }
+  }
   const CURRENT_USER_STORAGE_KEY = "adaCurrentUser";
   const ACTIVE_CAMPAIGN_STORAGE_KEY = "adaActiveCampaignId";
   const ACTIVE_CHARACTER_STORAGE_KEY = "adaActiveCharacterId";
@@ -548,7 +568,7 @@ import { apiGetJson, apiPostJson } from "./js/api-client.js";
     return { primaryUrl, fallbackUrl: pollinations };
   }
 
-  function setImageSrcWithFallback(img, { primaryUrl, fallbackUrl }) {
+  function setImageSrcWithFallback(img, { primaryUrl, fallbackUrl }, debugMeta) {
     if (!img) return;
 
     // Always clear any previous handlers from earlier generations.
@@ -556,6 +576,7 @@ import { apiGetJson, apiPostJson } from "./js/api-client.js";
 
     // If we don't have a primary URL, go straight to fallback.
     if (!primaryUrl) {
+      portraitDebugLog("no primary URL; using fallback", { ...debugMeta, fallbackUrl });
       img.src = fallbackUrl || "";
       return;
     }
@@ -568,12 +589,15 @@ import { apiGetJson, apiPostJson } from "./js/api-client.js";
       if (alreadyTried) return;
       img.dataset.adaPortraitFallbackTried = "1";
 
+      portraitDebugLog("primary failed; falling back", { ...debugMeta, primaryUrl, fallbackUrl });
+
       if (fallbackUrl && fallbackUrl !== primaryUrl) {
         img.src = fallbackUrl;
       }
     };
 
     // Trigger the primary request.
+    portraitDebugLog("attempting primary image", { ...debugMeta, primaryUrl, fallbackUrl });
     img.src = primaryUrl;
   }
 
@@ -1081,7 +1105,11 @@ import { apiGetJson, apiPostJson } from "./js/api-client.js";
       const seed = baseSeed + index;
       img.hidden = false;
       const candidates = buildPortraitImageCandidates(prompt, seed);
-      setImageSrcWithFallback(img, candidates);
+      setImageSrcWithFallback(img, candidates, {
+        slot: index,
+        seed,
+        provider: String(getPortraitImageProvider() || "").toLowerCase(),
+      });
     });
 
     enablePortraitSelection();

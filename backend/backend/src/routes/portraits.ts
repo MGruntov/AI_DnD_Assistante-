@@ -72,6 +72,12 @@ async function generatePortraitImageViaGemini(env: Env, prompt: string, seed: nu
 	let upstreamStatus: number | null = null;
 	let upstreamSnippet = '';
 	try {
+		console.log('[portraits] calling Gemini image model', {
+			model: modelName,
+			seed: seed ?? null,
+			promptSnippet: prompt.slice(0, 120),
+		});
+
 		const res = await fetch(url, {
 			method: 'POST',
 			headers: { 'content-type': 'application/json; charset=utf-8' },
@@ -80,9 +86,20 @@ async function generatePortraitImageViaGemini(env: Env, prompt: string, seed: nu
 		upstreamStatus = res.status;
 		if (!res.ok) {
 			upstreamSnippet = (await res.text().catch(() => '')).slice(0, 600);
+			console.warn('[portraits] Gemini image generation failed', {
+				status: res.status,
+				snippet: upstreamSnippet,
+			});
 			return new Response(
 				`Gemini image generation failed with status ${res.status}${upstreamSnippet ? `: ${upstreamSnippet}` : ''}`,
-				{ status: 502 },
+				{
+					status: 502,
+					headers: {
+						'x-ada-portraits': 'gemini',
+						'x-ada-portraits-model': modelName,
+						'x-ada-portraits-upstream-status': String(res.status),
+					},
+				},
 			);
 		}
 
@@ -91,6 +108,7 @@ async function generatePortraitImageViaGemini(env: Env, prompt: string, seed: nu
 
 		const image = extractInlineImage(json);
 		if (!image) {
+			console.warn('[portraits] Gemini response had no inline image payload');
 			return new Response('Gemini did not return an inline image payload', { status: 502 });
 		}
 
@@ -100,10 +118,14 @@ async function generatePortraitImageViaGemini(env: Env, prompt: string, seed: nu
 				'content-type': image.mimeType || 'image/png',
 				// Portraits are ephemeral; avoid caching surprises during iteration.
 				'cache-control': 'no-store',
+				'x-ada-portraits': 'gemini',
+				'x-ada-portraits-model': modelName,
+				...(upstreamStatus != null ? { 'x-ada-portraits-upstream-status': String(upstreamStatus) } : {}),
 			},
 		});
 	} catch (err: any) {
 		const msg = err && typeof err.message === 'string' ? err.message : 'Unknown error calling Gemini image model';
+		console.warn('[portraits] Gemini image generation error', { message: msg });
 		return new Response(`Gemini image generation error: ${msg}`, { status: 502 });
 	}
 }
@@ -124,6 +146,10 @@ export function registerPortraitRoutes(app: App): void {
 			? prompt
 			: `fantasy D&D character portrait, digital painting, ${prompt}`;
 
+		console.log('[portraits] /api/portraits/generate', {
+			seed: seed ?? null,
+			promptSnippet: fullPrompt.slice(0, 120),
+		});
 		const res = await generatePortraitImageViaGemini(c.env, fullPrompt, seed);
 		return res;
 	});

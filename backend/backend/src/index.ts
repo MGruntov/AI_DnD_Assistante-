@@ -793,6 +793,11 @@ type AIDMSessionState = {
 	summary: string;
 	checkpointIndex: number;
 	status: 'active' | 'completed' | 'failed';
+	// Idempotency marker so backfills / retries don't double-award XP.
+	xpAwarded?: {
+		amount: number;
+		at: string;
+	};
 	pendingCheck?: {
 		checkDescription: string | null;
 		dc: number | null;
@@ -801,6 +806,12 @@ type AIDMSessionState = {
 		advantage: 'none' | 'advantage' | 'disadvantage' | null;
 	} | null;
 };
+
+function clampCheckpointIndex(index: number, checkpoints: string[]): number {
+	const raw = Number.isFinite(index) ? Math.floor(index) : 0;
+	const maxIdx = Math.max(0, (Array.isArray(checkpoints) ? checkpoints.length : 0) - 1);
+	return Math.max(0, Math.min(maxIdx, raw));
+}
 
 function abilityModifier(score: number): number {
 	// D&D 5e modifier: floor((score - 10) / 2)
@@ -4270,6 +4281,13 @@ async function handleAIDMTurn(request: Request, env: Env, origin: string | null)
 		parsedMechanics = parsed.mechanics;
 		// Apply DM-directed progress (checkpoint advances/completion/failure).
 		const progressResult = applyProgressDirective(session, adventure, parsed.mechanics.progress);
+		// Normalize checkpoint index against the current adventure so older sessions stay accurate.
+		session.checkpointIndex = clampCheckpointIndex(session.checkpointIndex, adventure.checkpoints);
+		// If the player has reached the final checkpoint, treat the saga as complete.
+		const maxIdx = Math.max(0, adventure.checkpoints.length - 1);
+		if (session.status === 'active' && session.checkpointIndex >= maxIdx) {
+			session.status = 'completed';
+		}
 		// Remember the latest requested check so it can be resolved separately.
 		const nextCheck = parsed.mechanics.checkDescription;
 		const nextDc = typeof parsed.mechanics.dc === 'number' ? parsed.mechanics.dc : 0;
@@ -4286,13 +4304,30 @@ async function handleAIDMTurn(request: Request, env: Env, origin: string | null)
 			session.pendingCheck = null;
 		}
 
-		// Award XP only on the transition into completed.
-		if (progressResult.statusBefore !== 'completed' && session.status === 'completed') {
+		// Award XP only once, on the transition into completed.
+		if (progressResult.statusBefore !== 'completed' && session.status === 'completed' && !session.xpAwarded) {
 			const xpAmount = await xpAwardForCampaign(env, campaign);
 			try {
 				await awardXpToCharacter(env, session.characterId, xpAmount);
+				session.xpAwarded = { amount: xpAmount, at: new Date().toISOString() };
 			} catch (err) {
 				console.error('Failed to award XP on completion', err);
+			}
+
+			// Persist campaign completion so the UI can allow "quit" / archive flows.
+			try {
+				campaign.status = 'completed';
+				campaign.completedAt = campaign.completedAt || new Date().toISOString();
+				const prev = Array.isArray(campaign.xpAwardedToCharacterIds) ? campaign.xpAwardedToCharacterIds : [];
+				if (!prev.includes(session.characterId)) prev.push(session.characterId);
+				campaign.xpAwardedToCharacterIds = prev;
+				// Convenience metadata for UIs.
+				(campaign as any).xpReward = xpAmount;
+				(campaign as any).checkpointIndex = session.checkpointIndex;
+				(campaign as any).checkpointTotal = adventure.checkpoints.length;
+				await env.ADA_DATA.put(`campaign:${campaignId}`, JSON.stringify(campaign));
+			} catch (e) {
+				console.error('Failed to persist AI-solo campaign completion state', e);
 			}
 		}
 	} catch (err) {
@@ -4321,6 +4356,160 @@ async function handleAIDMTurn(request: Request, env: Env, origin: string | null)
 				}
 				: {}),
 		},
+		{ status: 200 },
+		origin,
+	);
+}
+
+async function handleAdminPatchAICampaigns(request: Request, env: Env, origin: string | null): Promise<Response> {
+	if (!isArchitectAuthorized(request, env)) return errorResponse('Unauthorized', 401, origin);
+
+	let body: any = null;
+	try {
+		body = await request.json();
+	} catch {
+		body = null;
+	}
+	const startCursor = body && typeof body.cursor === 'string' && body.cursor.trim() ? body.cursor.trim() : undefined;
+	const maxPages = body && Number.isFinite(Number(body.maxPages)) ? Math.max(1, Math.min(25, Math.floor(Number(body.maxPages)))) : 5;
+	const maxCampaigns = body && Number.isFinite(Number(body.maxCampaigns)) ? Math.max(1, Math.min(2000, Math.floor(Number(body.maxCampaigns)))) : 250;
+
+	// Best-effort backfill for previously created AI-solo campaigns:
+	// - clamp checkpointIndex to current adventure checkpoints
+	// - mark complete if at final checkpoint
+	// - ensure XP metadata exists and award XP if completion was previously missed
+	let cursor: string | undefined = startCursor;
+	let scanned = 0;
+	let patched = 0;
+	let completedNow = 0;
+	let xpAwardedNow = 0;
+	const patchedCampaignIds: string[] = [];
+
+	// Cloudflare KV list() supports pagination via cursor.
+	let pages = 0;
+	do {
+			const page: any = await (env.ADA_DATA as any).list({ prefix: 'campaign:', cursor });
+		cursor = page.cursor;
+			pages += 1;
+
+		for (const k of page.keys || []) {
+			const keyName = (k as any)?.name ? String((k as any).name) : '';
+			if (!keyName.startsWith('campaign:')) continue;
+			const campaignId = keyName.slice('campaign:'.length);
+			scanned += 1;
+				if (scanned > maxCampaigns) break;
+
+			const storedCampaign = await env.ADA_DATA.get(keyName);
+			if (!storedCampaign) continue;
+			let campaign: Campaign;
+			try {
+				campaign = JSON.parse(storedCampaign) as Campaign;
+			} catch {
+				continue;
+			}
+
+			if (!campaignId) continue;
+
+			// Some older AI-solo campaigns may not have dmIsAI/mode persisted.
+			// The most reliable signal is the presence of an AI session record.
+			const sessionKey = `aiSession:${campaignId}`;
+			const storedSession = await env.ADA_DATA.get(sessionKey);
+			const isAiSoloByCampaignFlags = campaign?.dmIsAI === true || campaign?.mode === 'ai-solo';
+			const dmTag = String((campaign as any)?.dm ?? '').trim();
+			const isAiSoloByLegacyDm = dmTag === 'AI_ADA' || dmTag === 'AI' || dmTag === 'ADA_AI';
+			const isAiSolo = Boolean(storedSession) || isAiSoloByCampaignFlags || isAiSoloByLegacyDm;
+			if (!isAiSolo) continue;
+
+			let didChange = false;
+			const xpReward = await xpAwardForCampaign(env, campaign);
+			if ((campaign as any).xpReward !== xpReward) {
+				(campaign as any).xpReward = xpReward;
+				didChange = true;
+			}
+			if (!campaign.status) {
+				campaign.status = 'active';
+				didChange = true;
+			}
+
+			if (!storedSession) {
+				// No session to patch; still persist xpReward.
+				if (didChange) {
+					await env.ADA_DATA.put(keyName, JSON.stringify(campaign));
+					patched += 1;
+					patchedCampaignIds.push(campaignId);
+				}
+				continue;
+			}
+
+			let session: AIDMSessionState;
+			try {
+				session = JSON.parse(storedSession) as AIDMSessionState;
+			} catch {
+				continue;
+			}
+
+			const adventureId = String(session.adventureId || campaign.adventureId || '').trim();
+			const adventure = adventureId ? await getAdventureById(env, adventureId) : null;
+			if (!adventure) {
+				// Can't validate checkpoints; still persist xpReward.
+				if (didChange) {
+					await env.ADA_DATA.put(keyName, JSON.stringify(campaign));
+					patched += 1;
+					patchedCampaignIds.push(campaignId);
+				}
+				continue;
+			}
+
+			const beforeIdx = session.checkpointIndex;
+			session.checkpointIndex = clampCheckpointIndex(session.checkpointIndex, adventure.checkpoints);
+			if (session.checkpointIndex !== beforeIdx) didChange = true;
+
+			const maxIdx = Math.max(0, adventure.checkpoints.length - 1);
+			const reachedEnd = session.checkpointIndex >= maxIdx;
+			const wasCompleted = session.status === 'completed' || campaign.status === 'completed';
+
+			if (reachedEnd && session.status !== 'completed') {
+				session.status = 'completed';
+				didChange = true;
+			}
+			if (reachedEnd && campaign.status !== 'completed') {
+				campaign.status = 'completed';
+				campaign.completedAt = campaign.completedAt || new Date().toISOString();
+				didChange = true;
+				completedNow += 1;
+			}
+
+			// If the saga reached the final checkpoint but XP was never awarded (because completion wasn't recorded), award it once.
+			if (!wasCompleted && reachedEnd && !session.xpAwarded && session.characterId) {
+				try {
+					await awardXpToCharacter(env, session.characterId, xpReward);
+					session.xpAwarded = { amount: xpReward, at: new Date().toISOString() };
+					xpAwardedNow += 1;
+					didChange = true;
+					const prev = Array.isArray(campaign.xpAwardedToCharacterIds) ? campaign.xpAwardedToCharacterIds : [];
+					if (!prev.includes(session.characterId)) prev.push(session.characterId);
+					campaign.xpAwardedToCharacterIds = prev;
+				} catch (e) {
+					console.error('[admin] Failed to award XP during patch', { campaignId, error: (e as Error)?.message || String(e) });
+				}
+			}
+
+			(campaign as any).checkpointIndex = session.checkpointIndex;
+			(campaign as any).checkpointTotal = adventure.checkpoints.length;
+
+			if (didChange) {
+				await env.ADA_DATA.put(sessionKey, JSON.stringify(session));
+				await env.ADA_DATA.put(keyName, JSON.stringify(campaign));
+				patched += 1;
+				if (patchedCampaignIds.length < 50) patchedCampaignIds.push(campaignId);
+			}
+		}
+	} while (cursor && pages < maxPages && scanned < maxCampaigns);
+
+	const done = !cursor;
+
+	return jsonResponse(
+		{ ok: true, scanned, patched, completedNow, xpAwardedNow, cursor, done, samplePatchedCampaignIds: patchedCampaignIds },
 		{ status: 200 },
 		origin,
 	);
@@ -6428,6 +6617,9 @@ async function legacyFetch(request: Request, env: Env, _ctx?: ExecutionContext):
 	}
 	if (pathname === '/api/architect/generate-scenario' && method === 'POST') {
 		return handleArchitectGenerateScenario(request, env, origin);
+	}
+	if (pathname === '/api/admin/patch-ai-campaigns' && method === 'POST') {
+		return handleAdminPatchAICampaigns(request, env, origin);
 	}
 
 	// Grand Library of Fate (Public Templates)

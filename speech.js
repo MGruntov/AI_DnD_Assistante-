@@ -3134,7 +3134,9 @@ import { apiGetJson, apiPostJson } from "./js/api-client.js";
 
       // If backend debug is enabled, show which model is being used.
       const modelName =
-        debug && debug.gemini && debug.gemini.model
+        payload && payload.aiModel && payload.aiModel.model
+          ? String(payload.aiModel.model)
+          : debug && debug.gemini && debug.gemini.model
           ? String(debug.gemini.model)
           : "";
       if (modelName && aiDmNoticeEl) {
@@ -5197,6 +5199,7 @@ import { apiGetJson, apiPostJson } from "./js/api-client.js";
         const narrative = payload.narrative || "";
         const mechanics = payload.mechanics || null;
         const debug = payload.debug || null;
+        const aiError = payload.aiError ? String(payload.aiError) : "";
 
     		// Quota hint: show exact remaining messages from backend quota.
     		setGeminiQuotaHint(formatAiQuotaHint(payload.quota || null, payload.quotaHint || ""));
@@ -5217,7 +5220,9 @@ import { apiGetJson, apiPostJson } from "./js/api-client.js";
 
         lastAiMechanics = mechanics;
 
-        if (mechanics && aiDmMechanicsEl) {
+        if (aiError && aiDmMechanicsEl) {
+          aiDmMechanicsEl.textContent = aiError;
+        } else if (mechanics && aiDmMechanicsEl) {
           const mDc = mechanics.dc;
           const mAbility = mechanics.ability;
           const mSkill = mechanics.skill;
@@ -5239,7 +5244,9 @@ import { apiGetJson, apiPostJson } from "./js/api-client.js";
         }
 
         const modelName =
-          debug && debug.gemini && debug.gemini.model
+          payload && payload.aiModel && payload.aiModel.model
+            ? String(payload.aiModel.model)
+            : debug && debug.gemini && debug.gemini.model
             ? String(debug.gemini.model)
             : "";
         if (modelName && aiDmNoticeEl) {

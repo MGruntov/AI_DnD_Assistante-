@@ -33,6 +33,9 @@
 	],
 	"env": {
 		"dev": {
+			"vars": {
+				"AI_DAILY_FREE_MESSAGES": "1000"
+			},
 			"kv_namespaces": [
 				{
 					"binding": "ADA_DATA",
@@ -49,6 +52,7 @@
 			]
 		}
 	}
+	,
 	/**
 	 * Smart Placement
 	 * https://developers.cloudflare.com/workers/configuration/smart-placement/#smart-placement
@@ -66,7 +70,9 @@
 	 * Note: Use secrets to store sensitive data.
 	 * https://developers.cloudflare.com/workers/configuration/secrets/
 	 */
-	// "vars": {  "MY_VARIABLE": "production_value" }
+	"vars": {
+		"AI_DAILY_FREE_MESSAGES": "1000"
+	}
 	/**
 	 * Service Bindings (communicate between multiple Workers)
 	 * https://developers.cloudflare.com/workers/wrangler/configuration/#service-bindings

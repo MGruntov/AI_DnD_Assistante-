@@ -943,11 +943,30 @@ type AiQuotaInfo = {
 function getAiDailyLimit(env: Env): number {
 	const raw = (env as any)?.AI_DAILY_FREE_MESSAGES;
 	const parsed = raw != null ? Number(raw) : NaN;
-	// A conservative default to avoid surprise bills / runaway loops.
-	const fallback = 40;
+	// App-level budget (distinct from provider quotas). Default is intentionally high for local testing.
+	const fallback = 1000;
 	if (!Number.isFinite(parsed)) return fallback;
-	return Math.max(5, Math.min(500, Math.floor(parsed)));
+	return Math.max(5, Math.min(5000, Math.floor(parsed)));
 }
+
+type AIDMModelMeta = {
+	modelName: string | null;
+	resolvedFrom: 'cache' | 'models.list' | 'fallback' | null;
+};
+
+type AIDMCallResult =
+	| {
+		ok: true;
+		text: string;
+		meta: AIDMModelMeta;
+	}
+	| {
+		ok: false;
+		error: string;
+		upstreamStatus: number | null;
+		upstreamBodySnippet: string | null;
+		meta: AIDMModelMeta;
+	};
 
 function utcDayStamp(d: Date): string {
 	const y = d.getUTCFullYear();
@@ -1173,6 +1192,8 @@ async function handleAIDMResolveCheck(request: Request, env: Env, origin: string
 				mechanics: dmMechanics,
 				ai,
 				campaignPatch,
+				aiModel: null,
+				aiError: null,
 				quota: preQuota,
 				quotaHint: null,
 			},
@@ -1181,7 +1202,9 @@ async function handleAIDMResolveCheck(request: Request, env: Env, origin: string
 		);
 	}
 
-	const quota = await consumeAiQuota(env, username);
+	let quota: AiQuotaInfo = preQuota;
+	let usedModelMeta: AIDMModelMeta | null = null;
+	let aiError: string | null = null;
 
 	let dmNarrative: string;
 	let dmMechanics = {
@@ -1196,34 +1219,45 @@ async function handleAIDMResolveCheck(request: Request, env: Env, origin: string
 	let completionJustOccurred = false;
 	let quotaHint: string | null = null;
 	try {
-		const rawResponse = await callAIDungeonMaster(env, adventure, session, character, playerResultText);
-		const parsed = parseAIDMResponse(rawResponse);
-		dmNarrative = parsed.narrative;
-		dmMechanics = parsed.mechanics;
-		// Apply DM-directed progress after narration.
-		const progressResult = applyProgressDirective(session, adventure, parsed.mechanics.progress);
-		completionJustOccurred = progressResult.statusBefore !== 'completed' && session.status === 'completed';
-		// Store next pending check only if it's a real check.
-		const nextCheck = parsed.mechanics.checkDescription;
-		const nextDc = typeof parsed.mechanics.dc === 'number' ? parsed.mechanics.dc : 0;
-		const nextAbility = (parsed.mechanics.ability || '').toUpperCase();
-		if (nextCheck && nextCheck.toLowerCase() !== 'none' && nextDc > 0 && nextAbility !== 'NONE') {
-			session.pendingCheck = {
-				checkDescription: parsed.mechanics.checkDescription,
-				dc: parsed.mechanics.dc,
-				ability: parsed.mechanics.ability,
-				skill: parsed.mechanics.skill,
-				advantage: parsed.mechanics.advantage,
-			};
-		} else {
+		const aiCall = await callAIDungeonMaster(env, adventure, session, character, playerResultText);
+		if (!aiCall.ok) {
+			aiError = 'AI is temporarily unavailable. Your roll was recorded; please retry to get DM narration.';
+			quotaHint = inferQuotaHintFromAIDMError(new Error(aiCall.error));
+			usedModelMeta = aiCall.meta;
+			dmNarrative = '';
 			session.pendingCheck = null;
+		} else {
+			usedModelMeta = aiCall.meta;
+			const parsed = parseAIDMResponse(aiCall.text);
+			dmNarrative = parsed.narrative;
+			dmMechanics = parsed.mechanics;
+			// Apply DM-directed progress after narration.
+			const progressResult = applyProgressDirective(session, adventure, parsed.mechanics.progress);
+			completionJustOccurred = progressResult.statusBefore !== 'completed' && session.status === 'completed';
+			// Store next pending check only if it's a real check.
+			const nextCheck = parsed.mechanics.checkDescription;
+			const nextDc = typeof parsed.mechanics.dc === 'number' ? parsed.mechanics.dc : 0;
+			const nextAbility = (parsed.mechanics.ability || '').toUpperCase();
+			if (nextCheck && nextCheck.toLowerCase() !== 'none' && nextDc > 0 && nextAbility !== 'NONE') {
+				session.pendingCheck = {
+					checkDescription: parsed.mechanics.checkDescription,
+					dc: parsed.mechanics.dc,
+					ability: parsed.mechanics.ability,
+					skill: parsed.mechanics.skill,
+					advantage: parsed.mechanics.advantage,
+				};
+			} else {
+				session.pendingCheck = null;
+			}
+
+			// Consume quota only after a successful upstream AI response.
+			quota = await consumeAiQuota(env, username);
 		}
 	} catch (err) {
 		console.error('AI-DM follow-up after check failed', err);
 		quotaHint = inferQuotaHintFromAIDMError(err);
-		dmNarrative = success
-			? 'You steady your breath and push onward, the momentary tension easing as the path opens ahead.'
-			: 'A misstep sends a jolt of panic through you—something shifts in the brush, and the woods feel suddenly closer.';
+		aiError = 'AI is temporarily unavailable. Your roll was recorded; please retry to get DM narration.';
+		dmNarrative = '';
 		session.pendingCheck = null;
 	}
 
@@ -1272,8 +1306,10 @@ async function handleAIDMResolveCheck(request: Request, env: Env, origin: string
 		}
 	}
 
-	session.log.push({ role: 'dm', text: dmNarrative, timestamp: new Date().toISOString() });
-	trimSessionLog(session);
+	if (dmNarrative && dmNarrative.trim().length > 0) {
+		session.log.push({ role: 'dm', text: dmNarrative, timestamp: new Date().toISOString() });
+		trimSessionLog(session);
+	}
 	await env.ADA_DATA.put(sessionKey, JSON.stringify(session));
 
 	let xpReward: number | null = null;
@@ -1319,6 +1355,10 @@ async function handleAIDMResolveCheck(request: Request, env: Env, origin: string
 			campaignPatch,
 			quota,
 			quotaHint,
+			aiError,
+			aiModel: usedModelMeta && usedModelMeta.modelName
+				? { model: usedModelMeta.modelName, resolvedFrom: usedModelMeta.resolvedFrom }
+				: null,
 			...(isDebugEnabled(env)
 				? {
 					debug: {
@@ -2409,7 +2449,7 @@ async function callAIDungeonMaster(
 	session: AIDMSessionState,
 	character: Character,
 	playerInput: string,
-): Promise<string> {
+): Promise<AIDMCallResult> {
 	// Use Google Gemini 1.5 Flash via the Generative Language API.
 	// We send the system prompt as a system instruction and the adventure/user
 	// context as a single user message, and expect the model to follow the
@@ -2418,9 +2458,16 @@ async function callAIDungeonMaster(
 	const userPrompt = buildAIDMUserPrompt(adventure, session, character, playerInput);
 	const apiKey = env.GEMINI_API_KEY;
 	if (!apiKey) {
-		throw new Error('GEMINI_API_KEY is not configured');
+		return {
+			ok: false,
+			error: 'GEMINI_API_KEY is not configured',
+			upstreamStatus: null,
+			upstreamBodySnippet: null,
+			meta: { modelName: null, resolvedFrom: null },
+		};
 	}
 	const resolved = await resolveGeminiModelName(apiKey.trim());
+	const meta: AIDMModelMeta = { modelName: resolved.modelName, resolvedFrom: resolved.resolvedFrom };
 
 	const url =
 		`https://generativelanguage.googleapis.com/${encodeURIComponent(GEMINI_API_VERSION)}/${resolved.modelName}:generateContent` +
@@ -2457,23 +2504,41 @@ async function callAIDungeonMaster(
 		} catch {
 			// ignore
 		}
-		throw new Error(`Gemini AI-DM request failed with status ${res.status}${detail ? `: ${detail}` : ''}`);
+		return {
+			ok: false,
+			error: `Gemini AI-DM request failed with status ${res.status}${detail ? `: ${detail}` : ''}`,
+			upstreamStatus: res.status,
+			upstreamBodySnippet: detail || null,
+			meta,
+		};
 	}
 
 	let data: any;
 	try {
 		data = await res.json();
 	} catch (err) {
-		throw new Error('Failed to parse Gemini response JSON');
+		return {
+			ok: false,
+			error: 'Failed to parse Gemini response JSON',
+			upstreamStatus: res.status,
+			upstreamBodySnippet: null,
+			meta,
+		};
 	}
 
 	const parts: string[] =
 		data?.candidates?.[0]?.content?.parts?.map((p: any) => (p && typeof p.text === 'string' ? p.text : '')) || [];
 	const text = parts.join('').trim();
 	if (!text) {
-		throw new Error('Gemini returned an empty response');
+		return {
+			ok: false,
+			error: 'Gemini returned an empty response',
+			upstreamStatus: res.status,
+			upstreamBodySnippet: null,
+			meta,
+		};
 	}
-	return text;
+	return { ok: true, text, meta };
 }
 
 function parseAIDMResponse(raw: string): {
@@ -4353,15 +4418,19 @@ async function handleStartAICampaign(request: Request, env: Env, origin: string 
 	// is greeted with a scene description as soon as the campaign starts.
 	let openingNarrative: string | null = null;
 	try {
-		const openingRaw = await callAIDungeonMaster(
+		const openingCall = await callAIDungeonMaster(
 			env,
 			adventure,
 			session,
 			character,
 			'The player has just started this solo adventure. Introduce the setting, their mission, and the immediate scene in front of them. Address them in second person and keep it to the opening beat.',
 		);
-		const parsed = parseAIDMResponse(openingRaw);
-		openingNarrative = parsed.narrative;
+		if (openingCall.ok) {
+			const parsed = parseAIDMResponse(openingCall.text);
+			openingNarrative = parsed.narrative;
+		} else {
+			throw new Error(openingCall.error);
+		}
 	} catch (err) {
 		console.error('AI-DM opening call failed', err);
 		// Fallback: synthesize a simple opening narration so the player always
@@ -4510,14 +4579,14 @@ async function handleAIDMTurn(request: Request, env: Env, origin: string | null)
 		return errorResponse('You are not allowed to control this AI-DM session', 403, origin);
 	}
 
-	const now = new Date().toISOString();
-	session.log.push({ role: 'player', text: playerInput, timestamp: now });
-	trimSessionLog(session);
-
 	// Enforce a simple per-user daily message budget so the UI can show an exact remaining count.
 	// This is our app-level budget (not Google's opaque provider quota).
 	const preQuota = await getAiQuota(env, username);
 	if (preQuota.remaining <= 0) {
+		const now = new Date().toISOString();
+		session.log.push({ role: 'player', text: playerInput, timestamp: now });
+		trimSessionLog(session);
+
 		const parsedNarrative = buildFallbackNarrativeFromInput(playerInput, adventure);
 		const parsedMechanics = {
 			checkDescription: null as string | null,
@@ -4557,6 +4626,7 @@ async function handleAIDMTurn(request: Request, env: Env, origin: string | null)
 				mechanics: parsedMechanics,
 				ai,
 				campaignPatch,
+				aiModel: null,
 				quota: preQuota,
 				quotaHint: null,
 			},
@@ -4564,8 +4634,6 @@ async function handleAIDMTurn(request: Request, env: Env, origin: string | null)
 			origin,
 		);
 	}
-
-	const quota = await consumeAiQuota(env, username);
 
 	let parsedNarrative: string;
 	let parsedMechanics = {
@@ -4578,9 +4646,28 @@ async function handleAIDMTurn(request: Request, env: Env, origin: string | null)
 		pointsOfInterest: null as string[] | null,
 	};
 	let quotaHint: string | null = null;
+	let usedModelMeta: AIDMModelMeta | null = null;
 	try {
-		const rawResponse = await callAIDungeonMaster(env, adventure, session, character, playerInput);
-		const parsed = parseAIDMResponse(rawResponse);
+		const aiCall = await callAIDungeonMaster(env, adventure, session, character, playerInput);
+		if (!aiCall.ok) {
+			quotaHint = inferQuotaHintFromAIDMError(new Error(aiCall.error));
+			return jsonResponse(
+				{
+					ok: false,
+					error: 'AI is temporarily unavailable. Please retry in a moment.',
+					detail: aiCall.error,
+					quota: preQuota,
+					quotaHint,
+					aiModel: aiCall.meta.modelName
+						? { model: aiCall.meta.modelName, resolvedFrom: aiCall.meta.resolvedFrom }
+						: null,
+				},
+				{ status: 503 },
+				origin,
+			);
+		}
+		usedModelMeta = aiCall.meta;
+		const parsed = parseAIDMResponse(aiCall.text);
 		parsedNarrative = parsed.narrative;
 		parsedMechanics = parsed.mechanics;
 		// Apply DM-directed progress (checkpoint advances/completion/failure).
@@ -4635,13 +4722,20 @@ async function handleAIDMTurn(request: Request, env: Env, origin: string | null)
 			}
 		}
 	} catch (err) {
-		console.error('AI-DM call failed', err);
+		console.error('AI-DM turn handler failed unexpectedly', err);
 		quotaHint = inferQuotaHintFromAIDMError(err);
-		// Fallback: generate a simple, deterministic DM response so play can
-		// continue even if the external AI service is down.
-		parsedNarrative = buildFallbackNarrativeFromInput(playerInput, adventure);
-		session.pendingCheck = null;
+		return jsonResponse(
+			{ ok: false, error: 'AI is temporarily unavailable. Please retry in a moment.', quota: preQuota, quotaHint },
+			{ status: 503 },
+			origin,
+		);
 	}
+
+	// Consume quota only after a successful upstream AI response.
+	const quota = await consumeAiQuota(env, username);
+	const now = new Date().toISOString();
+	session.log.push({ role: 'player', text: playerInput, timestamp: now });
+	trimSessionLog(session);
 
 	session.log.push({ role: 'dm', text: parsedNarrative, timestamp: new Date().toISOString() });
 	trimSessionLog(session);
@@ -4709,6 +4803,9 @@ async function handleAIDMTurn(request: Request, env: Env, origin: string | null)
 			campaignPatch,
 			quota,
 			quotaHint,
+			aiModel: usedModelMeta && usedModelMeta.modelName
+				? { model: usedModelMeta.modelName, resolvedFrom: usedModelMeta.resolvedFrom }
+				: null,
 			...(isDebugEnabled(env)
 				? {
 					debug: {

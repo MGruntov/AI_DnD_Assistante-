@@ -915,12 +915,92 @@ function inferQuotaHintFromAIDMError(err: unknown): string | null {
 	const msg = err && typeof (err as any).message === 'string' ? String((err as any).message) : String(err || '');
 	if (!msg) return null;
 	if (msg.includes('status 429') || /\b429\b/.test(msg)) {
-		return 'Gemini is rate-limited right now (HTTP 429). The free tier quota can be unpredictable; try again later or use a different key/model.';
+		return 'Gemini is temporarily rate-limiting requests (HTTP 429). This usually clears up after a short wait; if it keeps happening, you may need a different model/key or a backup provider.';
 	}
 	if (msg.includes('GEMINI_API_KEY is not configured')) {
-		return 'AI key is not configured on the server; using a built-in fallback response.';
+		return 'AI key is not configured on the server, so ADA is using a built-in fallback response.';
 	}
 	return null;
+}
+
+type AiQuotaInfo = {
+	period: 'day';
+	limit: number;
+	used: number;
+	remaining: number;
+	resetsAt: string;
+};
+
+function getAiDailyLimit(env: Env): number {
+	const raw = (env as any)?.AI_DAILY_FREE_MESSAGES;
+	const parsed = raw != null ? Number(raw) : NaN;
+	// A conservative default to avoid surprise bills / runaway loops.
+	const fallback = 40;
+	if (!Number.isFinite(parsed)) return fallback;
+	return Math.max(5, Math.min(500, Math.floor(parsed)));
+}
+
+function utcDayStamp(d: Date): string {
+	const y = d.getUTCFullYear();
+	const m = String(d.getUTCMonth() + 1).padStart(2, '0');
+	const day = String(d.getUTCDate()).padStart(2, '0');
+	return `${y}-${m}-${day}`;
+}
+
+function nextUtcMidnightISO(d: Date): string {
+	const next = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + 1, 0, 0, 0, 0));
+	return next.toISOString();
+}
+
+function aiQuotaKey(username: string, dayStamp: string): string {
+	return `aiQuota:${username}:${dayStamp}`;
+}
+
+async function getAiQuota(env: Env, username: string, now = new Date()): Promise<AiQuotaInfo> {
+	const limit = getAiDailyLimit(env);
+	const dayStamp = utcDayStamp(now);
+	const key = aiQuotaKey(username, dayStamp);
+	let used = 0;
+	try {
+		const stored = await env.ADA_DATA.get(key);
+		if (stored) {
+			const parsed = JSON.parse(stored);
+			const u = Number(parsed?.used);
+			if (Number.isFinite(u) && u > 0) used = Math.floor(u);
+		}
+	} catch {
+		used = 0;
+	}
+	used = Math.max(0, Math.min(1000000, used));
+	const remaining = Math.max(0, limit - used);
+	return { period: 'day', limit, used, remaining, resetsAt: nextUtcMidnightISO(now) };
+}
+
+async function consumeAiQuota(env: Env, username: string, now = new Date()): Promise<AiQuotaInfo> {
+	const limit = getAiDailyLimit(env);
+	const dayStamp = utcDayStamp(now);
+	const key = aiQuotaKey(username, dayStamp);
+	let used = 0;
+	try {
+		const stored = await env.ADA_DATA.get(key);
+		if (stored) {
+			const parsed = JSON.parse(stored);
+			const u = Number(parsed?.used);
+			if (Number.isFinite(u) && u > 0) used = Math.floor(u);
+		}
+	} catch {
+		used = 0;
+	}
+	used = Math.max(0, Math.min(1000000, used));
+	// Consume 1 message from the daily budget.
+	const nextUsed = used + 1;
+	try {
+		await env.ADA_DATA.put(key, JSON.stringify({ used: nextUsed }));
+	} catch {
+		// Best-effort: if KV write fails, still return a computed view.
+	}
+	const remaining = Math.max(0, limit - nextUsed);
+	return { period: 'day', limit, used: nextUsed, remaining, resetsAt: nextUtcMidnightISO(now) };
 }
 
 async function handleAIDMResolveCheck(request: Request, env: Env, origin: string | null): Promise<Response> {
@@ -1029,6 +1109,70 @@ async function handleAIDMResolveCheck(request: Request, env: Env, origin: string
 
 	// Progress is DM-controlled via the MECHANICS.progress field (applied after the follow-up narration).
 	const beforeCheckpointIndex = session.checkpointIndex;
+
+	// Enforce a simple per-user daily message budget so the UI can show an exact remaining count.
+	// This is our app-level budget (not Google's opaque provider quota).
+	const preQuota = await getAiQuota(env, username);
+	if (preQuota.remaining <= 0) {
+		const dmNarrative = success
+			? 'You steady your breath and push onward, the momentary tension easing as the path opens ahead.'
+			: 'A misstep sends a jolt of panic through you—something shifts in the brush, and the woods feel suddenly closer.';
+		const dmMechanics = {
+			checkDescription: null as string | null,
+			dc: null as number | null,
+			ability: null as string | null,
+			skill: null as string | null,
+			advantage: null as 'none' | 'advantage' | 'disadvantage' | null,
+			progress: null as 'stay' | 'advance' | 'complete' | 'fail' | null,
+			pointsOfInterest: null as string[] | null,
+		};
+		session.log.push({ role: 'dm', text: dmNarrative, timestamp: new Date().toISOString() });
+		trimSessionLog(session);
+		await env.ADA_DATA.put(sessionKey, JSON.stringify(session));
+
+		const checkpointTotal = Array.isArray(adventure.checkpoints) ? adventure.checkpoints.length : 0;
+		const ai = {
+			xpReward: typeof (campaign as any)?.xpReward === 'number' ? (campaign as any).xpReward : null,
+			checkpointIndex: session.checkpointIndex,
+			checkpointTotal,
+			checkpoints: Array.isArray(adventure.checkpoints) ? adventure.checkpoints : [],
+			status: session.status,
+			completedAt: campaign.completedAt || null,
+		};
+		const campaignPatch = {
+			xpReward: ai.xpReward,
+			checkpointIndex: session.checkpointIndex,
+			checkpointTotal,
+			status: campaign.status || null,
+			completedAt: campaign.completedAt || null,
+		};
+
+		return jsonResponse(
+			{
+				ok: true,
+				result: {
+					rolls: { roll1: d1, roll2: d2, chosen: chosenD20, mode: adv },
+					modifier: computed.modifier,
+					proficiency: computed.proficiency,
+					total: computed.total,
+					dc,
+					success,
+					checkpointIndexBefore: beforeCheckpointIndex,
+					checkpointIndexAfter: session.checkpointIndex,
+				},
+				narrative: dmNarrative,
+				mechanics: dmMechanics,
+				ai,
+				campaignPatch,
+				quota: preQuota,
+				quotaHint: null,
+			},
+			{ status: 200 },
+			origin,
+		);
+	}
+
+	const quota = await consumeAiQuota(env, username);
 
 	let dmNarrative: string;
 	let dmMechanics = {
@@ -1164,6 +1308,7 @@ async function handleAIDMResolveCheck(request: Request, env: Env, origin: string
 			mechanics: dmMechanics,
 			ai,
 			campaignPatch,
+			quota,
 			quotaHint,
 			...(isDebugEnabled(env)
 				? {
@@ -4360,6 +4505,59 @@ async function handleAIDMTurn(request: Request, env: Env, origin: string | null)
 	session.log.push({ role: 'player', text: playerInput, timestamp: now });
 	trimSessionLog(session);
 
+	// Enforce a simple per-user daily message budget so the UI can show an exact remaining count.
+	// This is our app-level budget (not Google's opaque provider quota).
+	const preQuota = await getAiQuota(env, username);
+	if (preQuota.remaining <= 0) {
+		const parsedNarrative = buildFallbackNarrativeFromInput(playerInput, adventure);
+		const parsedMechanics = {
+			checkDescription: null as string | null,
+			dc: 0 as number | null,
+			ability: 'none' as string | null,
+			skill: 'none' as string | null,
+			advantage: 'none' as 'none' | 'advantage' | 'disadvantage' | null,
+			progress: 'stay' as 'stay' | 'advance' | 'complete' | 'fail' | null,
+			pointsOfInterest: null as string[] | null,
+		};
+		session.pendingCheck = null;
+		session.log.push({ role: 'dm', text: parsedNarrative, timestamp: new Date().toISOString() });
+		trimSessionLog(session);
+		await env.ADA_DATA.put(sessionKey, JSON.stringify(session));
+
+		const checkpointTotal = Array.isArray(adventure.checkpoints) ? adventure.checkpoints.length : 0;
+		const ai = {
+			xpReward: typeof (campaign as any)?.xpReward === 'number' ? (campaign as any).xpReward : null,
+			checkpointIndex: session.checkpointIndex,
+			checkpointTotal,
+			checkpoints: Array.isArray(adventure.checkpoints) ? adventure.checkpoints : [],
+			status: session.status,
+			completedAt: campaign.completedAt || null,
+		};
+		const campaignPatch = {
+			xpReward: ai.xpReward,
+			checkpointIndex: session.checkpointIndex,
+			checkpointTotal,
+			status: campaign.status || null,
+			completedAt: campaign.completedAt || null,
+		};
+
+		return jsonResponse(
+			{
+				ok: true,
+				narrative: parsedNarrative,
+				mechanics: parsedMechanics,
+				ai,
+				campaignPatch,
+				quota: preQuota,
+				quotaHint: null,
+			},
+			{ status: 200 },
+			origin,
+		);
+	}
+
+	const quota = await consumeAiQuota(env, username);
+
 	let parsedNarrative: string;
 	let parsedMechanics = {
 		checkDescription: null as string | null,
@@ -4500,6 +4698,7 @@ async function handleAIDMTurn(request: Request, env: Env, origin: string | null)
 			mechanics: parsedMechanics,
 			ai,
 			campaignPatch,
+			quota,
 			quotaHint,
 			...(isDebugEnabled(env)
 				? {

@@ -237,9 +237,34 @@ import { apiGetJson, apiPostJson } from "./js/api-client.js";
   const IS_ARCHITECT_STORAGE_KEY = "adaIsArchitect";
   const STUDIO_PANEL_STORAGE_KEY = "adaStudioPanel";
 
-  // Gemini free-tier quota is opaque and can vary by region/project; keep a pragmatic hint visible during play.
-  const DEFAULT_GEMINI_QUOTA_HINT = "Gemini free-tier is rate-limited (429 = quota exceeded; partial text may mean output limit).";
+  // The backend returns an app-level quota object we can display precisely.
+  // (Provider quotas are opaque; this is the only "messages remaining" number we can guarantee.)
+  const DEFAULT_GEMINI_QUOTA_HINT = "Messages left today: —";
   let activeGeminiQuotaHint = DEFAULT_GEMINI_QUOTA_HINT;
+
+  function formatAiQuotaHint(quota, providerHint) {
+    const q = quota && typeof quota === "object" ? quota : null;
+    const limit = q && Number.isFinite(Number(q.limit)) ? Number(q.limit) : null;
+    const remaining = q && Number.isFinite(Number(q.remaining)) ? Number(q.remaining) : null;
+    const resetsAt = q && q.resetsAt ? String(q.resetsAt) : "";
+
+    let base = "";
+    if (limit != null && remaining != null) {
+      let resetLabel = "";
+      if (resetsAt) {
+        const t = new Date(resetsAt);
+        if (!Number.isNaN(t.getTime())) {
+          resetLabel = ` (resets ${t.toLocaleString()})`;
+        }
+      }
+      base = `Messages left today: ${Math.max(0, remaining)}/${Math.max(1, limit)}${resetLabel}`;
+    }
+
+    const extra = String(providerHint || "").trim();
+    if (base && extra) return `${base} — ${extra}`;
+    if (base) return base;
+    return extra || DEFAULT_GEMINI_QUOTA_HINT;
+  }
 
   function isArchitect() {
     try {
@@ -3052,8 +3077,8 @@ import { apiGetJson, apiPostJson } from "./js/api-client.js";
       const debug = payload.debug || null;
       lastAiMechanics = mechanics;
 
-      // Quota hint: the free tier is opaque; keep a visible reminder during play.
-      setGeminiQuotaHint(payload.quotaHint || DEFAULT_GEMINI_QUOTA_HINT);
+      // Quota hint: show exact remaining messages from backend quota.
+      setGeminiQuotaHint(formatAiQuotaHint(payload.quota || null, payload.quotaHint || ""));
 
       // If the backend returns updated campaign metadata (xp/checkpoints/status), merge it into the active campaign.
       const campaignPatch = payload.campaignPatch && typeof payload.campaignPatch === "object" ? payload.campaignPatch : null;
@@ -3743,9 +3768,10 @@ import { apiGetJson, apiPostJson } from "./js/api-client.js";
       if (aiDmPanelEl) aiDmPanelEl.hidden = !isAi;
 
       if (isAi) {
-        setGeminiQuotaHint(ai && ai.quotaHint ? ai.quotaHint : DEFAULT_GEMINI_QUOTA_HINT);
+        setGeminiQuotaHint(DEFAULT_GEMINI_QUOTA_HINT);
         renderAiDmCampaignProgress({ campaign, ai });
-        renderAiDmPointsOfInterest(ai && Array.isArray(ai.pointsOfInterest) ? ai.pointsOfInterest : null);
+        // POIs are produced per-turn; the campaign details payload may not have them.
+        renderAiDmPointsOfInterest(null);
       } else {
         renderAiDmCampaignProgress({ campaign: null, ai: null });
         renderAiDmPointsOfInterest(null);
@@ -5171,6 +5197,9 @@ import { apiGetJson, apiPostJson } from "./js/api-client.js";
         const narrative = payload.narrative || "";
         const mechanics = payload.mechanics || null;
         const debug = payload.debug || null;
+
+    		// Quota hint: show exact remaining messages from backend quota.
+    		setGeminiQuotaHint(formatAiQuotaHint(payload.quota || null, payload.quotaHint || ""));
 
         const chosen = resolved.rolls && resolved.rolls.chosen ? resolved.rolls.chosen : r1;
         const total = typeof resolved.total === "number" ? resolved.total : null;

@@ -5216,6 +5216,13 @@ import { apiGetJson, apiPostJson } from "./js/api-client.js";
     		// Quota hint: show exact remaining messages from backend quota.
     		setGeminiQuotaHint(formatAiQuotaHint(payload.quota || null, payload.quotaHint || ""));
 
+            // If the backend returns updated campaign metadata (xp/checkpoints/status), merge it into the active campaign.
+            const campaignPatch = payload.campaignPatch && typeof payload.campaignPatch === "object" ? payload.campaignPatch : null;
+            if (campaignPatch && activeCampaign && typeof activeCampaign === "object") {
+              Object.assign(activeCampaign, campaignPatch);
+              renderAiDmCampaignProgress({ campaign: activeCampaign, ai: payload.ai || null });
+            }
+
         const chosen = resolved.rolls && resolved.rolls.chosen ? resolved.rolls.chosen : r1;
         const total = typeof resolved.total === "number" ? resolved.total : null;
         const mode = resolved.rolls && resolved.rolls.mode ? resolved.rolls.mode : "none";
@@ -5229,6 +5236,10 @@ import { apiGetJson, apiPostJson } from "./js/api-client.js";
         appendAiDmLog("player", rollLine);
 
         if (narrative) appendAiDmLog("dm", narrative);
+
+        // Points of interest: show a small, actionable list below ADA's response.
+        const poi = mechanics && Array.isArray(mechanics.pointsOfInterest) ? mechanics.pointsOfInterest : null;
+        renderAiDmPointsOfInterest(poi);
 
         lastAiMechanics = mechanics;
 

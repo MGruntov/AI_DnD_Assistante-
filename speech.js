@@ -458,10 +458,65 @@ import { apiGetJson, apiPostJson } from "./js/api-client.js";
   );
 
   const PORTRAIT_STORAGE_KEY = "adaCurrentCharacterPortraitUrl";
+  // Portrait image generation provider settings.
+  //
+  // Why:
+  // - We used to hardcode Pollinations.
+  // - Some deployments prefer other providers (e.g. Nanobanana).
+  //
+  // How:
+  // - Set localStorage key `adaPortraitImageProvider` to: "pollinations" | "nanobanana" | "custom".
+  // - Optionally set `adaPortraitImageUrlTemplate` to a URL template that contains:
+  //     {prompt}  (URL-encoded prompt)
+  //     {seed}    (seed number)
+  //   Example (Pollinations):
+  //     https://image.pollinations.ai/prompt/{prompt}?seed={seed}
+  //   Example (Nanobanana):
+  //     <put your Nanobanana image URL template here>
+  const PORTRAIT_IMAGE_PROVIDER_STORAGE_KEY = "adaPortraitImageProvider";
+  const PORTRAIT_IMAGE_URL_TEMPLATE_STORAGE_KEY = "adaPortraitImageUrlTemplate";
+
+  const DEFAULT_PORTRAIT_IMAGE_PROVIDER = "pollinations";
+  const PORTRAIT_IMAGE_PROVIDER_DEFAULT_TEMPLATES = {
+    pollinations: "https://image.pollinations.ai/prompt/{prompt}?seed={seed}",
+    // NOTE: Nanobanana URL formats vary by account/product.
+    // Configure via localStorage `adaPortraitImageUrlTemplate`.
+    nanobanana: "",
+    custom: "",
+  };
   const CURRENT_USER_STORAGE_KEY = "adaCurrentUser";
   const ACTIVE_CAMPAIGN_STORAGE_KEY = "adaActiveCampaignId";
   const ACTIVE_CHARACTER_STORAGE_KEY = "adaActiveCharacterId";
   const POST_SELECT_TARGET_STORAGE_KEY = "adaPostSelectTarget";
+
+  function getPortraitImageProvider() {
+    try {
+      const v = localStorage.getItem(PORTRAIT_IMAGE_PROVIDER_STORAGE_KEY);
+      return (v || "").trim() || DEFAULT_PORTRAIT_IMAGE_PROVIDER;
+    } catch {
+      return DEFAULT_PORTRAIT_IMAGE_PROVIDER;
+    }
+  }
+
+  function getPortraitImageUrlTemplate(provider) {
+    // Prefer explicit template set by the user.
+    try {
+      const v = localStorage.getItem(PORTRAIT_IMAGE_URL_TEMPLATE_STORAGE_KEY);
+      if (v && String(v).trim()) return String(v).trim();
+    } catch {
+      // ignore
+    }
+    return PORTRAIT_IMAGE_PROVIDER_DEFAULT_TEMPLATES[String(provider || "").toLowerCase()] || "";
+  }
+
+  function applyUrlTemplate(template, { encodedPrompt, seed }) {
+    const t = String(template || "");
+    if (!t) return "";
+    // Keep replacements minimal and predictable.
+    return t
+      .split("{prompt}").join(String(encodedPrompt))
+      .split("{seed}").join(encodeURIComponent(String(seed)));
+  }
 
   const CURRENT_PAGE = (() => {
     try {
@@ -1657,10 +1712,23 @@ import { apiGetJson, apiPostJson } from "./js/api-client.js";
   }
 
   function buildPortraitImageUrl(prompt, seed) {
-    // Uses the Pollinations free image generation endpoint.
-    // You can swap this for another provider if you prefer.
     const encodedPrompt = encodeURIComponent(prompt);
-    return `https://image.pollinations.ai/prompt/${encodedPrompt}?seed=${seed}`;
+    const provider = String(getPortraitImageProvider() || "").toLowerCase();
+
+    // Resolve template for the requested provider.
+    let template = getPortraitImageUrlTemplate(provider);
+
+    // If Nanobanana/custom isn't configured, fall back to Pollinations so the UI doesn't break.
+    if (!template) {
+      if (provider === "nanobanana" || provider === "custom") {
+        console.warn(
+          `[ADA] Portrait provider '${provider}' selected but no URL template configured; falling back to Pollinations.`
+        );
+      }
+      template = getPortraitImageUrlTemplate("pollinations");
+    }
+
+    return applyUrlTemplate(template, { encodedPrompt, seed });
   }
 
   function clearPortraitSelection() {

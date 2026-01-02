@@ -47,6 +47,26 @@ AI_DnD_Assistante-/
 	- Campaign dashboard tabs (Characters / Journals / Script / Dialogue)
 	- Dialogue tab uses a **non-editable message thread** + a bottom composer.
 
+#### Portrait image generation provider
+
+Character portrait thumbnails are generated client-side by building an image URL from a prompt + seed.
+
+- Default provider: **Pollinations**
+- To switch providers (e.g. to **Nanobanana**), set these keys in the browser console:
+	- `localStorage.setItem("adaPortraitImageProvider", "nanobanana")`
+	- `localStorage.setItem("adaPortraitImageUrlTemplate", "<YOUR_IMAGE_URL_TEMPLATE>")`
+
+The URL template must include:
+
+- `{prompt}` — URL-encoded prompt
+- `{seed}` — seed number
+
+Example (Pollinations):
+
+- `https://image.pollinations.ai/prompt/{prompt}?seed={seed}`
+
+If `nanobanana`/`custom` is selected but no template is configured, the UI will automatically fall back to Pollinations.
+
 ### Backend (Cloudflare Worker)
 
 - TypeScript Worker with KV storage (binding: `ADA_DATA`).

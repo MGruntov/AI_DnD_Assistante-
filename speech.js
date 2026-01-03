@@ -180,6 +180,12 @@ import { apiGetJson, apiPostJson } from "./js/api-client.js";
   const aiDmPoiPanelEl = document.getElementById("aiDmPointsOfInterest");
   const aiDmPoiListEl = document.getElementById("aiDmPointsOfInterestList");
 
+  // Shadow Arbiter debug sidebar (AI-solo canonTimeline)
+  const arbiterSidebarEl = document.getElementById("arbiterSidebar");
+  const arbiterAnswerBadgeEl = document.getElementById("arbiterAnswerBadge");
+  const arbiterMetaEl = document.getElementById("arbiterMeta");
+  const arbiterPromptEl = document.getElementById("arbiterPrompt");
+
   const adventuresList = document.getElementById("adventuresList");
   const adventuresMessage = document.getElementById("adventuresMessage");
 
@@ -1467,6 +1473,48 @@ import { apiGetJson, apiPostJson } from "./js/api-client.js";
       li.textContent = p;
       aiDmPoiListEl.appendChild(li);
     });
+  }
+
+  function renderShadowArbiterDebug(debug) {
+    if (!arbiterSidebarEl || !arbiterAnswerBadgeEl || !arbiterMetaEl || !arbiterPromptEl) return;
+
+    const d = debug && typeof debug === "object" ? debug : null;
+    const prompt = d && typeof d.prompt === "string" ? d.prompt : "";
+    const answer = d && (d.answer === "YES" || d.answer === "NO") ? d.answer : null;
+    const canonEventTitle = d && typeof d.canonEventTitle === "string" ? d.canonEventTitle : "";
+    const canonEventId = d && typeof d.canonEventId === "string" ? d.canonEventId : "";
+    const at = d && typeof d.at === "string" ? d.at : "";
+
+    const hasAnything = !!prompt || !!answer || !!canonEventTitle || !!canonEventId;
+    if (!hasAnything) {
+      arbiterSidebarEl.hidden = true;
+      arbiterPromptEl.value = "";
+      arbiterMetaEl.textContent = "";
+      arbiterAnswerBadgeEl.textContent = "—";
+      arbiterAnswerBadgeEl.classList.remove("arbiter-badge--yes", "arbiter-badge--no");
+      return;
+    }
+
+    arbiterSidebarEl.hidden = false;
+    arbiterPromptEl.value = prompt || "(no prompt captured)";
+
+    const when = at ? new Date(at) : null;
+    const whenLabel = when && !Number.isNaN(when.getTime()) ? when.toLocaleString() : "";
+    const titleBits = [canonEventTitle, canonEventId ? `[${canonEventId}]` : ""]
+      .filter(Boolean)
+      .join(" ");
+    arbiterMetaEl.textContent = [titleBits, whenLabel].filter(Boolean).join(" · ");
+
+    arbiterAnswerBadgeEl.classList.remove("arbiter-badge--yes", "arbiter-badge--no");
+    if (answer === "YES") {
+      arbiterAnswerBadgeEl.textContent = "YES";
+      arbiterAnswerBadgeEl.classList.add("arbiter-badge--yes");
+    } else if (answer === "NO") {
+      arbiterAnswerBadgeEl.textContent = "NO";
+      arbiterAnswerBadgeEl.classList.add("arbiter-badge--no");
+    } else {
+      arbiterAnswerBadgeEl.textContent = "—";
+    }
   }
 
   function setGeminiQuotaHint(hint) {
@@ -3093,6 +3141,13 @@ import { apiGetJson, apiPostJson } from "./js/api-client.js";
       const debug = payload.debug || null;
       lastAiMechanics = mechanics;
 
+      // Shadow Arbiter debug sidebar is only relevant for AI-DM (not Hidden Hand template-runs).
+      if (!isHiddenHand) {
+        renderShadowArbiterDebug(payload.arbiterDebug || null);
+      } else {
+        renderShadowArbiterDebug(null);
+      }
+
       // Quota hint: show exact remaining messages from backend quota.
       setGeminiQuotaHint(formatAiQuotaHint(payload.quota || null, payload.quotaHint || ""));
 
@@ -3800,9 +3855,14 @@ import { apiGetJson, apiPostJson } from "./js/api-client.js";
         renderAiDmCampaignProgress({ campaign, ai });
         // POIs are produced per-turn; the campaign details payload may not have them.
         renderAiDmPointsOfInterest(null);
+
+        // Shadow Arbiter debug sidebar (prompt + YES/NO)
+        renderShadowArbiterDebug(ai && ai.arbiterDebug ? ai.arbiterDebug : null);
       } else {
         renderAiDmCampaignProgress({ campaign: null, ai: null });
         renderAiDmPointsOfInterest(null);
+
+        renderShadowArbiterDebug(null);
       }
       if (dialogueTextInputEl) dialogueTextInputEl.disabled = journeyCompleted;
       if (dialogueSendBtn) dialogueSendBtn.disabled = journeyCompleted;

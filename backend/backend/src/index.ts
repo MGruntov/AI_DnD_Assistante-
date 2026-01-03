@@ -802,6 +802,14 @@ type TurnEntry = {
 	timestamp: string;
 };
 
+type ShadowArbiterDebug = {
+	prompt: string;
+	answer: 'YES' | 'NO' | null;
+	at: string;
+	canonEventId: string;
+	canonEventTitle: string;
+};
+
 type AIDMSessionState = {
 	campaignId: string;
 	characterId: string;
@@ -813,6 +821,8 @@ type AIDMSessionState = {
 	// Plot completion (finish line) is distinct from campaign completion/archival.
 	// When true, the UI should offer a "Complete Journey" action.
 	isPlotFinished?: boolean;
+	// Debug-only-ish: record the most recent Shadow Arbiter evaluation so the UI can show it.
+	lastArbiter?: ShadowArbiterDebug;
 	// Idempotency marker so backfills / retries don't double-award XP.
 	xpAwarded?: {
 		amount: number;
@@ -2589,18 +2599,19 @@ async function evaluateCanonEventResolution(
 		playerInput: string;
 		dmNarrative: string;
 	},
-): Promise<boolean | null> {
+	): Promise<{ verdict: boolean | null; prompt: string; raw: string | null }> {
+	const prompt = buildShadowArbiterUserPrompt(params);
 	const res = await callGeminiText(env, {
 		systemPrompt: buildShadowArbiterSystemPrompt(),
-		userPrompt: buildShadowArbiterUserPrompt(params),
+		userPrompt: prompt,
 		temperature: 0,
 		maxOutputTokens: 8,
 	});
-	if (!res.ok) return null;
+	if (!res.ok) return { verdict: null, prompt, raw: null };
 	const raw = String(res.text || '').trim().toUpperCase();
-	if (raw === 'YES' || raw.startsWith('YES')) return true;
-	if (raw === 'NO' || raw.startsWith('NO')) return false;
-	return false;
+	if (raw === 'YES' || raw.startsWith('YES')) return { verdict: true, prompt, raw };
+	if (raw === 'NO' || raw.startsWith('NO')) return { verdict: false, prompt, raw };
+	return { verdict: false, prompt, raw };
 }
 
 async function callAIDungeonMaster(
@@ -4929,12 +4940,20 @@ async function handleAIDMTurn(request: Request, env: Env, origin: string | null)
 			if (prog === 'fail') {
 				session.status = 'failed';
 			} else if ((prog === 'advance' || prog === 'complete') && currentEvent && session.status === 'active') {
-				const verdict = await evaluateCanonEventResolution(env, {
+				const arb = await evaluateCanonEventResolution(env, {
 					canonEvent: currentEvent,
 					playerInput,
 					dmNarrative: parsedNarrative,
 				});
-				if (verdict === true) {
+				const arbAnswer: 'YES' | 'NO' | null = arb.verdict === true ? 'YES' : arb.verdict === false ? 'NO' : null;
+				session.lastArbiter = {
+					prompt: arb.prompt,
+					answer: arbAnswer,
+					at: new Date().toISOString(),
+					canonEventId: currentEvent.id,
+					canonEventTitle: currentEvent.title,
+				};
+				if (arb.verdict === true) {
 					arbiterUsed = 'YES';
 					if (idx < canon.length - 1) {
 						session.checkpointIndex = idx + 1;
@@ -4943,7 +4962,7 @@ async function handleAIDMTurn(request: Request, env: Env, origin: string | null)
 						session.isPlotFinished = true;
 					}
 				} else {
-					arbiterUsed = verdict === null ? null : 'NO';
+					arbiterUsed = arb.verdict === null ? null : 'NO';
 				}
 			}
 			// Plot finished is determined by resolving the final canon event.
@@ -5061,6 +5080,7 @@ async function handleAIDMTurn(request: Request, env: Env, origin: string | null)
 			ai,
 			campaignPatch,
 			arbiter: arbiterUsed,
+			arbiterDebug: session.lastArbiter || null,
 			checkpointAdvanced: didAdvance,
 			quota,
 			quotaHint,
@@ -5376,6 +5396,7 @@ async function handleGetCampaignDetails(request: Request, env: Env, origin: stri
 				checkpoints,
 				status: session?.status || campaign.status || 'active',
 				isPlotFinished: Boolean(session?.isPlotFinished || (campaign as any)?.isPlotFinished),
+				arbiterDebug: session?.lastArbiter || null,
 				completedAt: campaign.completedAt || null,
 			};
 		}

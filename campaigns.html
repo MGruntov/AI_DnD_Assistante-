@@ -257,16 +257,35 @@
                   ADA is acting as the Dungeon Master for this campaign. Type what your character does next and send it to continue the story.
                 </p>
                 <div class="ai-dm-panel" id="aiDmPanel" hidden>
-                  <div class="ai-dm__controls">
-                    <button type="button" id="aiDmRollBtn" class="btn btn--secondary btn--small">Roll d20</button>
-                    <button type="button" id="completeJourneyBtn" class="btn btn--primary btn--small" hidden>Complete Journey</button>
-                    <span id="aiDmMechanics" class="ai-dm__mechanics text-muted"></span>
+                  <div class="ai-dm__layout">
+                    <div class="ai-dm__main">
+                      <div class="ai-dm__controls">
+                        <button type="button" id="aiDmRollBtn" class="btn btn--secondary btn--small">Roll d20</button>
+                        <button type="button" id="completeJourneyBtn" class="btn btn--primary btn--small" hidden>Complete Journey</button>
+                        <span id="aiDmMechanics" class="ai-dm__mechanics text-muted"></span>
+                      </div>
+                      <div id="aiDmQuotaHint" class="ai-dm__quota text-muted"></div>
+                      <section id="aiDmPointsOfInterest" class="ai-dm__poi" hidden>
+                        <h4 class="ai-dm__poi-title">Points of interest</h4>
+                        <ul id="aiDmPointsOfInterestList" class="ai-dm__poi-list"></ul>
+                      </section>
+                    </div>
+
+                    <aside id="arbiterSidebar" class="ai-dm__sidebar" hidden>
+                      <div class="ai-dm__sidebar-header">
+                        <h4 class="ai-dm__sidebar-title">Shadow Arbiter</h4>
+                        <span id="arbiterAnswerBadge" class="arbiter-badge">—</span>
+                      </div>
+                      <div id="arbiterMeta" class="text-muted"></div>
+                      <textarea
+                        id="arbiterPrompt"
+                        class="output__text arbiter-prompt"
+                        rows="10"
+                        placeholder="Arbiter prompt will appear here after ADA proposes an advance..."
+                        readonly
+                      ></textarea>
+                    </aside>
                   </div>
-                  <div id="aiDmQuotaHint" class="ai-dm__quota text-muted"></div>
-                  <section id="aiDmPointsOfInterest" class="ai-dm__poi" hidden>
-                    <h4 class="ai-dm__poi-title">Points of interest</h4>
-                    <ul id="aiDmPointsOfInterestList" class="ai-dm__poi-list"></ul>
-                  </section>
                 </div>
               </div>
             </section>

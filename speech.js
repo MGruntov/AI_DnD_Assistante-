@@ -3808,11 +3808,13 @@ import { apiGetJson, apiPostJson } from "./js/api-client.js";
         }
       }
 
-      // Configure delete/leave buttons based on campaign type and user role
+      // Configure delete/leave buttons based on campaign type and user role.
+      // NOTE: the DM is always a participant (even if not duplicated in participants[]).
       const isDm = campaign.dm === currentUser;
       const isParticipant =
-        Array.isArray(campaign.participants) &&
-        campaign.participants.includes(currentUser);
+        isDm ||
+        (Array.isArray(campaign.participants) &&
+          campaign.participants.includes(currentUser));
 
       // GM Tools permissions: DM-only and never available for AI-DM campaigns.
       const canUseGmTools = isDm && !isAi;
@@ -3927,7 +3929,8 @@ import { apiGetJson, apiPostJson } from "./js/api-client.js";
     const filtered = campaigns.filter((c) => {
       const isDm = c.dm === currentUser;
       const isParticipant =
-        Array.isArray(c.participants) && c.participants.includes(currentUser);
+        isDm ||
+        (Array.isArray(c.participants) && c.participants.includes(currentUser));
       if (!isParticipant) return false;
       if (filter === "dm") return isDm;
       if (filter === "player") return !isDm;

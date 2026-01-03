@@ -4939,13 +4939,17 @@ async function handleAIDMTurn(request: Request, env: Env, origin: string | null)
 			const prog = parsed.mechanics.progress;
 			if (prog === 'fail') {
 				session.status = 'failed';
-			} else if ((prog === 'advance' || prog === 'complete') && currentEvent && session.status === 'active') {
+			} else if (currentEvent && session.status === 'active') {
+				// Always evaluate the current canon event with Shadow Arbiter.
+				// Rationale: models often forget to emit progress=advance even after clearly resolving the event.
+				// The arbiter is conservative (NO if uncertain), so server-side auto-advance is safe and predictable.
 				const arb = await evaluateCanonEventResolution(env, {
 					canonEvent: currentEvent,
 					playerInput,
 					dmNarrative: parsedNarrative,
 				});
 				const arbAnswer: 'YES' | 'NO' | null = arb.verdict === true ? 'YES' : arb.verdict === false ? 'NO' : null;
+				arbiterUsed = arbAnswer;
 				session.lastArbiter = {
 					prompt: arb.prompt,
 					answer: arbAnswer,
@@ -4953,16 +4957,15 @@ async function handleAIDMTurn(request: Request, env: Env, origin: string | null)
 					canonEventId: currentEvent.id,
 					canonEventTitle: currentEvent.title,
 				};
+
+				// Auto-advance only when arbiter says YES.
 				if (arb.verdict === true) {
-					arbiterUsed = 'YES';
 					if (idx < canon.length - 1) {
 						session.checkpointIndex = idx + 1;
 						didAdvance = true;
 					} else {
 						session.isPlotFinished = true;
 					}
-				} else {
-					arbiterUsed = arb.verdict === null ? null : 'NO';
 				}
 			}
 			// Plot finished is determined by resolving the final canon event.

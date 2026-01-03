@@ -2053,6 +2053,10 @@ h1, h2, h3, h4,
   align-items: start;
 }
 
+.ai-dm__layout--solo {
+  grid-template-columns: 1fr;
+}
+
 .ai-dm__sidebar {
   border-radius: var(--radius-md);
   border: 1px solid rgba(224, 28, 41, 0.18);

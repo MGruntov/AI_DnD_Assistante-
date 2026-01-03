@@ -181,6 +181,7 @@ import { apiGetJson, apiPostJson } from "./js/api-client.js";
   const aiDmPoiListEl = document.getElementById("aiDmPointsOfInterestList");
 
   // Shadow Arbiter debug sidebar (AI-solo canonTimeline)
+  const aiDmLayoutEl = document.getElementById("aiDmLayout");
   const arbiterSidebarEl = document.getElementById("arbiterSidebar");
   const arbiterAnswerBadgeEl = document.getElementById("arbiterAnswerBadge");
   const arbiterMetaEl = document.getElementById("arbiterMeta");
@@ -1478,6 +1479,13 @@ import { apiGetJson, apiPostJson } from "./js/api-client.js";
   function renderShadowArbiterDebug(debug) {
     if (!arbiterSidebarEl || !arbiterAnswerBadgeEl || !arbiterMetaEl || !arbiterPromptEl) return;
 
+    // If the container exists, keep the layout sensible even when data is missing.
+    function setLayoutSolo(isSolo) {
+      if (!aiDmLayoutEl) return;
+      if (isSolo) aiDmLayoutEl.classList.add("ai-dm__layout--solo");
+      else aiDmLayoutEl.classList.remove("ai-dm__layout--solo");
+    }
+
     const d = debug && typeof debug === "object" ? debug : null;
     const prompt = d && typeof d.prompt === "string" ? d.prompt : "";
     const answer = d && (d.answer === "YES" || d.answer === "NO") ? d.answer : null;
@@ -1486,24 +1494,19 @@ import { apiGetJson, apiPostJson } from "./js/api-client.js";
     const at = d && typeof d.at === "string" ? d.at : "";
 
     const hasAnything = !!prompt || !!answer || !!canonEventTitle || !!canonEventId;
-    if (!hasAnything) {
-      arbiterSidebarEl.hidden = true;
-      arbiterPromptEl.value = "";
-      arbiterMetaEl.textContent = "";
-      arbiterAnswerBadgeEl.textContent = "—";
-      arbiterAnswerBadgeEl.classList.remove("arbiter-badge--yes", "arbiter-badge--no");
-      return;
-    }
-
+    // For now, always show the panel when present so the user has feedback.
     arbiterSidebarEl.hidden = false;
-    arbiterPromptEl.value = prompt || "(no prompt captured)";
+    setLayoutSolo(false);
+    arbiterPromptEl.value = prompt || "";
 
     const when = at ? new Date(at) : null;
     const whenLabel = when && !Number.isNaN(when.getTime()) ? when.toLocaleString() : "";
     const titleBits = [canonEventTitle, canonEventId ? `[${canonEventId}]` : ""]
       .filter(Boolean)
       .join(" ");
-    arbiterMetaEl.textContent = [titleBits, whenLabel].filter(Boolean).join(" · ");
+    arbiterMetaEl.textContent = hasAnything
+      ? [titleBits, whenLabel].filter(Boolean).join(" · ")
+      : "No Shadow Arbiter prompt received yet (canonTimeline may be disabled for this adventure, or the server isn't returning arbiterDebug).";
 
     arbiterAnswerBadgeEl.classList.remove("arbiter-badge--yes", "arbiter-badge--no");
     if (answer === "YES") {
@@ -3856,13 +3859,20 @@ import { apiGetJson, apiPostJson } from "./js/api-client.js";
         // POIs are produced per-turn; the campaign details payload may not have them.
         renderAiDmPointsOfInterest(null);
 
-        // Shadow Arbiter debug sidebar (prompt + YES/NO)
-        renderShadowArbiterDebug(ai && ai.arbiterDebug ? ai.arbiterDebug : null);
+        // Shadow Arbiter debug sidebar (prompt + YES/NO) – only meaningful for AI-solo.
+        if (isAiSolo) {
+          renderShadowArbiterDebug(ai && ai.arbiterDebug ? ai.arbiterDebug : null);
+        } else {
+          // Hide/collapse if not AI-solo.
+          if (arbiterSidebarEl) arbiterSidebarEl.hidden = true;
+          if (aiDmLayoutEl) aiDmLayoutEl.classList.add("ai-dm__layout--solo");
+        }
       } else {
         renderAiDmCampaignProgress({ campaign: null, ai: null });
         renderAiDmPointsOfInterest(null);
 
-        renderShadowArbiterDebug(null);
+        if (arbiterSidebarEl) arbiterSidebarEl.hidden = true;
+        if (aiDmLayoutEl) aiDmLayoutEl.classList.add("ai-dm__layout--solo");
       }
       if (dialogueTextInputEl) dialogueTextInputEl.disabled = journeyCompleted;
       if (dialogueSendBtn) dialogueSendBtn.disabled = journeyCompleted;

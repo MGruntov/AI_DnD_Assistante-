@@ -5169,6 +5169,7 @@ async function handleGetCampaignDetails(request: Request, env: Env, origin: stri
 
 	// AI-solo metadata for richer UI (XP, checkpoints, etc.).
 	let ai: any = null;
+	const isAiSoloByFlags = campaign?.dmIsAI === true || campaign?.mode === 'ai-solo';
 	try {
 		const storedSession = await env.ADA_DATA.get(`aiSession:${id}`);
 		if (storedSession) {
@@ -5197,6 +5198,29 @@ async function handleGetCampaignDetails(request: Request, env: Env, origin: stri
 		}
 	} catch {
 		ai = null;
+	}
+
+	// If this is an AI-solo campaign but the aiSession is missing/corrupt, still return
+	// whatever progress metadata we have on the campaign record so the UI can gate
+	// the "Complete campaign" button consistently.
+	if (!ai && isAiSoloByFlags) {
+		const checkpointIndex = Number.isFinite(Number((campaign as any)?.checkpointIndex)) ? Number((campaign as any).checkpointIndex) : 0;
+		const checkpointTotal = Number.isFinite(Number((campaign as any)?.checkpointTotal)) ? Number((campaign as any).checkpointTotal) : 0;
+		let xpReward: number | null = null;
+		try {
+			const storedXp = (campaign as any)?.xpReward;
+			xpReward = typeof storedXp === 'number' ? storedXp : await xpAwardForCampaign(env, campaign);
+		} catch {
+			xpReward = null;
+		}
+		ai = {
+			xpReward: typeof xpReward === 'number' ? xpReward : null,
+			checkpointIndex,
+			checkpointTotal,
+			checkpoints: [],
+			status: campaign.status || 'active',
+			completedAt: campaign.completedAt || null,
+		};
 	}
 
 	return jsonResponse({ ok: true, campaign, characters, partyStatus, journals, scripts, encounters, ai }, undefined, origin);
@@ -5821,12 +5845,129 @@ async function handlePostCampaignDetails(request: Request, env: Env, origin: str
 		if (!username) {
 			return errorResponse('username is required for completeCampaign', 400, origin);
 		}
-		// Only the DM can mark a (non-AI) campaign as completed.
+
+		const isAiSolo = campaign.dmIsAI || campaign.mode === 'ai-solo';
+		if (isAiSolo) {
+			// AI-solo: allow any participant to finalize the run *after* the saga is finished.
+			// This is a UX escape hatch for cases where the UI/metadata got out of sync.
+			const isParticipant =
+				campaign.dm === username ||
+				(Array.isArray(campaign.participants) && campaign.participants.includes(username));
+			if (!isParticipant) {
+				return errorResponse('You are not a participant in this campaign', 403, origin);
+			}
+
+			const sessionKey = `aiSession:${campaignId}`;
+			const storedSession = await env.ADA_DATA.get(sessionKey);
+			let session: AIDMSessionState | null = null;
+			if (storedSession) {
+				try {
+					session = JSON.parse(storedSession) as AIDMSessionState;
+				} catch {
+					session = null;
+				}
+			}
+
+			const adventureId = String(session?.adventureId || campaign.adventureId || '').trim();
+			const adventure = adventureId ? await getAdventureById(env, adventureId) : null;
+			const checkpoints = adventure && Array.isArray(adventure.checkpoints) ? adventure.checkpoints : [];
+			const checkpointTotal = checkpoints.length || (Number.isFinite(Number((campaign as any)?.checkpointTotal)) ? Number((campaign as any).checkpointTotal) : 0);
+			let checkpointIndexRaw = session && typeof session.checkpointIndex === 'number'
+				? session.checkpointIndex
+				: (Number.isFinite(Number((campaign as any)?.checkpointIndex)) ? Number((campaign as any).checkpointIndex) : 0);
+			if (checkpoints.length) checkpointIndexRaw = clampCheckpointIndex(checkpointIndexRaw, checkpoints);
+			const maxIdx = Math.max(0, checkpointTotal - 1);
+			const reachedFinishLine = checkpointTotal > 0 ? checkpointIndexRaw >= maxIdx : campaign.status === 'completed';
+
+			if (!reachedFinishLine && campaign.status !== 'completed') {
+				return errorResponse('This AI saga has not reached the finish line yet.', 400, origin);
+			}
+
+			let didCampaignWrite = false;
+			let didSessionWrite = false;
+			let xpAwarded: number | null = null;
+			const unlinkedCharacterIds: string[] = [];
+
+			// Ensure completion state is persisted.
+			if (campaign.status !== 'completed') {
+				campaign.status = 'completed';
+				campaign.completedAt = campaign.completedAt || new Date().toISOString();
+				didCampaignWrite = true;
+			}
+
+			// Best-effort backfill checkpoint metadata for UI.
+			if ((campaign as any).checkpointIndex !== checkpointIndexRaw) {
+				(campaign as any).checkpointIndex = checkpointIndexRaw;
+				didCampaignWrite = true;
+			}
+			if ((campaign as any).checkpointTotal !== checkpointTotal) {
+				(campaign as any).checkpointTotal = checkpointTotal;
+				didCampaignWrite = true;
+			}
+
+			// Award XP once if it was missed.
+			if (session && reachedFinishLine && !session.xpAwarded && session.characterId) {
+				try {
+					const xpAmount = await xpAwardForCampaign(env, campaign);
+					await awardXpToCharacter(env, session.characterId, xpAmount);
+					session.xpAwarded = { amount: xpAmount, at: new Date().toISOString() };
+					xpAwarded = xpAmount;
+					didSessionWrite = true;
+
+					const prev = Array.isArray(campaign.xpAwardedToCharacterIds) ? campaign.xpAwardedToCharacterIds : [];
+					if (!prev.includes(session.characterId)) prev.push(session.characterId);
+					campaign.xpAwardedToCharacterIds = prev;
+					(campaign as any).xpReward = xpAmount;
+					didCampaignWrite = true;
+				} catch (err) {
+					console.error('AI-solo completeCampaign: failed to award XP', err);
+				}
+			}
+
+			// Unlink characters from this campaign so the player can start a new saga.
+			// We keep campaign.linkedCharacterIds intact for historical display.
+			const linkedIds = Array.isArray(campaign.linkedCharacterIds) ? campaign.linkedCharacterIds : [];
+			for (const charId of linkedIds) {
+				const storedChar = await env.ADA_DATA.get(`character:${charId}`);
+				if (!storedChar) continue;
+				try {
+					const ch = JSON.parse(storedChar) as Character;
+					if (Array.isArray(ch.campaignIds) && ch.campaignIds.includes(campaignId)) {
+						ch.campaignIds = ch.campaignIds.filter((cid) => cid !== campaignId);
+						await env.ADA_DATA.put(`character:${charId}`, JSON.stringify(ch));
+						unlinkedCharacterIds.push(charId);
+					}
+				} catch {
+					// ignore malformed character
+				}
+			}
+
+			if (didCampaignWrite) {
+				await env.ADA_DATA.put(`campaign:${campaignId}`, JSON.stringify(campaign));
+			}
+			if (session && didSessionWrite) {
+				await env.ADA_DATA.put(sessionKey, JSON.stringify(session));
+			}
+
+			const ai = {
+				xpReward: typeof (campaign as any)?.xpReward === 'number' ? (campaign as any).xpReward : null,
+				checkpointIndex: checkpointIndexRaw,
+				checkpointTotal,
+				checkpoints,
+				status: session?.status || campaign.status || 'active',
+				completedAt: campaign.completedAt || null,
+			};
+
+			return jsonResponse(
+				{ ok: true, campaign, ai, xpAwarded, unlinkedCharacterIds },
+				{ status: 200 },
+				origin,
+			);
+		}
+
+		// Non-AI: Only the DM can mark a campaign as completed.
 		if (campaign.dm !== username) {
 			return errorResponse('Only the DM can complete this campaign', 403, origin);
-		}
-		if (campaign.dmIsAI || campaign.mode === 'ai-solo') {
-			return errorResponse('AI-driven solo campaigns complete automatically', 400, origin);
 		}
 
 		if (campaign.status === 'completed') {

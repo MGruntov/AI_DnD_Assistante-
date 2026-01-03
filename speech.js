@@ -3838,9 +3838,31 @@ import { apiGetJson, apiPostJson } from "./js/api-client.js";
 
       if (campaignCompleteBtn) {
         const alreadyCompleted = campaign.status === "completed";
-        const canComplete = !isAi && isDm && isParticipant && !alreadyCompleted;
-        campaignCompleteBtn.hidden = !canComplete;
-        campaignCompleteBtn.disabled = !canComplete;
+
+        // AI-solo: completion is determined by reaching the final checkpoint.
+        // We still provide a "Complete campaign" button as a finalize/unlock step
+        // (not an XP-award step), because it can also fix metadata drift.
+        const aiCheckpointIndex = ai && ai.checkpointIndex != null ? Number(ai.checkpointIndex) : null;
+        const aiCheckpointTotal = ai && ai.checkpointTotal != null ? Number(ai.checkpointTotal) : null;
+        const reachedFinishLine =
+          alreadyCompleted ||
+          (aiCheckpointIndex != null && aiCheckpointTotal != null
+            ? aiCheckpointIndex >= Math.max(0, aiCheckpointTotal - 1)
+            : false);
+
+        const canSeeComplete = isParticipant && (isAi || isDm);
+        const canClickComplete = isAi
+          ? reachedFinishLine
+          : (!alreadyCompleted && isDm && isParticipant);
+
+        campaignCompleteBtn.hidden = !canSeeComplete;
+        campaignCompleteBtn.disabled = !canClickComplete;
+        // Keep the label stable, but hint the reason when disabled for AI.
+        if (isAi) {
+          campaignCompleteBtn.textContent = canClickComplete ? "Complete campaign" : "Complete campaign (finish saga to unlock)";
+        } else {
+          campaignCompleteBtn.textContent = "Complete campaign";
+        }
       }
 
       if (campaignActionStatusEl) campaignActionStatusEl.textContent = "";
@@ -4889,13 +4911,19 @@ import { apiGetJson, apiPostJson } from "./js/api-client.js";
       if (!activeCampaignId || !activeCampaign) return;
       const currentUser = getCurrentUser();
       if (!currentUser) return;
+
+      const isAi = isAIDmCampaign(activeCampaign);
       const confirmed = window.confirm(
-        "Mark this campaign as completed? This will award XP to all linked characters.",
+        isAi
+          ? "Finalize this AI saga as completed? This will unlock your character so you can start a new saga."
+          : "Mark this campaign as completed? This will award XP to all linked characters.",
       );
       if (!confirmed) return;
 
       if (campaignActionStatusEl)
-        campaignActionStatusEl.textContent = "Completing campaign and awarding XP...";
+        campaignActionStatusEl.textContent = isAi
+          ? "Finalizing AI saga..."
+          : "Completing campaign and awarding XP...";
 
       apiPost("/api/campaigns/details", {
         action: "completeCampaign",
@@ -4913,10 +4941,21 @@ import { apiGetJson, apiPostJson } from "./js/api-client.js";
         const xp = result.data && typeof result.data.xpAwarded === "number"
           ? result.data.xpAwarded
           : null;
-        if (campaignActionStatusEl)
-          campaignActionStatusEl.textContent = xp != null
-            ? `Campaign completed. Awarded ${xp} XP.`
-            : "Campaign completed.";
+        const unlinked = result.data && Array.isArray(result.data.unlinkedCharacterIds)
+          ? result.data.unlinkedCharacterIds.length
+          : 0;
+
+        if (campaignActionStatusEl) {
+          if (isAi) {
+            campaignActionStatusEl.textContent = unlinked
+              ? `Saga finalized. Unlinked ${unlinked} character(s) for your next run.`
+              : "Saga finalized.";
+          } else {
+            campaignActionStatusEl.textContent = xp != null
+              ? `Campaign completed. Awarded ${xp} XP.`
+              : "Campaign completed.";
+          }
+        }
 
         // Refresh dashboard to update buttons + show any new state
         loadCampaignDetail(activeCampaignId);

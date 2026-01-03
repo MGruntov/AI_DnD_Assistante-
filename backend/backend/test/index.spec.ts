@@ -146,6 +146,130 @@ describe('ADA backend worker', () => {
 				expect(String(json?.error || '')).toMatch(/already linked/i);
 			}
 		});
+
+		it('allows a participant to finalize an AI-solo saga after the finish line (and unlinks the character)', async () => {
+			const username = `solo_user_${Math.random().toString(16).slice(2)}`;
+			const password = 'testpass123';
+
+			// Register
+			{
+				const req = new Request('http://example.com/api/register', {
+					method: 'POST',
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify({ username, password }),
+				});
+				const ctx = createExecutionContext();
+				const res = await worker.fetch(req, env, ctx);
+				await waitOnExecutionContext(ctx);
+				expect(res.status).toBe(201);
+			}
+
+			// Pick an adventureId
+			let adventureId = '';
+			{
+				const req = new Request('http://example.com/api/adventures');
+				const ctx = createExecutionContext();
+				const res = await worker.fetch(req, env, ctx);
+				await waitOnExecutionContext(ctx);
+				expect(res.status).toBe(200);
+				const json = (await res.json()) as any;
+				const adventures = Array.isArray(json?.adventures) ? json.adventures : [];
+				expect(adventures.length).toBeGreaterThan(0);
+				adventureId = String(adventures[0].id || '');
+				expect(adventureId.length).toBeGreaterThan(0);
+			}
+
+			// Forge a character
+			let characterId = '';
+			{
+				const req = new Request('http://example.com/api/characters/forge', {
+					method: 'POST',
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify({
+						username,
+						name: 'Finisher',
+						narrativeText: 'A brave level 1 fighter.',
+						dryRun: false,
+					}),
+				});
+				const ctx = createExecutionContext();
+				const res = await worker.fetch(req, env, ctx);
+				await waitOnExecutionContext(ctx);
+				expect(res.status).toBe(201);
+				const json = (await res.json()) as any;
+				characterId = String(json?.character?.id || '');
+				expect(characterId.length).toBeGreaterThan(0);
+			}
+
+			// Start AI-solo campaign
+			let campaignId = '';
+			{
+				const req = new Request('http://example.com/api/ai-campaigns/start', {
+					method: 'POST',
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify({ username, characterId, adventureId }),
+				});
+				const ctx = createExecutionContext();
+				const res = await worker.fetch(req, env, ctx);
+				await waitOnExecutionContext(ctx);
+				expect(res.status).toBe(201);
+				const json = (await res.json()) as any;
+				campaignId = String(json?.campaign?.id || '');
+				expect(campaignId.length).toBeGreaterThan(0);
+			}
+
+			// Force the session to the finish line (simulate reaching final checkpoint)
+			// We do this directly in KV to avoid relying on external AI calls.
+			{
+				const storedCampaign = await env.ADA_DATA.get(`campaign:${campaignId}`);
+				expect(storedCampaign).toBeTruthy();
+				const campaign = JSON.parse(String(storedCampaign)) as any;
+
+				const storedSession = await env.ADA_DATA.get(`aiSession:${campaignId}`);
+				expect(storedSession).toBeTruthy();
+				const session = JSON.parse(String(storedSession)) as any;
+
+				// Use a plausible 3-checkpoint saga (matches built-in Red Cloak), but the exact
+				// count doesn't matter as long as checkpointIndex >= checkpointTotal-1.
+				campaign.checkpointTotal = 3;
+				campaign.checkpointIndex = 2;
+				session.checkpointIndex = 2;
+				session.status = 'completed';
+				await env.ADA_DATA.put(`campaign:${campaignId}`, JSON.stringify(campaign));
+				await env.ADA_DATA.put(`aiSession:${campaignId}`, JSON.stringify(session));
+			}
+
+			// Finalize completion via campaigns/details action=completeCampaign as the participant
+			{
+				const req = new Request('http://example.com/api/campaigns/details', {
+					method: 'POST',
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify({ action: 'completeCampaign', campaignId, username }),
+				});
+				const ctx = createExecutionContext();
+				const res = await worker.fetch(req, env, ctx);
+				await waitOnExecutionContext(ctx);
+				expect(res.status).toBe(200);
+				const json = (await res.json()) as any;
+				expect(json?.ok).toBe(true);
+				expect(String(json?.campaign?.status || '')).toBe('completed');
+			}
+
+			// Character should now be unlinked from the campaign, allowing a new saga to start.
+			{
+				const req = new Request(`http://example.com/api/characters?user=${encodeURIComponent(username)}`);
+				const ctx = createExecutionContext();
+				const res = await worker.fetch(req, env, ctx);
+				await waitOnExecutionContext(ctx);
+				expect(res.status).toBe(200);
+				const json = (await res.json()) as any;
+				const chars = Array.isArray(json?.characters) ? json.characters : [];
+				const ch = chars.find((c: any) => String(c?.id || '') === characterId);
+				expect(ch).toBeTruthy();
+				const campaignIds = Array.isArray(ch?.campaignIds) ? ch.campaignIds.map((x: any) => String(x)) : [];
+				expect(campaignIds.includes(String(campaignId))).toBe(false);
+			}
+		});
 	});
 
 	describe('Grand Library of Fate templates', () => {

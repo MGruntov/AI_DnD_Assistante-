@@ -229,11 +229,11 @@ describe('ADA backend worker', () => {
 				expect(storedSession).toBeTruthy();
 				const session = JSON.parse(String(storedSession)) as any;
 
-				// Use a plausible 3-checkpoint saga (matches built-in Red Cloak), but the exact
-				// count doesn't matter as long as checkpointIndex >= checkpointTotal-1.
-				campaign.checkpointTotal = 3;
-				campaign.checkpointIndex = 2;
-				session.checkpointIndex = 2;
+				// Mark the saga as having reached its finish line.
+				// We set isPlotFinished to avoid coupling this test to a specific checkpoint total,
+				// since canonTimeline-driven adventures can have different numbers of events.
+				(campaign as any).isPlotFinished = true;
+				session.isPlotFinished = true;
 				session.status = 'completed';
 				await env.ADA_DATA.put(`campaign:${campaignId}`, JSON.stringify(campaign));
 				await env.ADA_DATA.put(`aiSession:${campaignId}`, JSON.stringify(session));
@@ -270,6 +270,114 @@ describe('ADA backend worker', () => {
 				expect(campaignIds.includes(String(campaignId))).toBe(false);
 			}
 		});
+
+			it('allows a participant to completeJourney once plot is finished (without archiving)', async () => {
+				const username = `journey_user_${Math.random().toString(16).slice(2)}`;
+				const password = 'testpass123';
+
+				// Register
+				{
+					const req = new Request('http://example.com/api/register', {
+						method: 'POST',
+						headers: { 'content-type': 'application/json' },
+						body: JSON.stringify({ username, password }),
+					});
+					const ctx = createExecutionContext();
+					const res = await worker.fetch(req, env, ctx);
+					await waitOnExecutionContext(ctx);
+					expect(res.status).toBe(201);
+				}
+
+				// Pick an adventureId
+				let adventureId = '';
+				{
+					const req = new Request('http://example.com/api/adventures');
+					const ctx = createExecutionContext();
+					const res = await worker.fetch(req, env, ctx);
+					await waitOnExecutionContext(ctx);
+					expect(res.status).toBe(200);
+					const json = (await res.json()) as any;
+					const adventures = Array.isArray(json?.adventures) ? json.adventures : [];
+					expect(adventures.length).toBeGreaterThan(0);
+					adventureId = String(adventures[0].id || '');
+					expect(adventureId.length).toBeGreaterThan(0);
+				}
+
+				// Forge a character
+				let characterId = '';
+				{
+					const req = new Request('http://example.com/api/characters/forge', {
+						method: 'POST',
+						headers: { 'content-type': 'application/json' },
+						body: JSON.stringify({
+							username,
+							name: 'Journeyer',
+							narrativeText: 'A brave level 1 fighter.',
+							dryRun: false,
+						}),
+					});
+					const ctx = createExecutionContext();
+					const res = await worker.fetch(req, env, ctx);
+					await waitOnExecutionContext(ctx);
+					expect(res.status).toBe(201);
+					const json = (await res.json()) as any;
+					characterId = String(json?.character?.id || '');
+					expect(characterId.length).toBeGreaterThan(0);
+				}
+
+				// Start AI-solo campaign
+				let campaignId = '';
+				{
+					const req = new Request('http://example.com/api/ai-campaigns/start', {
+						method: 'POST',
+						headers: { 'content-type': 'application/json' },
+						body: JSON.stringify({ username, characterId, adventureId }),
+					});
+					const ctx = createExecutionContext();
+					const res = await worker.fetch(req, env, ctx);
+					await waitOnExecutionContext(ctx);
+					expect(res.status).toBe(201);
+					const json = (await res.json()) as any;
+					campaignId = String(json?.campaign?.id || '');
+					expect(campaignId.length).toBeGreaterThan(0);
+				}
+
+				// Mark plot as finished directly in KV.
+				{
+					const storedSession = await env.ADA_DATA.get(`aiSession:${campaignId}`);
+					expect(storedSession).toBeTruthy();
+					const session = JSON.parse(String(storedSession)) as any;
+					session.isPlotFinished = true;
+					session.status = 'active';
+					await env.ADA_DATA.put(`aiSession:${campaignId}`, JSON.stringify(session));
+				}
+
+				// Complete journey
+				{
+					const req = new Request('http://example.com/api/campaigns/details', {
+						method: 'POST',
+						headers: { 'content-type': 'application/json' },
+						body: JSON.stringify({ action: 'completeJourney', campaignId, username }),
+					});
+					const ctx = createExecutionContext();
+					const res = await worker.fetch(req, env, ctx);
+					await waitOnExecutionContext(ctx);
+					expect(res.status).toBe(200);
+					const json = (await res.json()) as any;
+					expect(json?.ok).toBe(true);
+					expect(String(json?.sessionPatch?.status || '')).toBe('completed');
+					expect(Boolean(json?.sessionPatch?.isPlotFinished)).toBe(true);
+				}
+
+				// Session should now be locked as completed.
+				{
+					const storedSession = await env.ADA_DATA.get(`aiSession:${campaignId}`);
+					expect(storedSession).toBeTruthy();
+					const session = JSON.parse(String(storedSession)) as any;
+					expect(session.status).toBe('completed');
+					expect(Boolean(session.isPlotFinished)).toBe(true);
+				}
+			});
 	});
 
 	describe('Grand Library of Fate templates', () => {

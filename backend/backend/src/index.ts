@@ -784,6 +784,9 @@ type AdventureTemplate = {
 	summary: string;
 	primer: string;
 	checkpoints: string[];
+	// Optional condition-based canon events for stricter progression.
+	// If present, these should be used as the authoritative checkpoint pipeline.
+	canonTimeline?: CanonEvent[];
 	victoryConditions: string[];
 	defeatConditions: string[];
 	// New D1-backed metadata fields.
@@ -807,6 +810,9 @@ type AIDMSessionState = {
 	summary: string;
 	checkpointIndex: number;
 	status: 'active' | 'completed' | 'failed';
+	// Plot completion (finish line) is distinct from campaign completion/archival.
+	// When true, the UI should offer a "Complete Journey" action.
+	isPlotFinished?: boolean;
 	// Idempotency marker so backfills / retries don't double-award XP.
 	xpAwarded?: {
 		amount: number;
@@ -1164,18 +1170,24 @@ async function handleAIDMResolveCheck(request: Request, env: Env, origin: string
 		await env.ADA_DATA.put(sessionKey, JSON.stringify(session));
 
 		const checkpointTotal = Array.isArray(adventure.checkpoints) ? adventure.checkpoints.length : 0;
+		const canon = Array.isArray(adventure.canonTimeline) && adventure.canonTimeline.length
+			? adventure.canonTimeline
+			: null;
+		const checkpointTotalResolved = canon ? canon.length : checkpointTotal;
 		const ai = {
 			xpReward: typeof (campaign as any)?.xpReward === 'number' ? (campaign as any).xpReward : null,
 			checkpointIndex: session.checkpointIndex,
-			checkpointTotal,
-			checkpoints: Array.isArray(adventure.checkpoints) ? adventure.checkpoints : [],
+			checkpointTotal: checkpointTotalResolved,
+			checkpoints: canon ? canon.map((ev) => ev.id) : (Array.isArray(adventure.checkpoints) ? adventure.checkpoints : []),
 			status: session.status,
+			isPlotFinished: Boolean(session.isPlotFinished),
 			completedAt: campaign.completedAt || null,
 		};
 		const campaignPatch = {
 			xpReward: ai.xpReward,
 			checkpointIndex: session.checkpointIndex,
-			checkpointTotal,
+			checkpointTotal: checkpointTotalResolved,
+			isPlotFinished: Boolean(session.isPlotFinished),
 			status: campaign.status || null,
 			completedAt: campaign.completedAt || null,
 		};
@@ -1565,6 +1577,7 @@ type DbAdventureRow = {
 	summary: string;
 	primer: string;
 	checkpoints_json: string;
+	canon_timeline_json?: string;
 	victory_conditions_json: string;
 	defeat_conditions_json: string;
 	alignment: string | null;
@@ -1572,6 +1585,27 @@ type DbAdventureRow = {
 	creator_user_id: string | null;
 	created_at: string;
 };
+
+function safeParseJsonCanonTimeline(raw: unknown): CanonEvent[] {
+	if (Array.isArray(raw)) {
+		return raw
+			.map((v: any) => ({
+				id: String(v?.id || '').trim() || crypto.randomUUID(),
+				title: String(v?.title || '').trim(),
+				description: String(v?.description || '').trim(),
+				nudgeIdeas: Array.isArray(v?.nudgeIdeas) ? v.nudgeIdeas.map((x: any) => String(x || '').trim()).filter(Boolean) : undefined,
+			}))
+			.filter((ev) => ev.title && ev.description);
+	}
+	if (typeof raw !== 'string') return [];
+	try {
+		const parsed = JSON.parse(raw);
+		if (!Array.isArray(parsed)) return [];
+		return safeParseJsonCanonTimeline(parsed);
+	} catch {
+		return [];
+	}
+}
 
 function safeParseJsonStringArray(raw: unknown): string[] {
 	if (Array.isArray(raw)) {
@@ -1595,6 +1629,7 @@ function normalizeDbDifficulty(raw: unknown): AdventureDifficulty {
 }
 
 function dbAdventureRowToTemplate(row: DbAdventureRow): AdventureTemplate {
+	const canonTimeline = safeParseJsonCanonTimeline((row as any).canon_timeline_json);
 	return {
 		id: String(row.id),
 		title: String(row.title),
@@ -1604,6 +1639,7 @@ function dbAdventureRowToTemplate(row: DbAdventureRow): AdventureTemplate {
 		summary: String(row.summary || ''),
 		primer: String(row.primer || ''),
 		checkpoints: safeParseJsonStringArray(row.checkpoints_json),
+		...(canonTimeline.length ? { canonTimeline } : {}),
 		victoryConditions: safeParseJsonStringArray(row.victory_conditions_json),
 		defeatConditions: safeParseJsonStringArray(row.defeat_conditions_json),
 		alignment: row.alignment != null ? String(row.alignment) : '',
@@ -1634,6 +1670,7 @@ async function ensureAdventuresD1Schema(env: Env): Promise<void> {
 				  summary TEXT NOT NULL,
 				  primer TEXT NOT NULL,
 				  checkpoints_json TEXT NOT NULL,
+				  canon_timeline_json TEXT NOT NULL DEFAULT '[]',
 				  victory_conditions_json TEXT NOT NULL,
 				  defeat_conditions_json TEXT NOT NULL,
 				  alignment TEXT NOT NULL DEFAULT '',
@@ -1643,6 +1680,14 @@ async function ensureAdventuresD1Schema(env: Env): Promise<void> {
 				)`
 			)
 			.run();
+
+		// In case the table already existed from an older bootstrap, add the column.
+		// (This is safe in dev/test; in production migrations should handle it.)
+		try {
+			await db.prepare("ALTER TABLE adventures ADD COLUMN canon_timeline_json TEXT NOT NULL DEFAULT '[]'").run();
+		} catch {
+			// ignore: column already exists
+		}
 		await db
 			.prepare('CREATE INDEX IF NOT EXISTS idx_adventures_created_at ON adventures(created_at)')
 			.run();
@@ -1651,16 +1696,38 @@ async function ensureAdventuresD1Schema(env: Env): Promise<void> {
 			.run();
 
 		// Seed RED_CLOAK for backwards compatibility (frontend + tests rely on it).
+		const redCloakCanonTimeline: CanonEvent[] = [
+			{
+				id: 'crossroads',
+				title: 'The Crossroads',
+				description: "Condition: The player must choose the path to Grandmother’s and begin the journey.",
+			},
+			{
+				id: 'thicket',
+				title: 'The Thicket',
+				description: 'Condition: The player must navigate or survive the shadow-touched vines.',
+			},
+			{
+				id: 'wolves_hunt',
+				title: "The Wolf's Hunt",
+				description: 'Condition: The Shadow-Touched Wolf must be confronted or evaded.',
+			},
+			{
+				id: 'final_confrontation',
+				title: 'The Final Confrontation (Finish Line)',
+				description: 'Condition: The Wolf must be neutralized/killed, or the player must reach the cottage threshold.',
+			},
+		];
 		await db
 			.prepare(
 				`INSERT OR IGNORE INTO adventures (
 				  id, title, level_min, level_max, difficulty, summary, primer,
-				  checkpoints_json, victory_conditions_json, defeat_conditions_json,
+				  checkpoints_json, canon_timeline_json, victory_conditions_json, defeat_conditions_json,
 				  alignment, theme, creator_user_id, created_at
 				) VALUES (
 				  ?1, ?2, ?3, ?4, ?5, ?6, ?7,
-				  ?8, ?9, ?10,
-				  ?11, ?12, ?13, ?14
+				  ?8, ?9, ?10, ?11,
+				  ?12, ?13, ?14, ?15
 				)`
 			)
 			.bind(
@@ -1671,7 +1738,8 @@ async function ensureAdventuresD1Schema(env: Env): Promise<void> {
 				'Normal',
 				'A short, spooky solo adventure in the Whispering Woods where you must deliver spirit-warding herbs to your Grandmother while a corrupted wolf stalks the paths.',
 				'You are acting as an AI Dungeon Master for D&D 5e. You are running a contained adventure in the Whispering Woods. The player is a low-level messenger wearing a red cloak, tasked with carrying spirit-warding herbs to their Grandmother. The forest is haunted by a Shadow-Touched Wolf that corrupts spirits and hunts travelers. Keep the tone atmospheric and slightly eerie, but not grotesque.',
-				JSON.stringify(['crossroads', 'snaring_vines', 'cottage']),
+				JSON.stringify(redCloakCanonTimeline.map((ev) => ev.id)),
+				JSON.stringify(redCloakCanonTimeline),
 				JSON.stringify([
 					"The player successfully reaches Grandmother's cottage and delivers the spirit-warding herbs.",
 					'The Shadow-Touched Wolf is neutralized, driven away, or otherwise no longer a threat.',
@@ -1698,7 +1766,7 @@ async function dbListAdventures(env: Env): Promise<AdventureTemplate[]> {
 		const res = await db
 			.prepare(
 				`SELECT id, title, level_min, level_max, difficulty, summary, primer,
-				        checkpoints_json, victory_conditions_json, defeat_conditions_json,
+				        checkpoints_json, canon_timeline_json, victory_conditions_json, defeat_conditions_json,
 				        alignment, theme, creator_user_id, created_at
 				 FROM adventures
 				 ORDER BY created_at DESC`,
@@ -1711,7 +1779,7 @@ async function dbListAdventures(env: Env): Promise<AdventureTemplate[]> {
 			const res2 = await db
 				.prepare(
 					`SELECT id, title, level_min, level_max, difficulty, summary, primer,
-					        checkpoints_json, victory_conditions_json, defeat_conditions_json,
+					        checkpoints_json, canon_timeline_json, victory_conditions_json, defeat_conditions_json,
 					        alignment, theme, creator_user_id, created_at
 					 FROM adventures
 					 ORDER BY created_at DESC`,
@@ -1728,7 +1796,7 @@ async function dbListAdventures(env: Env): Promise<AdventureTemplate[]> {
 			const res = await db
 				.prepare(
 					`SELECT id, title, level_min, level_max, difficulty, summary, primer,
-					        checkpoints_json, victory_conditions_json, defeat_conditions_json,
+					        checkpoints_json, canon_timeline_json, victory_conditions_json, defeat_conditions_json,
 					        alignment, theme, creator_user_id, created_at
 					 FROM adventures
 					 ORDER BY created_at DESC`,
@@ -1749,7 +1817,7 @@ async function dbGetAdventureById(env: Env, id: string): Promise<AdventureTempla
 		const res = await db
 			.prepare(
 				`SELECT id, title, level_min, level_max, difficulty, summary, primer,
-				        checkpoints_json, victory_conditions_json, defeat_conditions_json,
+				        checkpoints_json, canon_timeline_json, victory_conditions_json, defeat_conditions_json,
 				        alignment, theme, creator_user_id, created_at
 				 FROM adventures
 				 WHERE id = ?1
@@ -1765,7 +1833,7 @@ async function dbGetAdventureById(env: Env, id: string): Promise<AdventureTempla
 			const res = await db
 				.prepare(
 					`SELECT id, title, level_min, level_max, difficulty, summary, primer,
-					        checkpoints_json, victory_conditions_json, defeat_conditions_json,
+					        checkpoints_json, canon_timeline_json, victory_conditions_json, defeat_conditions_json,
 					        alignment, theme, creator_user_id, created_at
 					 FROM adventures
 					 WHERE id = ?1
@@ -1792,6 +1860,7 @@ async function dbInsertAdventure(
 		summary: string;
 		primer: string;
 		checkpoints_json: string;
+		canon_timeline_json?: string;
 		victory_conditions_json: string;
 		defeat_conditions_json: string;
 		alignment: string;
@@ -1807,12 +1876,12 @@ async function dbInsertAdventure(
 			.prepare(
 			`INSERT INTO adventures (
 				id, title, level_min, level_max, difficulty, summary, primer,
-				checkpoints_json, victory_conditions_json, defeat_conditions_json,
+				checkpoints_json, canon_timeline_json, victory_conditions_json, defeat_conditions_json,
 				alignment, theme, creator_user_id, created_at
 			) VALUES (
 				?1, ?2, ?3, ?4, ?5, ?6, ?7,
-				?8, ?9, ?10,
-				?11, ?12, ?13, ?14
+				?8, ?9, ?10, ?11,
+				?12, ?13, ?14, ?15
 			)`,
 			)
 			.bind(
@@ -1824,6 +1893,7 @@ async function dbInsertAdventure(
 				row.summary,
 				row.primer,
 				row.checkpoints_json,
+				row.canon_timeline_json ?? '[]',
 				row.victory_conditions_json,
 				row.defeat_conditions_json,
 				row.alignment,
@@ -1838,12 +1908,12 @@ async function dbInsertAdventure(
 			.prepare(
 				`INSERT INTO adventures (
 					id, title, level_min, level_max, difficulty, summary, primer,
-					checkpoints_json, victory_conditions_json, defeat_conditions_json,
+					checkpoints_json, canon_timeline_json, victory_conditions_json, defeat_conditions_json,
 					alignment, theme, creator_user_id, created_at
 				) VALUES (
 					?1, ?2, ?3, ?4, ?5, ?6, ?7,
-					?8, ?9, ?10,
-					?11, ?12, ?13, ?14
+					?8, ?9, ?10, ?11,
+					?12, ?13, ?14, ?15
 				)`,
 			)
 			.bind(
@@ -1855,6 +1925,7 @@ async function dbInsertAdventure(
 				row.summary,
 				row.primer,
 				row.checkpoints_json,
+				row.canon_timeline_json ?? '[]',
 				row.victory_conditions_json,
 				row.defeat_conditions_json,
 				row.alignment,
@@ -1989,6 +2060,7 @@ async function handlePublishAdventure(request: Request, env: Env, origin: string
 			summary: adventure.summary,
 			primer: adventure.primer,
 			checkpoints_json: JSON.stringify(adventure.checkpoints || []),
+			canon_timeline_json: '[]',
 			victory_conditions_json: JSON.stringify(adventure.victoryConditions || []),
 			defeat_conditions_json: JSON.stringify(adventure.defeatConditions || []),
 			alignment: alignment || '',
@@ -2404,7 +2476,9 @@ function buildAIDMSystemPrompt(): string {
 		'',
 		'Do not include any other sections or markup.',
 		'If no check is required, set check to "none" and dc to 0 and progress to "stay".',
-		'Use progress="advance" only when the narration clearly transitions the player into the next checkpoint scene.',
+		'IMPORTANT: The server enforces canon progress. The progress value is only a suggestion.',
+		'Use progress="advance" ONLY when the CURRENT canon event/checkpoint has clearly been resolved in the narration AND the player is ready to move on.',
+		'Use progress="stay" otherwise (default).',
 		'Use progress="complete" only when victory conditions are met. Use progress="fail" only on a clear defeat state.',
 	].join('\n');
 }
@@ -2415,7 +2489,13 @@ function buildAIDMUserPrompt(
 	character: Character,
 	playerInput: string,
 ): string {
-	const checkpointId = adventure.checkpoints[session.checkpointIndex] || 'start';
+	const canon = Array.isArray(adventure.canonTimeline) && adventure.canonTimeline.length
+		? adventure.canonTimeline
+		: null;
+	const checkpoints = canon ? canon.map((ev) => ev.id) : adventure.checkpoints;
+	const clampedIdx = clampCheckpointIndex(session.checkpointIndex, checkpoints);
+	const checkpointId = checkpoints[clampedIdx] || 'start';
+	const currentCanon = canon ? canon[clampedIdx] : null;
 	const history = buildSessionHistory(session.log);
 	const characterSummary = buildCharacterSummary(character);
 	const victory = adventure.victoryConditions.join('\n- ');
@@ -2426,8 +2506,21 @@ function buildAIDMUserPrompt(
 		`Primer: ${adventure.primer}`,
 		'',
 		`Current checkpoint: ${checkpointId}`,
-		'Checkpoints (in narrative order):',
-		adventure.checkpoints.map((c, idx) => `${idx === session.checkpointIndex ? '>>' : '  '} ${idx + 1}. ${c}`).join('\n'),
+		currentCanon
+			? [
+				`CURRENT CANON EVENT: ${currentCanon.title} [${currentCanon.id}]`,
+				'CANON EVENT COMPLETION CONDITION (must be satisfied before advancing):',
+				currentCanon.description,
+				'',
+				'Canon events (in strict narrative order; do NOT skip ahead):',
+				(canon || [])
+					.map((ev, idx) => `${idx === clampedIdx ? '>>' : '  '} ${idx + 1}. ${ev.title} (${ev.id})`)
+					.join('\n'),
+			].join('\n')
+			: [
+				'Checkpoints (in narrative order):',
+				checkpoints.map((c, idx) => `${idx === clampedIdx ? '>>' : '  '} ${idx + 1}. ${c}`).join('\n'),
+			].join('\n'),
 		'',
 		'Victory conditions:',
 		`- ${victory}`,
@@ -2446,8 +2539,68 @@ function buildAIDMUserPrompt(
 		'',
 		`New player input: ${playerInput}`,
 		'',
-		'Based on this, narrate the next beat of the scene at the current checkpoint, then specify any mechanical check as per the output format.',
+		'Based on this, narrate the next beat of the scene at the CURRENT checkpoint/canon event.',
+		'IMPORTANT: Stay focused on resolving the CURRENT checkpoint only. Do not introduce or transition into future checkpoints/canon events unless the current one is clearly resolved.',
+		'Then specify any mechanical check as per the output format.',
 	].join('\n');
+}
+
+function buildShadowArbiterSystemPrompt(): string {
+	return [
+		'You are the Shadow Arbiter: a strict logical validator for canon event completion in a D&D narrative.',
+		'',
+		'You will be given:',
+		'- A canon event completion condition',
+		'- The player\'s latest input',
+		'- The DM\'s latest narration',
+		'',
+		'Task: Decide whether the canon event\'s completion condition has been satisfied by what happened.',
+		'',
+		'Rules:',
+		'- Answer ONLY with YES or NO (single token).',
+		'- If uncertain, answer NO.',
+		'- Do not explain your reasoning.',
+	].join('\n');
+}
+
+function buildShadowArbiterUserPrompt(params: {
+	canonEvent: CanonEvent;
+	playerInput: string;
+	dmNarrative: string;
+}): string {
+	return [
+		`CANON EVENT: ${params.canonEvent.title} [${params.canonEvent.id}]`,
+		'COMPLETION CONDITION:',
+		params.canonEvent.description,
+		'',
+		`PLAYER INPUT: ${truncateForPrompt(params.playerInput, 800)}`,
+		'',
+		'DM NARRATION:',
+		truncateForPrompt(params.dmNarrative, 2000),
+		'',
+		'Is the completion condition satisfied? Answer YES or NO only.',
+	].join('\n');
+}
+
+async function evaluateCanonEventResolution(
+	env: Env,
+	params: {
+		canonEvent: CanonEvent;
+		playerInput: string;
+		dmNarrative: string;
+	},
+): Promise<boolean | null> {
+	const res = await callGeminiText(env, {
+		systemPrompt: buildShadowArbiterSystemPrompt(),
+		userPrompt: buildShadowArbiterUserPrompt(params),
+		temperature: 0,
+		maxOutputTokens: 8,
+	});
+	if (!res.ok) return null;
+	const raw = String(res.text || '').trim().toUpperCase();
+	if (raw === 'YES' || raw.startsWith('YES')) return true;
+	if (raw === 'NO' || raw.startsWith('NO')) return false;
+	return false;
 }
 
 async function callAIDungeonMaster(
@@ -4644,6 +4797,11 @@ async function handleAIDMTurn(request: Request, env: Env, origin: string | null)
 		return errorResponse('AI-DM session is missing a linked character', 500, origin);
 	}
 
+	// If the player has explicitly completed the journey (separate from campaign archival), block further AI turns.
+	if (session.status === 'completed' && session.isPlotFinished) {
+		return errorResponse('This journey has already been completed. You can finalize/archived it from the campaign actions.', 400, origin);
+	}
+
 	const storedCharacter = await env.ADA_DATA.get(`character:${session.characterId}`);
 	if (!storedCharacter) {
 		return errorResponse('Linked character not found for AI-DM session', 500, origin);
@@ -4729,6 +4887,8 @@ async function handleAIDMTurn(request: Request, env: Env, origin: string | null)
 	};
 	let quotaHint: string | null = null;
 	let usedModelMeta: AIDMModelMeta | null = null;
+	let didAdvance = false;
+	let arbiterUsed: 'YES' | 'NO' | null = null;
 	try {
 		const aiCall = await callAIDungeonMaster(env, adventure, session, character, playerInput);
 		if (!aiCall.ok) {
@@ -4752,15 +4912,54 @@ async function handleAIDMTurn(request: Request, env: Env, origin: string | null)
 		const parsed = parseAIDMResponse(aiCall.text);
 		parsedNarrative = parsed.narrative;
 		parsedMechanics = parsed.mechanics;
-		// Apply DM-directed progress (checkpoint advances/completion/failure).
-		const progressResult = applyProgressDirective(session, adventure, parsed.mechanics.progress);
-		// Normalize checkpoint index against the current adventure so older sessions stay accurate.
-		session.checkpointIndex = clampCheckpointIndex(session.checkpointIndex, adventure.checkpoints);
-		// If the player has reached the final checkpoint, treat the saga as complete.
-		const maxIdx = Math.max(0, adventure.checkpoints.length - 1);
-		if (session.status === 'active' && session.checkpointIndex >= maxIdx) {
-			session.status = 'completed';
+
+		// Progression logic:
+		// - If a condition-based canonTimeline exists, use Shadow Arbiter to validate proposed advances.
+		// - Otherwise, fall back to legacy progress directives.
+		const canon = Array.isArray(adventure.canonTimeline) && adventure.canonTimeline.length
+			? adventure.canonTimeline
+			: null;
+		if (canon) {
+			// Clamp against canon IDs.
+			const canonIds = canon.map((ev) => ev.id);
+			session.checkpointIndex = clampCheckpointIndex(session.checkpointIndex, canonIds);
+			const idx = session.checkpointIndex;
+			const currentEvent = canon[idx] || null;
+			const prog = parsed.mechanics.progress;
+			if (prog === 'fail') {
+				session.status = 'failed';
+			} else if ((prog === 'advance' || prog === 'complete') && currentEvent && session.status === 'active') {
+				const verdict = await evaluateCanonEventResolution(env, {
+					canonEvent: currentEvent,
+					playerInput,
+					dmNarrative: parsedNarrative,
+				});
+				if (verdict === true) {
+					arbiterUsed = 'YES';
+					if (idx < canon.length - 1) {
+						session.checkpointIndex = idx + 1;
+						didAdvance = true;
+					} else {
+						session.isPlotFinished = true;
+					}
+				} else {
+					arbiterUsed = verdict === null ? null : 'NO';
+				}
+			}
+			// Plot finished is determined by resolving the final canon event.
+			if (session.checkpointIndex >= Math.max(0, canon.length - 1) && session.isPlotFinished !== true) {
+				// Don't auto-finish plot unless explicitly resolved by arbiter.
+				session.isPlotFinished = session.isPlotFinished ?? false;
+			}
+		} else {
+			// Apply DM-directed progress (checkpoint advances/completion/failure).
+			applyProgressDirective(session, adventure, parsed.mechanics.progress);
+			// Normalize checkpoint index against the current adventure so older sessions stay accurate.
+			session.checkpointIndex = clampCheckpointIndex(session.checkpointIndex, adventure.checkpoints);
+			// Legacy adventures: plot finished tracks completion.
+			if (session.status === 'completed') session.isPlotFinished = true;
 		}
+
 		// Remember the latest requested check so it can be resolved separately.
 		const nextCheck = parsed.mechanics.checkDescription;
 		const nextDc = typeof parsed.mechanics.dc === 'number' ? parsed.mechanics.dc : 0;
@@ -4777,32 +4976,6 @@ async function handleAIDMTurn(request: Request, env: Env, origin: string | null)
 			session.pendingCheck = null;
 		}
 
-		// Award XP only once, on the transition into completed.
-		if (progressResult.statusBefore !== 'completed' && session.status === 'completed' && !session.xpAwarded) {
-			const xpAmount = await xpAwardForCampaign(env, campaign);
-			try {
-				await awardXpToCharacter(env, session.characterId, xpAmount);
-				session.xpAwarded = { amount: xpAmount, at: new Date().toISOString() };
-			} catch (err) {
-				console.error('Failed to award XP on completion', err);
-			}
-
-			// Persist campaign completion so the UI can allow "quit" / archive flows.
-			try {
-				campaign.status = 'completed';
-				campaign.completedAt = campaign.completedAt || new Date().toISOString();
-				const prev = Array.isArray(campaign.xpAwardedToCharacterIds) ? campaign.xpAwardedToCharacterIds : [];
-				if (!prev.includes(session.characterId)) prev.push(session.characterId);
-				campaign.xpAwardedToCharacterIds = prev;
-				// Convenience metadata for UIs.
-				(campaign as any).xpReward = xpAmount;
-				(campaign as any).checkpointIndex = session.checkpointIndex;
-				(campaign as any).checkpointTotal = adventure.checkpoints.length;
-				await env.ADA_DATA.put(`campaign:${campaignId}`, JSON.stringify(campaign));
-			} catch (e) {
-				console.error('Failed to persist AI-solo campaign completion state', e);
-			}
-		}
 	} catch (err) {
 		console.error('AI-DM turn handler failed unexpectedly', err);
 		quotaHint = inferQuotaHintFromAIDMError(err);
@@ -4828,18 +5001,20 @@ async function handleAIDMTurn(request: Request, env: Env, origin: string | null)
 		campaign.status = 'active';
 		didCampaignWrite = true;
 	}
-	if (session.status === 'completed' && campaign.status !== 'completed') {
-		campaign.status = 'completed';
-		campaign.completedAt = campaign.completedAt || new Date().toISOString();
-		didCampaignWrite = true;
-	}
-	const checkpointTotal = Array.isArray(adventure.checkpoints) ? adventure.checkpoints.length : 0;
+	const canon = Array.isArray(adventure.canonTimeline) && adventure.canonTimeline.length
+		? adventure.canonTimeline
+		: null;
+	const checkpointTotal = canon ? canon.length : (Array.isArray(adventure.checkpoints) ? adventure.checkpoints.length : 0);
 	if ((campaign as any).checkpointIndex !== session.checkpointIndex) {
 		(campaign as any).checkpointIndex = session.checkpointIndex;
 		didCampaignWrite = true;
 	}
 	if ((campaign as any).checkpointTotal !== checkpointTotal) {
 		(campaign as any).checkpointTotal = checkpointTotal;
+		didCampaignWrite = true;
+	}
+	if ((campaign as any).isPlotFinished !== Boolean(session.isPlotFinished)) {
+		(campaign as any).isPlotFinished = Boolean(session.isPlotFinished);
 		didCampaignWrite = true;
 	}
 	if (didCampaignWrite) {
@@ -4864,6 +5039,7 @@ async function handleAIDMTurn(request: Request, env: Env, origin: string | null)
 		xpReward: typeof xpReward === 'number' ? xpReward : null,
 		checkpointIndex: session.checkpointIndex,
 		checkpointTotal,
+		isPlotFinished: Boolean(session.isPlotFinished),
 		status: campaign.status || null,
 		completedAt: campaign.completedAt || null,
 	};
@@ -4871,8 +5047,9 @@ async function handleAIDMTurn(request: Request, env: Env, origin: string | null)
 		xpReward: campaignPatch.xpReward,
 		checkpointIndex: session.checkpointIndex,
 		checkpointTotal,
-		checkpoints: Array.isArray(adventure.checkpoints) ? adventure.checkpoints : [],
+		checkpoints: canon ? canon.map((ev) => ev.id) : (Array.isArray(adventure.checkpoints) ? adventure.checkpoints : []),
 		status: session.status,
+		isPlotFinished: Boolean(session.isPlotFinished),
 		completedAt: campaign.completedAt || null,
 	};
 
@@ -4883,6 +5060,8 @@ async function handleAIDMTurn(request: Request, env: Env, origin: string | null)
 			mechanics: parsedMechanics,
 			ai,
 			campaignPatch,
+			arbiter: arbiterUsed,
+			checkpointAdvanced: didAdvance,
 			quota,
 			quotaHint,
 			aiModel: usedModelMeta && usedModelMeta.modelName
@@ -5176,7 +5355,10 @@ async function handleGetCampaignDetails(request: Request, env: Env, origin: stri
 			const session = JSON.parse(storedSession) as AIDMSessionState;
 			const adventureId = String(session?.adventureId || campaign.adventureId || '').trim();
 			const adventure = adventureId ? await getAdventureById(env, adventureId) : null;
-			const checkpoints = adventure && Array.isArray(adventure.checkpoints) ? adventure.checkpoints : [];
+			const canon = adventure && Array.isArray(adventure.canonTimeline) && adventure.canonTimeline.length ? adventure.canonTimeline : null;
+			const checkpoints = canon
+				? canon.map((ev) => ev.id)
+				: (adventure && Array.isArray(adventure.checkpoints) ? adventure.checkpoints : []);
 			const rawIdx = typeof session?.checkpointIndex === 'number' ? session.checkpointIndex : 0;
 			const checkpointIndex = checkpoints.length ? clampCheckpointIndex(rawIdx, checkpoints) : rawIdx;
 			const checkpointTotal = checkpoints.length || (Number.isFinite(Number((campaign as any)?.checkpointTotal)) ? Number((campaign as any).checkpointTotal) : 0);
@@ -5193,6 +5375,7 @@ async function handleGetCampaignDetails(request: Request, env: Env, origin: stri
 				checkpointTotal,
 				checkpoints,
 				status: session?.status || campaign.status || 'active',
+				isPlotFinished: Boolean(session?.isPlotFinished || (campaign as any)?.isPlotFinished),
 				completedAt: campaign.completedAt || null,
 			};
 		}
@@ -5219,6 +5402,7 @@ async function handleGetCampaignDetails(request: Request, env: Env, origin: stri
 			checkpointTotal,
 			checkpoints: [],
 			status: campaign.status || 'active',
+			isPlotFinished: Boolean((campaign as any)?.isPlotFinished),
 			completedAt: campaign.completedAt || null,
 		};
 	}
@@ -5840,6 +6024,57 @@ async function handlePostCampaignDetails(request: Request, env: Env, origin: str
 		return jsonResponse({ ok: true }, { status: 200 }, origin);
 	}
 
+	if (action === 'completeJourney') {
+		const username = String(body?.username ?? '').trim();
+		if (!username) {
+			return errorResponse('username is required for completeJourney', 400, origin);
+		}
+
+		const isAiSolo = campaign.dmIsAI || campaign.mode === 'ai-solo';
+		if (!isAiSolo) {
+			return errorResponse('completeJourney is only available for AI-driven solo campaigns', 400, origin);
+		}
+
+		const isParticipant =
+			campaign.dm === username ||
+			(Array.isArray(campaign.participants) && campaign.participants.includes(username));
+		if (!isParticipant) {
+			return errorResponse('You are not a participant in this campaign', 403, origin);
+		}
+
+		const sessionKey = `aiSession:${campaignId}`;
+		const storedSession = await env.ADA_DATA.get(sessionKey);
+		if (!storedSession) {
+			return errorResponse('AI session not found', 404, origin);
+		}
+		let session: AIDMSessionState;
+		try {
+			session = JSON.parse(storedSession) as AIDMSessionState;
+		} catch {
+			return errorResponse('Corrupted AI session record', 500, origin);
+		}
+
+		if (!session.isPlotFinished) {
+			return errorResponse('The plot is not finished yet. Keep playing to reach the finish line.', 400, origin);
+		}
+
+		if (session.status !== 'completed') {
+			session.status = 'completed';
+			await env.ADA_DATA.put(sessionKey, JSON.stringify(session));
+		}
+
+		// Mirror plot-finished metadata onto the campaign record for UI resiliency.
+		(campaign as any).isPlotFinished = true;
+		(campaign as any).journeyCompletedAt = (campaign as any).journeyCompletedAt || new Date().toISOString();
+		await env.ADA_DATA.put(`campaign:${campaignId}`, JSON.stringify(campaign));
+
+		return jsonResponse(
+			{ ok: true, campaign, sessionPatch: { status: session.status, isPlotFinished: true } },
+			{ status: 200 },
+			origin,
+		);
+	}
+
 	if (action === 'completeCampaign') {
 		const username = String(body?.username ?? '').trim();
 		if (!username) {
@@ -5870,14 +6105,18 @@ async function handlePostCampaignDetails(request: Request, env: Env, origin: str
 
 			const adventureId = String(session?.adventureId || campaign.adventureId || '').trim();
 			const adventure = adventureId ? await getAdventureById(env, adventureId) : null;
-			const checkpoints = adventure && Array.isArray(adventure.checkpoints) ? adventure.checkpoints : [];
+			const canon = adventure && Array.isArray(adventure.canonTimeline) && adventure.canonTimeline.length ? adventure.canonTimeline : null;
+			const checkpoints = canon
+				? canon.map((ev) => ev.id)
+				: (adventure && Array.isArray(adventure.checkpoints) ? adventure.checkpoints : []);
 			const checkpointTotal = checkpoints.length || (Number.isFinite(Number((campaign as any)?.checkpointTotal)) ? Number((campaign as any).checkpointTotal) : 0);
 			let checkpointIndexRaw = session && typeof session.checkpointIndex === 'number'
 				? session.checkpointIndex
 				: (Number.isFinite(Number((campaign as any)?.checkpointIndex)) ? Number((campaign as any).checkpointIndex) : 0);
 			if (checkpoints.length) checkpointIndexRaw = clampCheckpointIndex(checkpointIndexRaw, checkpoints);
 			const maxIdx = Math.max(0, checkpointTotal - 1);
-			const reachedFinishLine = checkpointTotal > 0 ? checkpointIndexRaw >= maxIdx : campaign.status === 'completed';
+			const isPlotFinished = Boolean(session?.isPlotFinished || (campaign as any)?.isPlotFinished);
+			const reachedFinishLine = isPlotFinished || (checkpointTotal > 0 ? checkpointIndexRaw >= maxIdx : campaign.status === 'completed');
 
 			if (!reachedFinishLine && campaign.status !== 'completed') {
 				return errorResponse('This AI saga has not reached the finish line yet.', 400, origin);
@@ -5955,6 +6194,7 @@ async function handlePostCampaignDetails(request: Request, env: Env, origin: str
 				checkpointTotal,
 				checkpoints,
 				status: session?.status || campaign.status || 'active',
+				isPlotFinished,
 				completedAt: campaign.completedAt || null,
 			};
 

@@ -174,6 +174,7 @@ import { apiGetJson, apiPostJson } from "./js/api-client.js";
   const aiDmNoticeEl = document.getElementById("aiDmNotice");
   const aiDmPanelEl = document.getElementById("aiDmPanel");
   const aiDmRollBtn = document.getElementById("aiDmRollBtn");
+  const completeJourneyBtn = document.getElementById("completeJourneyBtn");
   const aiDmMechanicsEl = document.getElementById("aiDmMechanics");
   const aiDmQuotaHintEl = document.getElementById("aiDmQuotaHint");
   const aiDmPoiPanelEl = document.getElementById("aiDmPointsOfInterest");
@@ -1414,11 +1415,14 @@ import { apiGetJson, apiPostJson } from "./js/api-client.js";
       campaignXpRewardEl.textContent = xpReward != null ? `${xpReward} XP` : "—";
     }
     if (campaignCheckpointProgressEl) {
+      const plotFinished = !!(ai && ai.isPlotFinished);
       if (checkpointIndex != null && checkpointTotal != null) {
         const current = Math.min(Math.max(0, Number(checkpointIndex) + 1), Number(checkpointTotal));
-        campaignCheckpointProgressEl.textContent = `${current}/${checkpointTotal}`;
+        campaignCheckpointProgressEl.textContent = plotFinished
+          ? `✓ ${checkpointTotal}/${checkpointTotal}`
+          : `${current}/${checkpointTotal}`;
       } else {
-        campaignCheckpointProgressEl.textContent = "—";
+        campaignCheckpointProgressEl.textContent = plotFinished ? "✓" : "—";
       }
     }
 
@@ -3781,6 +3785,16 @@ import { apiGetJson, apiPostJson } from "./js/api-client.js";
       if (aiDmNoticeEl) aiDmNoticeEl.hidden = !isAi;
       if (aiDmPanelEl) aiDmPanelEl.hidden = !isAi;
 
+      // Dialogue-tab journey completion button: AI-solo only.
+      const isAiSolo = isAi && campaign.mode === "ai-solo";
+      const plotFinished = !!(ai && ai.isPlotFinished);
+      const journeyCompleted = isAiSolo && ai && ai.status === "completed";
+      if (completeJourneyBtn) {
+        completeJourneyBtn.hidden = !(isAiSolo && plotFinished);
+        completeJourneyBtn.disabled = !(isAiSolo && plotFinished) || journeyCompleted;
+        completeJourneyBtn.textContent = journeyCompleted ? "Journey completed" : "Complete Journey";
+      }
+
       if (isAi) {
         setGeminiQuotaHint(DEFAULT_GEMINI_QUOTA_HINT);
         renderAiDmCampaignProgress({ campaign, ai });
@@ -3790,8 +3804,8 @@ import { apiGetJson, apiPostJson } from "./js/api-client.js";
         renderAiDmCampaignProgress({ campaign: null, ai: null });
         renderAiDmPointsOfInterest(null);
       }
-      if (dialogueTextInputEl) dialogueTextInputEl.disabled = false;
-      if (dialogueSendBtn) dialogueSendBtn.disabled = false;
+      if (dialogueTextInputEl) dialogueTextInputEl.disabled = journeyCompleted;
+      if (dialogueSendBtn) dialogueSendBtn.disabled = journeyCompleted;
       if (aiDmRollBtn) aiDmRollBtn.disabled = isAi && campaign.mode === "template-run";
       if (aiDmMechanicsEl) {
         if (isAi && campaign.mode === "template-run") {
@@ -3846,6 +3860,7 @@ import { apiGetJson, apiPostJson } from "./js/api-client.js";
         const aiCheckpointTotal = ai && ai.checkpointTotal != null ? Number(ai.checkpointTotal) : null;
         const reachedFinishLine =
           alreadyCompleted ||
+          (ai && ai.isPlotFinished) ||
           (aiCheckpointIndex != null && aiCheckpointTotal != null
             ? aiCheckpointIndex >= Math.max(0, aiCheckpointTotal - 1)
             : false);
@@ -3859,7 +3874,7 @@ import { apiGetJson, apiPostJson } from "./js/api-client.js";
         campaignCompleteBtn.disabled = !canClickComplete;
         // Keep the label stable, but hint the reason when disabled for AI.
         if (isAi) {
-          campaignCompleteBtn.textContent = canClickComplete ? "Complete campaign" : "Complete campaign (finish saga to unlock)";
+          campaignCompleteBtn.textContent = canClickComplete ? "Complete campaign" : "Complete campaign (finish journey to unlock)";
         } else {
           campaignCompleteBtn.textContent = "Complete campaign";
         }
@@ -5324,6 +5339,48 @@ import { apiGetJson, apiPostJson } from "./js/api-client.js";
       }).catch((e) => {
         console.error("[ADA] resolve-check failed", e);
         if (aiDmMechanicsEl) aiDmMechanicsEl.textContent = "Error resolving check.";
+      });
+    });
+  }
+
+  if (completeJourneyBtn) {
+    completeJourneyBtn.addEventListener("click", () => {
+      if (!activeCampaignId || !activeCampaign) return;
+      const currentUser = getCurrentUser();
+      if (!currentUser) return;
+
+      // Only AI-solo journeys support this; template-run uses a different canon pipeline.
+      if (!isAIDmCampaign(activeCampaign) || activeCampaign.mode !== "ai-solo") {
+        if (aiDmMechanicsEl) aiDmMechanicsEl.textContent = "Complete Journey is only available for AI solo sagas.";
+        return;
+      }
+
+      const confirmed = window.confirm(
+        "Complete the journey? This will close the AI story thread (you can still archive/complete the campaign afterward)."
+      );
+      if (!confirmed) return;
+
+      if (aiDmMechanicsEl) aiDmMechanicsEl.textContent = "Completing journey...";
+
+      apiPost("/api/campaigns/details", {
+        action: "completeJourney",
+        campaignId: activeCampaignId,
+        username: currentUser,
+      }).then((result) => {
+        if (!result.ok) {
+          const msg =
+            (result.data && (result.data.error || result.data.message)) ||
+            "Could not complete journey.";
+          if (aiDmMechanicsEl) aiDmMechanicsEl.textContent = msg;
+          return;
+        }
+
+        if (aiDmMechanicsEl) {
+          aiDmMechanicsEl.textContent =
+            "Journey completed. You can now use 'Complete campaign' to finalize rewards and unlock your character.";
+        }
+
+        loadCampaignDetail(activeCampaignId);
       });
     });
   }

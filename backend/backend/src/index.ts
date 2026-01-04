@@ -822,6 +822,9 @@ type AIDMSessionState = {
 	log: TurnEntry[];
 	summary: string;
 	checkpointIndex: number;
+	// "Stuck" tracking: how many turns the player has spent at the current checkpoint/canon event
+	// without advancing. Used to surface an escape hatch in the UI.
+	turnsAtCurrentCheckpoint: number;
 	status: 'active' | 'completed' | 'failed';
 	// Soft Narrative Gravity: when the player explicitly abandons a canon path, the DM may request progress="drift".
 	// The server will advance to the next canon event while recording the skipped event id(s) here.
@@ -1616,7 +1619,7 @@ const RED_CLOAK_DEFAULT_CANON_TIMELINE: CanonEvent[] = [
 	{
 		id: 'forest_threshold',
 		title: 'The Forest Threshold',
-		description: 'The player enters the Whispering Woods and commits to the path, overcoming the initial eerie atmosphere.',
+		description: 'The player has moved deep enough into the woods to encounter a major landmark (e.g., the standing stones, the stone wall, or the oak clearing).',
 		nudgeIdeas: [
 			'A sudden gust of wind pushes you toward the tree line.',
 			'The spirit-warding herbs in your pack pulse with a faint, reassuring light.',
@@ -1626,7 +1629,7 @@ const RED_CLOAK_DEFAULT_CANON_TIMELINE: CanonEvent[] = [
 	{
 		id: 'wolf_trial',
 		title: 'The Stalking Shadow',
-		description: 'The player encounters the Shadow-Touched Wolf or its corruption and manages to survive or evade the threat.',
+		description: 'The player has survived the interaction with the Wolf or its corruption (via combat, stealth, or a DC check).',
 		nudgeIdeas: [
 			'A pair of glowing yellow eyes watches you from the thicket.',
 			'The shadows under the trees seem to detach and slither toward your feet.',
@@ -4934,6 +4937,7 @@ async function handleStartAICampaign(request: Request, env: Env, origin: string 
 		log: [],
 		summary: '',
 		checkpointIndex: 0,
+		turnsAtCurrentCheckpoint: 0,
 		status: 'active',
 		pendingCheck: null,
 	};
@@ -5010,9 +5014,15 @@ async function handleAIDMTurn(request: Request, env: Env, origin: string | null)
 
 	const username = String(body?.username ?? '').trim();
 	const campaignId = String(body?.campaignId ?? '').trim();
-	const playerInput = String(body?.text ?? body?.input ?? '').trim();
+	const rawPlayerInput = String(body?.text ?? body?.input ?? '').trim();
+	const FORCE_ARRIVAL_POI = 'Force arrival at next landmark';
+	const isForceArrival = rawPlayerInput === FORCE_ARRIVAL_POI;
+	// Keep the UI-visible player input exact, but give the model a slightly more diegetic version.
+	const playerInputForModel = isForceArrival
+		? 'The player chooses to push onward and force arrival at the next landmark.'
+		: rawPlayerInput;
 
-	if (!username || !campaignId || !playerInput) {
+	if (!username || !campaignId || !rawPlayerInput) {
 		return errorResponse('username, campaignId and text are required', 400, origin);
 	}
 
@@ -5055,6 +5065,9 @@ async function handleAIDMTurn(request: Request, env: Env, origin: string | null)
 	if (storedSession) {
 		try {
 			session = JSON.parse(storedSession) as AIDMSessionState;
+			if (typeof (session as any).turnsAtCurrentCheckpoint !== 'number') {
+				(session as any).turnsAtCurrentCheckpoint = 0;
+			}
 		} catch {
 			// If corrupted, start a fresh session but keep campaign linkage
 			session = {
@@ -5066,6 +5079,7 @@ async function handleAIDMTurn(request: Request, env: Env, origin: string | null)
 				log: [],
 				summary: '',
 				checkpointIndex: 0,
+				turnsAtCurrentCheckpoint: 0,
 				status: 'active',
 			};
 		}
@@ -5079,6 +5093,7 @@ async function handleAIDMTurn(request: Request, env: Env, origin: string | null)
 			log: [],
 			summary: '',
 			checkpointIndex: 0,
+			turnsAtCurrentCheckpoint: 0,
 			status: 'active',
 			pendingCheck: null,
 		};
@@ -5115,10 +5130,10 @@ async function handleAIDMTurn(request: Request, env: Env, origin: string | null)
 	const preQuota = await getAiQuota(env, username);
 	if (preQuota.remaining <= 0) {
 		const now = new Date().toISOString();
-		session.log.push({ role: 'player', text: playerInput, timestamp: now });
+		session.log.push({ role: 'player', text: rawPlayerInput, timestamp: now });
 		trimSessionLog(session);
 
-		const parsedNarrative = buildFallbackNarrativeFromInput(playerInput, adventure);
+		const parsedNarrative = buildFallbackNarrativeFromInput(rawPlayerInput, adventure);
 		const parsedMechanics = {
 			inlineCheck: false as boolean,
 			checkDescription: null as string | null,
@@ -5182,7 +5197,7 @@ async function handleAIDMTurn(request: Request, env: Env, origin: string | null)
 	let didAdvance = false;
 	let arbiterUsed: 'YES' | 'NO' | null = null;
 	try {
-		const aiCall = await callAIDungeonMaster(env, adventure, session, character, playerInput);
+		const aiCall = await callAIDungeonMaster(env, adventure, session, character, playerInputForModel);
 		if (!aiCall.ok) {
 			quotaHint = inferQuotaHintFromAIDMError(new Error(aiCall.error));
 			return jsonResponse(
@@ -5212,16 +5227,29 @@ async function handleAIDMTurn(request: Request, env: Env, origin: string | null)
 			? adventure.canonTimeline
 			: null;
 		if (canon) {
-			const result = await applyCanonProgressionForTurn({
-				session,
-				canonTimeline: canon,
-				playerInput,
-				dmNarrative: parsedNarrative,
-				progress: parsed.mechanics.progress,
-				evaluateCanonEventResolution: (args) => evaluateCanonEventResolution(env, args),
-			});
-			didAdvance = result.didAdvance;
-			arbiterUsed = result.arbiterUsed;
+			if (isForceArrival) {
+				// Bypass Shadow Arbiter and force progress to the next canon beat.
+				const before = clampCheckpointIndex(session.checkpointIndex, canon.map((ev) => ev.id));
+				session.checkpointIndex = before;
+				if (session.status === 'active' && before < canon.length - 1) {
+					session.checkpointIndex = before + 1;
+					didAdvance = true;
+				} else {
+					didAdvance = false;
+				}
+				arbiterUsed = null;
+			} else {
+				const result = await applyCanonProgressionForTurn({
+					session,
+					canonTimeline: canon,
+					playerInput: playerInputForModel,
+					dmNarrative: parsedNarrative,
+					progress: parsed.mechanics.progress,
+					evaluateCanonEventResolution: (args) => evaluateCanonEventResolution(env, args),
+				});
+				didAdvance = result.didAdvance;
+				arbiterUsed = result.arbiterUsed;
+			}
 		} else {
 			// Apply DM-directed progress (checkpoint advances/completion/failure).
 			applyProgressDirective(session, adventure, parsed.mechanics.progress);
@@ -5229,6 +5257,13 @@ async function handleAIDMTurn(request: Request, env: Env, origin: string | null)
 			session.checkpointIndex = clampCheckpointIndex(session.checkpointIndex, adventure.checkpoints);
 			// Legacy adventures: plot finished tracks completion.
 			if (session.status === 'completed') session.isPlotFinished = true;
+		}
+
+		// "Stuck" tracking (canon timeline only): update after the arbiter/advance decision.
+		if (canon) {
+			if (typeof session.turnsAtCurrentCheckpoint !== 'number') session.turnsAtCurrentCheckpoint = 0;
+			if (didAdvance) session.turnsAtCurrentCheckpoint = 0;
+			else session.turnsAtCurrentCheckpoint = Math.max(0, Math.floor(session.turnsAtCurrentCheckpoint)) + 1;
 		}
 
 		// Remember the latest requested check so it can be resolved separately.
@@ -5260,7 +5295,7 @@ async function handleAIDMTurn(request: Request, env: Env, origin: string | null)
 	// Consume quota only after a successful upstream AI response.
 	const quota = await consumeAiQuota(env, username);
 	const now = new Date().toISOString();
-	session.log.push({ role: 'player', text: playerInput, timestamp: now });
+	session.log.push({ role: 'player', text: rawPlayerInput, timestamp: now });
 	trimSessionLog(session);
 
 	session.log.push({ role: 'dm', text: parsedNarrative, timestamp: new Date().toISOString() });
@@ -5332,6 +5367,15 @@ async function handleAIDMTurn(request: Request, env: Env, origin: string | null)
 		completedAt: campaign.completedAt || null,
 	};
 
+	// If the user is stuck (canon only), surface an escape-hatch POI.
+	const isStuck = Boolean(canon) && typeof session.turnsAtCurrentCheckpoint === 'number' && session.turnsAtCurrentCheckpoint >= 4;
+	if (isStuck) {
+		const existing = Array.isArray(parsedMechanics.pointsOfInterest) ? parsedMechanics.pointsOfInterest : [];
+		const merged = [...existing];
+		if (!merged.includes(FORCE_ARRIVAL_POI)) merged.push(FORCE_ARRIVAL_POI);
+		parsedMechanics.pointsOfInterest = merged;
+	}
+
 	return jsonResponse(
 		{
 			ok: true,
@@ -5342,6 +5386,7 @@ async function handleAIDMTurn(request: Request, env: Env, origin: string | null)
 			arbiter: arbiterUsed,
 			arbiterDebug: session.lastArbiter || null,
 			checkpointAdvanced: didAdvance,
+			...(isStuck ? { isStuck: true } : {}),
 			quota,
 			quotaHint,
 			aiModel: usedModelMeta && usedModelMeta.modelName

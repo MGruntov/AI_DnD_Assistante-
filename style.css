@@ -789,6 +789,30 @@ h1, h2, h3, h4,
   border-color: rgba(224, 28, 41, 0.42);
 }
 
+/* Fate action: guaranteed progress / unstuck */
+.btn--stuck-fix {
+  border-color: rgba(243, 203, 112, 0.92);
+  background:
+    radial-gradient(520px 220px at 18% 0%, rgba(243, 203, 112, 0.26), transparent 62%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(251, 246, 236, 0.98));
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.6),
+    0 0 0 1px rgba(243, 203, 112, 0.22),
+    0 0 22px rgba(243, 203, 112, 0.18),
+    0 14px 28px rgba(30, 23, 18, 0.14);
+  font-weight: 900;
+}
+
+.btn--stuck-fix:not([disabled]):hover {
+  transform: translateY(-1px);
+  filter: brightness(1.03);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.64),
+    0 0 0 1px rgba(243, 203, 112, 0.30),
+    0 0 28px rgba(243, 203, 112, 0.22),
+    0 18px 36px rgba(30, 23, 18, 0.16);
+}
+
 .status {
   font-size: 0.88rem;
   color: var(--ink-muted);
@@ -2078,6 +2102,14 @@ h1, h2, h3, h4,
   outline: none;
   box-shadow: 0 0 0 3px rgba(243, 203, 112, 0.28);
   border-color: rgba(224, 28, 41, 0.42);
+}
+
+.poi-button.btn--stuck-fix {
+  flex: 1 1 100%;
+  border-radius: 999px;
+  padding: 10px 14px;
+  font-size: 0.92rem;
+  letter-spacing: 0.03em;
 }
 
 .chat-msg--dm {

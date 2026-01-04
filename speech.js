@@ -1482,6 +1482,7 @@ import { generateCharacter } from "./js/character-generator.js";
       // Contextual Action HUD: render Points of Interest as buttons under the DM bubble.
       const poi = msg && Array.isArray(msg.pointsOfInterest) ? msg.pointsOfInterest : null;
       if (msg.role === "dm" && poi && poi.length) {
+		const STUCK_FIX_POI = "Force arrival at next landmark";
         const poiWrap = document.createElement("div");
         poiWrap.className = "chat-msg__poi";
         poi.slice(0, 8).forEach((p) => {
@@ -1490,17 +1491,19 @@ import { generateCharacter } from "./js/character-generator.js";
           const btn = document.createElement("button");
           btn.type = "button";
           btn.className = "poi-button";
+		  if (label === STUCK_FIX_POI) btn.classList.add("btn--stuck-fix");
           btn.textContent = label;
           btn.addEventListener("click", () => {
             if (!dialogueTextInputEl) return;
             if (dialogueTextInputEl.disabled) return;
-            dialogueTextInputEl.value = label;
+			const inputText = label === STUCK_FIX_POI ? STUCK_FIX_POI : label;
+            dialogueTextInputEl.value = inputText;
             try {
               dialogueTextInputEl.focus();
             } catch {
               // ignore
             }
-            handleDialoguePlayerInput(label, { source: "poi" });
+			handleDialoguePlayerInput(inputText, { source: "poi" });
           });
           poiWrap.appendChild(btn);
         });
@@ -1570,13 +1573,40 @@ import { generateCharacter } from "./js/character-generator.js";
     }
   }
 
-  function renderAiDmPointsOfInterest(points) {
+  function renderAiDmPointsOfInterest(points, { isStuck } = {}) {
     if (!aiDmPoiPanelEl || !aiDmPoiListEl) return;
+  const STUCK_FIX_POI = "Force arrival at next landmark";
 
-    // Points of Interest are now rendered as contextual buttons inside the DM chat bubble.
-    // Keep the legacy panel hidden to avoid duplicate UI.
-    aiDmPoiPanelEl.hidden = true;
-    aiDmPoiListEl.innerHTML = "";
+  const list = Array.isArray(points) ? points.map((p) => String(p || "").trim()).filter(Boolean) : [];
+  const shouldShowStuckFix = Boolean(isStuck) || list.includes(STUCK_FIX_POI);
+
+  if (!shouldShowStuckFix) {
+      // Points of Interest are normally rendered as contextual buttons inside the DM chat bubble.
+      // Keep the legacy panel hidden to avoid duplicate UI.
+      aiDmPoiPanelEl.hidden = true;
+      aiDmPoiListEl.innerHTML = "";
+      return;
+  }
+
+  aiDmPoiPanelEl.hidden = false;
+  aiDmPoiListEl.innerHTML = "";
+
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "btn btn--stuck-fix";
+  btn.textContent = STUCK_FIX_POI;
+  btn.addEventListener("click", () => {
+    if (dialogueTextInputEl && !dialogueTextInputEl.disabled) {
+      dialogueTextInputEl.value = STUCK_FIX_POI;
+      try {
+        dialogueTextInputEl.focus();
+      } catch {
+        // ignore
+      }
+    }
+    handleDialoguePlayerInput(STUCK_FIX_POI, { source: "poi" });
+  });
+  aiDmPoiListEl.appendChild(btn);
   }
 
   function renderShadowArbiterDebug(debug) {
@@ -3346,7 +3376,7 @@ import { generateCharacter } from "./js/character-generator.js";
 
       // Points of interest: persisted with ADA's response so they can be rendered as buttons in the chat.
       const poi = mechanics && Array.isArray(mechanics.pointsOfInterest) ? mechanics.pointsOfInterest : null;
-      renderAiDmPointsOfInterest(poi);
+      renderAiDmPointsOfInterest(poi, { isStuck: payload.isStuck === true });
 
       if (narrative) {
         appendMessage("dm", narrative, { pointsOfInterest: poi });
@@ -5559,7 +5589,7 @@ import { generateCharacter } from "./js/character-generator.js";
 
         // Points of interest: persisted with ADA's response so they can be rendered as buttons in the chat.
         const poi = mechanics && Array.isArray(mechanics.pointsOfInterest) ? mechanics.pointsOfInterest : null;
-        renderAiDmPointsOfInterest(poi);
+        renderAiDmPointsOfInterest(poi, { isStuck: payload.isStuck === true });
 
         if (narrative) appendAiDmLog("dm", narrative, { pointsOfInterest: poi });
 

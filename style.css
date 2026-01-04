@@ -1008,6 +1008,39 @@ h1, h2, h3, h4,
   color: var(--muted);
 }
 
+.forge__options {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+  margin: 16px 0;
+}
+
+.forge__options .field {
+  margin: 0;
+}
+
+.forge__options select {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bone-bg);
+  color: var(--ink-text);
+  font-family: var(--font-body);
+  font-size: 0.9rem;
+  cursor: pointer;
+  transition: border-color var(--transition-fast);
+}
+
+.forge__options select:hover {
+  border-color: var(--border-strong);
+}
+
+.forge__options select:focus {
+  outline: none;
+  border-color: var(--vow-gold);
+}
+
 .forge__status {
   font-size: 0.82rem;
   color: var(--muted);

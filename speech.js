@@ -1,5 +1,6 @@
 import { authHeaders, clearAuthToken, setAuthToken } from "./js/api.js";
 import { apiGetJson, apiPostJson } from "./js/api-client.js";
+import { generateCharacter } from "./js/character-generator.js";
 
 (function () {
   const TranscriptMode = {
@@ -4801,59 +4802,59 @@ import { apiGetJson, apiPostJson } from "./js/api-client.js";
   }
 
   if (forgeCharacterBtn) {
-    forgeCharacterBtn.addEventListener("click", () => {
+    forgeCharacterBtn.addEventListener("click", async () => {
       const currentUser = getCurrentUser();
       if (!currentUser) {
-        setForgeStatus("You need to be logged in to forge a character.");
+        setForgeStatus("You need to be logged in to create a character.");
         renderForgedCharacter(null);
         return;
       }
 
-      if (!transcriptEl || !transcriptEl.value.trim()) {
-        setForgeStatus(
-          "Add some transcript text first so ADA has something to forge from."
-        );
-        renderForgedCharacter(null);
-        return;
-      }
-
-      setForgeStatus("Forging character from transcript...");
-      renderForgedCharacter(null);
-
-      const narrativeText = transcriptEl.value.trim();
+      // Get form values
+      const forgeClassSelect = document.getElementById("forgeClassSelect");
+      const forgeLevelSelect = document.getElementById("forgeLevelSelect");
+      const forgeRaceSelect = document.getElementById("forgeRaceSelect");
+      
+      const selectedClass = forgeClassSelect ? forgeClassSelect.value : "fighter";
+      const selectedLevel = forgeLevelSelect ? parseInt(forgeLevelSelect.value) : 1;
+      const selectedRace = forgeRaceSelect && forgeRaceSelect.value ? forgeRaceSelect.value : undefined;
+      
       const rawName = forgeCharacterNameInput && forgeCharacterNameInput.value
         ? forgeCharacterNameInput.value.trim()
         : "";
 
-      apiPost("/api/characters/forge", {
-        username: currentUser,
-        narrativeText,
-        name: rawName || null,
-        portraitUrl: null,
-        dryRun: true,
-      }).then((result) => {
-        if (!result.ok) {
-          const msg = (result.data && result.data.error) ||
-            "Could not forge character. Please try again.";
-          setForgeStatus(msg);
-          renderForgedCharacter(null);
-          return;
-        }
+      setForgeStatus(`Generating random ${selectedClass} (Level ${selectedLevel})...`);
+      renderForgedCharacter(null);
 
-        const character = result.data && result.data.character;
+      try {
+        // Generate character using decision tree
+        const character = await generateCharacter({
+          characterClass: selectedClass,
+          level: selectedLevel,
+          race: selectedRace
+        });
+        
+        // Set username and name
+        character.username = currentUser;
+        character.name = rawName || `${character.race} ${character.classes[0].name}`;
+        
         if (!character) {
-          setForgeStatus("Forge succeeded but no character was returned.");
+          setForgeStatus("Generation failed. Please try again.");
           renderForgedCharacter(null);
           return;
         }
 
         pendingForgedCharacter = character;
-        pendingNarrativeText = narrativeText;
+        pendingNarrativeText = ""; // No narrative for random characters
         pendingCharacterName = rawName || "";
         setForgeStatus("Preview ready. Pick a portrait, then finish character creation to save.");
         renderForgedCharacter(character);
         updateFinishCharacterButtonState();
-      });
+      } catch (error) {
+        console.error('Character generation error:', error);
+        setForgeStatus(error.message || "Could not generate character. Please try again.");
+        renderForgedCharacter(null);
+      }
     });
   }
 
@@ -4864,8 +4865,8 @@ import { apiGetJson, apiPostJson } from "./js/api-client.js";
         setForgeStatus("You need to be logged in to finish character creation.");
         return;
       }
-      if (!pendingForgedCharacter || !pendingNarrativeText) {
-        setForgeStatus("Forge a character from your transcript first.");
+      if (!pendingForgedCharacter) {
+        setForgeStatus("Generate a character first.");
         return;
       }
       if (!hasSelectedPortrait()) {
@@ -4882,9 +4883,20 @@ import { apiGetJson, apiPostJson } from "./js/api-client.js";
 
       setForgeStatus("Saving character to My Characters...");
 
-      apiPost("/api/characters/forge", {
+      // Get form values for re-generation
+      const forgeClassSelect = document.getElementById("forgeClassSelect");
+      const forgeLevelSelect = document.getElementById("forgeLevelSelect");
+      const forgeRaceSelect = document.getElementById("forgeRaceSelect");
+      
+      const selectedClass = forgeClassSelect ? forgeClassSelect.value : "fighter";
+      const selectedLevel = forgeLevelSelect ? parseInt(forgeLevelSelect.value) : 1;
+      const selectedRace = forgeRaceSelect && forgeRaceSelect.value ? forgeRaceSelect.value : undefined;
+
+      apiPost("/api/characters/generate-random", {
         username: currentUser,
-        narrativeText: pendingNarrativeText,
+        class: selectedClass,
+        level: selectedLevel,
+        race: selectedRace,
         name: pendingCharacterName || null,
         portraitUrl,
         dryRun: false,

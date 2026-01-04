@@ -134,8 +134,43 @@
         <section class="panel" aria-label="Character forging">
           <div class="forge__header">
             <h3 class="panel__title">Forge a Character</h3>
-            <button id="forgeCharacterBtn" class="btn btn--primary">Forge from Transcript</button>
+            <button id="forgeCharacterBtn" class="btn btn--primary">Generate Random Character</button>
           </div>
+          
+          <div class="forge__options">
+            <div class="field">
+              <label for="forgeClassSelect">Class</label>
+              <select id="forgeClassSelect" name="forgeClassSelect">
+                <option value="barbarian">Barbarian</option>
+                <option value="bard">Bard</option>
+                <option value="cleric">Cleric</option>
+                <option value="fighter" selected>Fighter</option>
+              </select>
+            </div>
+            
+            <div class="field">
+              <label for="forgeLevelSelect">Level</label>
+              <select id="forgeLevelSelect" name="forgeLevelSelect">
+                <option value="1" selected>1</option>
+                <option value="2">2</option>
+                <option value="3">3</option>
+                <option value="4">4</option>
+                <option value="5">5</option>
+              </select>
+            </div>
+            
+            <div class="field">
+              <label for="forgeRaceSelect">Race (Optional)</label>
+              <select id="forgeRaceSelect" name="forgeRaceSelect">
+                <option value="">Any</option>
+                <option value="human">Human</option>
+                <option value="elf">Elf</option>
+                <option value="dwarf">Dwarf</option>
+                <option value="halfling">Halfling</option>
+              </select>
+            </div>
+          </div>
+          
           <div class="forge__name field">
             <label for="forgeCharacterName">Character name (optional)</label>
             <input
@@ -146,7 +181,7 @@
             />
           </div>
           <p class="forge__hint text-muted">
-            We'll infer race, class (including multiclass), and key stats, then build a draft character sheet.
+            Generate a legally valid D&D 5e character using the SRD rules. All choices are made automatically.
           </p>
           <div id="forgeStatus" class="forge__status"></div>
           <div id="forgedCharacter" class="forge__result" hidden></div>

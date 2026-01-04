@@ -1614,24 +1614,34 @@ type DbAdventureRow = {
 // In that case, we still want canonTimeline-driven progression + Shadow Arbiter to work.
 const RED_CLOAK_DEFAULT_CANON_TIMELINE: CanonEvent[] = [
 	{
-		id: 'crossroads',
-		title: 'The Crossroads',
-		description: "Condition: The player must choose the path to Grandmother’s and begin the journey.",
+		id: 'forest_threshold',
+		title: 'The Forest Threshold',
+		description: 'The player enters the Whispering Woods and commits to the path, overcoming the initial eerie atmosphere.',
+		nudgeIdeas: [
+			'A sudden gust of wind pushes you toward the tree line.',
+			'The spirit-warding herbs in your pack pulse with a faint, reassuring light.',
+			'A signpost pointing to "Grandmother\'s Cottage" creaks in the breeze.'
+		],
 	},
 	{
-		id: 'thicket',
-		title: 'The Thicket',
-		description: 'Condition: The player must navigate or survive the shadow-touched vines.',
+		id: 'wolf_trial',
+		title: 'The Stalking Shadow',
+		description: 'The player encounters the Shadow-Touched Wolf or its corruption and manages to survive or evade the threat.',
+		nudgeIdeas: [
+			'A pair of glowing yellow eyes watches you from the thicket.',
+			'The shadows under the trees seem to detach and slither toward your feet.',
+			'A low, guttural growl vibrates through the ground beneath you.'
+		],
 	},
 	{
-		id: 'wolves_hunt',
-		title: "The Wolf's Hunt",
-		description: 'Condition: The Shadow-Touched Wolf must be confronted or evaded.',
-	},
-	{
-		id: 'final_confrontation',
-		title: 'The Final Confrontation (Finish Line)',
-		description: 'Condition: The Wolf must be neutralized/killed, or the player must reach the cottage threshold.',
+		id: 'cottage_resolution',
+		title: 'Grandmother’s Gate',
+		description: 'The player reaches the safety of the cottage and delivers the herbs to Grandmother, securing the home.',
+		nudgeIdeas: [
+			'The warm scent of baked bread and pine needles drifts from the clearing ahead.',
+			'A lantern light flickers in a distant window, cutting through the gloom.',
+			'The path widens into a familiar garden gate.'
+		],
 	},
 ];
 
@@ -1767,9 +1777,9 @@ async function ensureAdventuresD1Schema(env: Env): Promise<void> {
 				1,
 				2,
 				'Normal',
-				'A short, spooky solo adventure in the Whispering Woods where you must deliver spirit-warding herbs to your Grandmother while a corrupted wolf stalks the paths.',
-				'You are acting as an AI Dungeon Master for D&D 5e. You are running a contained adventure in the Whispering Woods. The player is a low-level messenger wearing a red cloak, tasked with carrying spirit-warding herbs to their Grandmother. The forest is haunted by a Shadow-Touched Wolf that corrupts spirits and hunts travelers. Keep the tone atmospheric and slightly eerie, but not grotesque.',
-				JSON.stringify(RED_CLOAK_DEFAULT_CANON_TIMELINE.map((ev) => ev.id)),
+				'A simple delivery mission: carry spirit-warding herbs to Grandmother while evading the Shadow-Touched Wolf.',
+				'You are the AI DM. The player is a messenger in a red cloak navigating the Whispering Woods. Goal: Deliver herbs to Grandmother.',
+				JSON.stringify(['forest_threshold', 'wolf_trial', 'cottage_resolution']),
 				JSON.stringify(RED_CLOAK_DEFAULT_CANON_TIMELINE),
 				JSON.stringify([
 					"The player successfully reaches Grandmother's cottage and delivers the spirit-warding herbs.",
@@ -1790,11 +1800,11 @@ async function ensureAdventuresD1Schema(env: Env): Promise<void> {
 		// Best-effort backfill so canonTimeline-driven progression (Shadow Arbiter) works reliably.
 		await db
 			.prepare(
-				"UPDATE adventures SET canon_timeline_json = ?1, checkpoints_json = ?2 WHERE id = 'RED_CLOAK' AND (canon_timeline_json IS NULL OR TRIM(canon_timeline_json) = '' OR canon_timeline_json = '[]')",
+				"UPDATE adventures SET canon_timeline_json = ?1, checkpoints_json = ?2 WHERE id = 'RED_CLOAK' AND (canon_timeline_json IS NULL OR canon_timeline_json = '[]')"
 			)
 			.bind(
 				JSON.stringify(RED_CLOAK_DEFAULT_CANON_TIMELINE),
-				JSON.stringify(RED_CLOAK_DEFAULT_CANON_TIMELINE.map((ev) => ev.id)),
+				JSON.stringify(['forest_threshold', 'wolf_trial', 'cottage_resolution']),
 			)
 			.run();
 	} catch {

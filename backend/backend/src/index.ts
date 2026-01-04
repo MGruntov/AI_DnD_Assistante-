@@ -342,6 +342,9 @@ type CanonEvent = {
 	id: string;
 	title: string;
 	description: string;
+	// Logical trigger the Shadow Arbiter should validate (YES/NO) to decide whether this event is resolved.
+	// If omitted, the system falls back to `description`.
+	successCondition?: string;
 	// Optional "Hidden Hand" prods to pull the player back toward canon.
 	nudgeIdeas?: string[];
 };
@@ -808,6 +811,8 @@ type ShadowArbiterDebug = {
 	at: string;
 	canonEventId: string;
 	canonEventTitle: string;
+	canonEventSuccessCondition: string;
+	canonEventNudgeIdeas?: string[];
 };
 
 type AIDMSessionState = {
@@ -818,6 +823,9 @@ type AIDMSessionState = {
 	summary: string;
 	checkpointIndex: number;
 	status: 'active' | 'completed' | 'failed';
+	// Soft Narrative Gravity: when the player explicitly abandons a canon path, the DM may request progress="drift".
+	// The server will advance to the next canon event while recording the skipped event id(s) here.
+	skippedCanonEventIds?: string[];
 	// Plot completion (finish line) is distinct from campaign completion/archival.
 	// When true, the UI should offer a "Complete Journey" action.
 	isPlotFinished?: boolean;
@@ -904,7 +912,7 @@ function computeCheckTotal(character: Character, ability: string | null, skill: 
 function applyProgressDirective(
 	session: AIDMSessionState,
 	adventure: AdventureTemplate,
-	progress: 'stay' | 'advance' | 'complete' | 'fail' | null,
+	progress: 'stay' | 'advance' | 'drift' | 'complete' | 'fail' | null,
 ): {
 	changed: boolean;
 	checkpointIndexBefore: number;
@@ -915,6 +923,8 @@ function applyProgressDirective(
 	const checkpointIndexBefore = session.checkpointIndex;
 	const statusBefore = session.status;
 	let changed = false;
+
+	// "drift" is canon-only; legacy adventures ignore it (treat as stay).
 
 	if (progress === 'advance') {
 		const maxIdx = adventure.checkpoints.length - 1;
@@ -1107,6 +1117,7 @@ async function handleAIDMResolveCheck(request: Request, env: Env, origin: string
 		return errorResponse('No pending check to resolve', 400, origin);
 	}
 
+	// "drift" is canon-only; legacy adventures ignore it (treat as stay).
 	const storedCharacter = await env.ADA_DATA.get(`character:${session.characterId}`);
 	if (!storedCharacter) {
 		return errorResponse('Linked character not found', 500, origin);
@@ -1167,12 +1178,13 @@ async function handleAIDMResolveCheck(request: Request, env: Env, origin: string
 			? 'You steady your breath and push onward, the momentary tension easing as the path opens ahead.'
 			: 'A misstep sends a jolt of panic through you—something shifts in the brush, and the woods feel suddenly closer.';
 		const dmMechanics = {
+			inlineCheck: false as boolean,
 			checkDescription: null as string | null,
 			dc: null as number | null,
 			ability: null as string | null,
 			skill: null as string | null,
 			advantage: null as 'none' | 'advantage' | 'disadvantage' | null,
-			progress: null as 'stay' | 'advance' | 'complete' | 'fail' | null,
+			progress: null as 'stay' | 'advance' | 'drift' | 'complete' | 'fail' | null,
 			pointsOfInterest: null as string[] | null,
 		};
 		session.log.push({ role: 'dm', text: dmNarrative, timestamp: new Date().toISOString() });
@@ -1235,12 +1247,13 @@ async function handleAIDMResolveCheck(request: Request, env: Env, origin: string
 
 	let dmNarrative: string;
 	let dmMechanics = {
+		inlineCheck: false as boolean,
 		checkDescription: null as string | null,
 		dc: null as number | null,
 		ability: null as string | null,
 		skill: null as string | null,
 		advantage: null as 'none' | 'advantage' | 'disadvantage' | null,
-		progress: null as 'stay' | 'advance' | 'complete' | 'fail' | null,
+		progress: null as 'stay' | 'advance' | 'drift' | 'complete' | 'fail' | null,
 		pointsOfInterest: null as string[] | null,
 	};
 	let completionJustOccurred = false;
@@ -1629,6 +1642,7 @@ function safeParseJsonCanonTimeline(raw: unknown): CanonEvent[] {
 				id: String(v?.id || '').trim() || crypto.randomUUID(),
 				title: String(v?.title || '').trim(),
 				description: String(v?.description || '').trim(),
+				successCondition: String(v?.successCondition || '').trim() || undefined,
 				nudgeIdeas: Array.isArray(v?.nudgeIdeas) ? v.nudgeIdeas.map((x: any) => String(x || '').trim()).filter(Boolean) : undefined,
 			}))
 			.filter((ev) => ev.title && ev.description);
@@ -2155,6 +2169,59 @@ function normalizeJsonArrayText(value: any): string {
 	return JSON.stringify([s]);
 }
 
+function normalizeCanonEventIdFromTitle(title: string, idx: number): string {
+	const base = String(title || '')
+		.trim()
+		.toLowerCase()
+		.normalize('NFKD')
+		.replace(/[\u0300-\u036f]/g, '')
+		.replace(/[^a-z0-9]+/g, '_')
+		.replace(/^_+|_+$/g, '');
+	const suffix = `${Math.max(0, idx) + 1}`;
+	const raw = base ? `${base}_${suffix}` : `event_${suffix}`;
+	// Mirror checkpoint id constraints (<= 48 chars).
+	return raw.slice(0, 48);
+}
+
+function normalizeCanonTimelineFromModel(value: any): CanonEvent[] {
+	const raw = Array.isArray(value) ? value : null;
+	if (!raw) return [];
+	const out: CanonEvent[] = [];
+	const seen = new Set<string>();
+	for (let i = 0; i < raw.length; i++) {
+		const v: any = raw[i];
+		const title = String(v?.title || '').trim().slice(0, 120);
+		const description = String(v?.description || '').trim().slice(0, 900);
+		const successCondition = String(v?.successCondition || '').trim().slice(0, 600);
+		if (!title || !description || !successCondition) continue;
+		let id = normalizeCanonEventIdFromTitle(title, i);
+		if (!id) id = crypto.randomUUID();
+		// Ensure uniqueness.
+		while (seen.has(id)) {
+			id = `${id.slice(0, Math.max(1, 46))}_${Math.floor(Math.random() * 90 + 10)}`.slice(0, 48);
+		}
+		seen.add(id);
+		const nudgeIdeas = Array.isArray(v?.nudgeIdeas)
+			? v.nudgeIdeas.map((x: any) => String(x || '').trim()).filter(Boolean).slice(0, 6)
+			: typeof v?.nudgeIdeas === 'string'
+				? String(v.nudgeIdeas)
+					.split(/\n|;|\|/)
+					.map((s) => s.trim())
+					.filter(Boolean)
+					.slice(0, 6)
+				: [];
+		out.push({
+			id,
+			title,
+			description,
+			successCondition,
+			nudgeIdeas: nudgeIdeas.length ? nudgeIdeas : undefined,
+		});
+		if (out.length >= 10) break;
+	}
+	return out;
+}
+
 function safeParseJsonStringArrayText(value: string): string[] {
 	const s = String(value || '').trim();
 	if (!s) return [];
@@ -2195,14 +2262,14 @@ function buildArchitectScenarioSystemPrompt(): string {
 		'You MUST output a STRICT JSON object and NOTHING ELSE (no markdown, no prose, no code fences).',
 		'If you output anything other than a single JSON object, the system will treat it as a failure.',
 		'',
-		'Your JSON MUST match the Cloudflare D1 `adventures` table schema using these exact keys:',
+		'Your JSON MUST match this schema using these exact keys:',
 		'- title (string, <= 120 chars)',
 		'- level_min (integer, 1..20)',
 		'- level_max (integer, 1..20, >= level_min)',
 		'- difficulty (string: "Normal" | "Hard" | "Deadly")',
 		'- summary (string, <= 600 chars)',
 		'- primer (string, <= 2200 chars)',
-		'- checkpoints_json (string containing a valid JSON array of short checkpoint ids, 3..10 items, <= 48 chars each)',
+		'- canonTimeline (array of 3..10 objects; each object has: title, description, successCondition, nudgeIdeas)',
 		'- victory_conditions_json (string containing a valid JSON array of 2..6 victory condition strings)',
 		'- defeat_conditions_json (string containing a valid JSON array of 2..6 defeat condition strings)',
 		'- alignment (string)',
@@ -2210,16 +2277,25 @@ function buildArchitectScenarioSystemPrompt(): string {
 		'- creator_user_id (string or null)',
 		'- created_at (ISO-8601 string)',
 		'',
+		'canonTimeline requirements (MANDATORY):',
+		'- canonTimeline is the authoritative progression pipeline for the adventure.',
+		'- Each canonTimeline item MUST include:',
+		'  - title: short name for the beat',
+		'  - description: in-world description of the beat (what it is, why it matters)',
+		'  - successCondition: a strict, testable trigger that a YES/NO validator can judge from the player input + DM narration.',
+		'    - Write it as a single logical condition in plain English (e.g., "The player accepts the mayor\'s contract and departs the village.")',
+		'    - Avoid vague words like "understands" or "feels". Prefer observable actions/outcomes.',
+		'  - nudgeIdeas: array of 2..6 short nudges to steer the player back toward the current event if they wander.',
+		'',
 		'Alignment tailoring requirement (MANDATORY):',
-		'- You MUST tailor BOTH the primer and the checkpoints to the provided alignment.',
+		'- You MUST tailor BOTH the primer and the canonTimeline to the provided alignment.',
 		'- Examples: Lawful Good scenarios should emphasize heroism, duty, protection, and fair choices.',
 		'  Chaotic Evil scenarios should emphasize subversion, conquest, cruelty, and self-serving opportunism.',
 		'- The alignment should materially change the moral framing, NPC motivations, and the types of conflicts.',
 		'',
 		'Hard constraints:',
 		'- No sexual content.',
-		'- Keep it playable as a solo scenario with clear escalation across checkpoints.',
-		'- checkpoints_json MUST be a JSON string (e.g., "[\"opening\",\"complication\",\"finale\"]").',
+		'- Keep it playable as a solo scenario with clear escalation across canonTimeline events.',
 		'- Do NOT include an id field; the server will assign it.',
 	].join('\n');
 }
@@ -2241,7 +2317,7 @@ function buildArchitectScenarioUserPrompt(params: {
 		`- Set alignment exactly to "${params.alignment}"`,
 		`- Set theme exactly to "${params.theme}"`,
 		`- level_min must be ${params.minLevel} and level_max must be ${params.maxLevel}`,
-		'- Make checkpoints_json reflect the alignment and theme, and ensure each checkpoint is a short id-like label.',
+		'- Make canonTimeline reflect the alignment and theme with clear escalation in difficulty/stakes.',
 		'- Keep summary and primer aligned to the same premise.',
 	].join('\n');
 }
@@ -2292,10 +2368,14 @@ function buildArchitectScenarioRepairSystemPrompt(): string {
 		'- Do not include trailing commas.',
 		'',
 		'The JSON object MUST contain EXACTLY these keys (no extra keys):',
-		'title, level_min, level_max, difficulty, summary, primer, checkpoints_json, victory_conditions_json, defeat_conditions_json, alignment, theme, creator_user_id, created_at',
+		'title, level_min, level_max, difficulty, summary, primer, canonTimeline, victory_conditions_json, defeat_conditions_json, alignment, theme, creator_user_id, created_at',
 		'',
-		'For checkpoints_json, victory_conditions_json, defeat_conditions_json:',
-		'- Each must be a STRING containing a valid JSON array, e.g. "[\"opening\",\"finale\"]".',
+		'For victory_conditions_json, defeat_conditions_json:',
+		'- Each must be a STRING containing a valid JSON array.',
+		'',
+		'For canonTimeline:',
+		'- It must be a JSON array of 3..10 objects.',
+		'- Each object must have: title (string), description (string), successCondition (string), nudgeIdeas (array of strings).',
 	].join('\n');
 }
 
@@ -2385,15 +2465,20 @@ async function handleArchitectGenerateScenario(request: Request, env: Env, origi
 	const level_max = normalizeBoundedInt(obj?.level_max, maxLevel, 1, 20);
 	if (!title || !summary || !primer) return errorResponse('Model output missing required fields', 502, origin);
 
-	const checkpoints_json = normalizeJsonArrayText(obj?.checkpoints_json);
+	const canonTimeline = normalizeCanonTimelineFromModel(obj?.canonTimeline);
 	const victory_conditions_json = normalizeJsonArrayText(obj?.victory_conditions_json);
 	const defeat_conditions_json = normalizeJsonArrayText(obj?.defeat_conditions_json);
 
+	// Validate canonTimeline.
+	if (canonTimeline.length < 3) {
+		return errorResponse('Model output canonTimeline must include at least 3 canon events', 502, origin);
+	}
+	const checkpoints = canonTimeline.map((ev) => ev.id);
+	const canon_timeline_json = JSON.stringify(canonTimeline);
+
 	// Validate that the *_json fields are parseable arrays of strings.
-	const checkpoints = safeParseJsonStringArrayText(checkpoints_json);
 	const victoryConditions = safeParseJsonStringArrayText(victory_conditions_json);
 	const defeatConditions = safeParseJsonStringArrayText(defeat_conditions_json);
-	if (checkpoints.length < 3) return errorResponse('Model output checkpoints_json must include at least 3 checkpoints', 502, origin);
 	if (victoryConditions.length < 2) return errorResponse('Model output victory_conditions_json must include at least 2 items', 502, origin);
 	if (defeatConditions.length < 2) return errorResponse('Model output defeat_conditions_json must include at least 2 items', 502, origin);
 
@@ -2412,6 +2497,7 @@ async function handleArchitectGenerateScenario(request: Request, env: Env, origi
 			summary,
 			primer,
 			checkpoints_json: JSON.stringify(checkpoints.slice(0, 10).map((c) => c.slice(0, 48))),
+			canon_timeline_json,
 			victory_conditions_json: JSON.stringify(victoryConditions.slice(0, 6).map((c) => c.slice(0, 220))),
 			defeat_conditions_json: JSON.stringify(defeatConditions.slice(0, 6).map((c) => c.slice(0, 220))),
 			alignment,
@@ -2486,20 +2572,31 @@ function buildAIDMSystemPrompt(): string {
 		'Never simply repeat the player\'s last input back to them as your narration.',
 		'Always advance the scene with new details: environment, NPC reactions, consequences, or new options.',
 		'',
+		'NARRATIVE GRAVITY (IMPORTANT): Maintain narrative gravity toward the current canon event, but prioritize player agency.',
+		'- If the player explicitly abandons the canon path (e.g., refuses the mission, leaves the region, destroys the quest item), do NOT force them back.',
+		'- Instead, adapt the world logically and introduce a NEW temporary objective that fits their chosen direction.',
+		'- In that case, set progress to "drift" (see below).',
+		'',
 		'Your output MUST follow this exact structure:',
 		'[NARRATIVE]',
 		'Rich second-person narration describing what happens next at the current scene.',
 		'Keep it to 1–3 short paragraphs.',
+		'',
+		'INLINE CHECKS (IMPORTANT): If you require the player to make a check, embed EXACTLY ONE bracketed marker in the narrative at the moment the check is needed, like:',
+		'- [Roll: Athletics DC 15]',
+		'- [Roll: Stealth DC 12]',
+		'Keep the marker short and do not include extra brackets or multiple roll markers.',
 		'[/NARRATIVE]',
 		'',
 		'[MECHANICS]',
 		'IMPORTANT: Do NOT write headings like "Narrative:" or "Mechanics:" and do NOT put lines like "check:" or "dc:" outside the [MECHANICS] block.',
+		'- inlineCheck: "true" if you included a [Roll: ...] marker in the narrative, otherwise "false"',
 		'- check: a short description of any roll the player should make, or "none"',
 		'- dc: the DC for the check, or 0 if none',
 		'- ability: STR, DEX, CON, INT, WIS, or CHA, or "none" if no check',
 		'- skill: the skill used, or "none" if no check (for ability checks or saving throws)',
 		'- advantage: one of "none", "advantage", or "disadvantage"',
-		'- progress: one of "stay", "advance", "complete", or "fail"',
+		'- progress: one of "stay", "advance", "drift", "complete", or "fail"',
 		'- pointsOfInterest: a semicolon-separated list of 0–4 short, actionable points of interest the player could investigate next, or "none"',
 		'[/MECHANICS]',
 		'',
@@ -2507,9 +2604,59 @@ function buildAIDMSystemPrompt(): string {
 		'If no check is required, set check to "none" and dc to 0 and progress to "stay".',
 		'IMPORTANT: The server enforces canon progress. The progress value is only a suggestion.',
 		'Use progress="advance" ONLY when the CURRENT canon event/checkpoint has clearly been resolved in the narration AND the player is ready to move on.',
+		'Use progress="drift" ONLY when the player explicitly abandons the canon path and you are pivoting to a temporary objective based on their choice.',
 		'Use progress="stay" otherwise (default).',
 		'Use progress="complete" only when victory conditions are met. Use progress="fail" only on a clear defeat state.',
 	].join('\n');
+}
+
+function parseInlineRollMarker(narrative: string): {
+	label: string;
+	dc: number;
+	skill: string | null;
+	ability: string | null;
+} | null {
+	const text = String(narrative || '');
+	const m = text.match(/\[\s*Roll\s*:\s*([^\]]+?)\s*\]/i);
+	if (!m) return null;
+	const inside = String(m[1] || '').trim();
+	const dcMatch = inside.match(/\bDC\s*(\d{1,2})\b/i);
+	const dc = dcMatch ? Number.parseInt(dcMatch[1], 10) : NaN;
+	if (!Number.isFinite(dc) || dc <= 0) return null;
+	const label = inside
+		.replace(/\bDC\s*\d{1,2}\b/i, '')
+		.replace(/\s+/g, ' ')
+		.trim()
+		.replace(/^[-—–:]+\s*/, '')
+		.replace(/\s*[-—–:]+\s*$/, '')
+		.trim();
+	const skillToAbility: Record<string, string> = {
+		athletics: 'STR',
+		acrobatics: 'DEX',
+		stealth: 'DEX',
+		sleightofhand: 'DEX',
+		'sleight of hand': 'DEX',
+		arcana: 'INT',
+		history: 'INT',
+		investigation: 'INT',
+		nature: 'INT',
+		religion: 'INT',
+		animalhandling: 'WIS',
+		'animal handling': 'WIS',
+		insight: 'WIS',
+		medicine: 'WIS',
+		perception: 'WIS',
+		survival: 'WIS',
+		deception: 'CHA',
+		intimidation: 'CHA',
+		performance: 'CHA',
+		persuasion: 'CHA',
+	};
+	const normalized = label.toLowerCase().replace(/\s+/g, ' ').trim();
+	const key = normalized.replace(/\s/g, '');
+	const ability = skillToAbility[key] || skillToAbility[normalized] || null;
+	const skill = ability ? label : null;
+	return { label: label || 'Check', dc, skill, ability };
 }
 
 function buildAIDMUserPrompt(
@@ -2539,9 +2686,9 @@ function buildAIDMUserPrompt(
 			? [
 				`CURRENT CANON EVENT: ${currentCanon.title} [${currentCanon.id}]`,
 				'CANON EVENT COMPLETION CONDITION (must be satisfied before advancing):',
-				currentCanon.description,
+				(currentCanon.successCondition || currentCanon.description),
 				'',
-				'Canon events (in strict narrative order; do NOT skip ahead):',
+				'Canon events (in narrative gravity order; do not jump ahead unless the current event is resolved or the player explicitly chooses to drift):',
 				(canon || [])
 					.map((ev, idx) => `${idx === clampedIdx ? '>>' : '  '} ${idx + 1}. ${ev.title} (${ev.id})`)
 					.join('\n'),
@@ -2569,7 +2716,7 @@ function buildAIDMUserPrompt(
 		`New player input: ${playerInput}`,
 		'',
 		'Based on this, narrate the next beat of the scene at the CURRENT checkpoint/canon event.',
-		'IMPORTANT: Stay focused on resolving the CURRENT checkpoint only. Do not introduce or transition into future checkpoints/canon events unless the current one is clearly resolved.',
+		'IMPORTANT: Maintain narrative gravity toward the CURRENT checkpoint/canon event, but if the player explicitly abandons the canon path, pivot and propose a new temporary objective (and then output progress="drift").',
 		'Then specify any mechanical check as per the output format.',
 	].join('\n');
 }
@@ -2600,7 +2747,7 @@ function buildShadowArbiterUserPrompt(params: {
 	return [
 		`CANON EVENT: ${params.canonEvent.title} [${params.canonEvent.id}]`,
 		'COMPLETION CONDITION:',
-		params.canonEvent.description,
+		(params.canonEvent.successCondition || params.canonEvent.description),
 		'',
 		`PLAYER INPUT: ${truncateForPrompt(params.playerInput, 800)}`,
 		'',
@@ -2631,6 +2778,94 @@ async function evaluateCanonEventResolution(
 	if (raw === 'YES' || raw.startsWith('YES')) return { verdict: true, prompt, raw };
 	if (raw === 'NO' || raw.startsWith('NO')) return { verdict: false, prompt, raw };
 	return { verdict: false, prompt, raw };
+}
+
+export async function applyCanonProgressionForTurn(params: {
+	session: AIDMSessionState;
+	canonTimeline: CanonEvent[];
+	playerInput: string;
+	dmNarrative: string;
+	progress: 'stay' | 'advance' | 'drift' | 'complete' | 'fail' | null;
+	evaluateCanonEventResolution: (args: {
+		canonEvent: CanonEvent;
+		playerInput: string;
+		dmNarrative: string;
+	}) => Promise<{ verdict: boolean | null; prompt: string; raw: string | null }>;
+}): Promise<{ didAdvance: boolean; arbiterUsed: 'YES' | 'NO' | null }> {
+	const { session, canonTimeline: canon, playerInput, dmNarrative, progress, evaluateCanonEventResolution } = params;
+	let didAdvance = false;
+	let arbiterUsed: 'YES' | 'NO' | null = null;
+
+	// Clamp against canon IDs.
+	const canonIds = canon.map((ev) => ev.id);
+	session.checkpointIndex = clampCheckpointIndex(session.checkpointIndex, canonIds);
+	const idx = session.checkpointIndex;
+	const currentEvent = canon[idx] || null;
+
+	if (progress === 'fail') {
+		session.status = 'failed';
+		return { didAdvance: false, arbiterUsed: null };
+	}
+
+	if (progress === 'drift' && currentEvent && session.status === 'active') {
+		// Soft Narrative Gravity: if the player explicitly abandons the canon path,
+		// SKIP (not resolve) the current event and move forward.
+		const skipped = Array.isArray(session.skippedCanonEventIds) ? session.skippedCanonEventIds : [];
+		if (!skipped.includes(currentEvent.id)) skipped.push(currentEvent.id);
+		session.skippedCanonEventIds = skipped;
+
+		// Advance the "current" canon event so the DM isn't forced to keep focusing the abandoned beat.
+		if (idx < canon.length - 1) {
+			session.checkpointIndex = idx + 1;
+			didAdvance = true;
+		} else {
+			// Drifting at the final event should NOT mark plot finished.
+			session.isPlotFinished = false;
+		}
+		return { didAdvance, arbiterUsed: null };
+	}
+
+	if (currentEvent && session.status === 'active') {
+		// Always evaluate the current canon event with Shadow Arbiter.
+		// Rationale: models often forget to emit progress=advance even after clearly resolving the event.
+		// The arbiter is conservative (NO if uncertain), so server-side auto-advance is safe and predictable.
+		const arb = await evaluateCanonEventResolution({
+			canonEvent: currentEvent,
+			playerInput,
+			dmNarrative,
+		});
+		const arbAnswer: 'YES' | 'NO' | null = arb.verdict === true ? 'YES' : arb.verdict === false ? 'NO' : null;
+		arbiterUsed = arbAnswer;
+		session.lastArbiter = {
+			prompt: arb.prompt,
+			answer: arbAnswer,
+			at: new Date().toISOString(),
+			canonEventId: currentEvent.id,
+			canonEventTitle: currentEvent.title,
+			canonEventSuccessCondition: String(currentEvent.successCondition || currentEvent.description || '').trim(),
+			canonEventNudgeIdeas: Array.isArray(currentEvent.nudgeIdeas)
+				? currentEvent.nudgeIdeas.map((s) => String(s || '').trim()).filter(Boolean).slice(0, 8)
+				: undefined,
+		};
+
+		// Auto-advance only when arbiter says YES.
+		if (arb.verdict === true) {
+			if (idx < canon.length - 1) {
+				session.checkpointIndex = idx + 1;
+				didAdvance = true;
+			} else {
+				session.isPlotFinished = true;
+			}
+		}
+	}
+
+	// Plot finished is determined by resolving the final canon event.
+	if (session.checkpointIndex >= Math.max(0, canon.length - 1) && session.isPlotFinished !== true) {
+		// Don't auto-finish plot unless explicitly resolved by arbiter.
+		session.isPlotFinished = session.isPlotFinished ?? false;
+	}
+
+	return { didAdvance, arbiterUsed };
 }
 
 async function callAIDungeonMaster(
@@ -2744,12 +2979,13 @@ async function callAIDungeonMaster(
 function parseAIDMResponse(raw: string): {
 	narrative: string;
 	mechanics: {
+		inlineCheck: boolean;
 		checkDescription: string | null;
 		dc: number | null;
 		ability: string | null;
 		skill: string | null;
 		advantage: 'none' | 'advantage' | 'disadvantage' | null;
-		progress: 'stay' | 'advance' | 'complete' | 'fail' | null;
+		progress: 'stay' | 'advance' | 'drift' | 'complete' | 'fail' | null;
 		pointsOfInterest: string[] | null;
 	};
 } {
@@ -2821,10 +3057,16 @@ function parseAIDMResponse(raw: string): {
 	let ability: string | null = null;
 	let skill: string | null = null;
 	let advantage: 'none' | 'advantage' | 'disadvantage' | null = null;
-	let progress: 'stay' | 'advance' | 'complete' | 'fail' | null = null;
+	let progress: 'stay' | 'advance' | 'drift' | 'complete' | 'fail' | null = null;
 	let pointsOfInterest: string[] | null = null;
+	let inlineCheck = false;
+
+	const inline = parseInlineRollMarker(narrative);
+	if (inline) inlineCheck = true;
 
 	if (mechanicsBlock) {
+		const inlineMatch = mechanicsBlock.match(/(?:inline\s*check|inlineCheck)\s*[:\-]\s*(true|false)/i);
+		if (inlineMatch) inlineCheck = inlineMatch[1].toLowerCase() === 'true';
 		const checkMatch = mechanicsBlock.match(/check\s*[:\-]\s*([^\n]+)/i);
 		if (checkMatch) {
 			checkDescription = checkMatch[1].trim();
@@ -2845,9 +3087,9 @@ function parseAIDMResponse(raw: string): {
 		if (advMatch) {
 			advantage = advMatch[1].toLowerCase() as 'none' | 'advantage' | 'disadvantage';
 		}
-		const progMatch = mechanicsBlock.match(/progress\s*[:\-]\s*(stay|advance|complete|fail)/i);
+		const progMatch = mechanicsBlock.match(/progress\s*[:\-]\s*(stay|advance|drift|complete|fail)/i);
 		if (progMatch) {
-			progress = progMatch[1].toLowerCase() as 'stay' | 'advance' | 'complete' | 'fail';
+			progress = progMatch[1].toLowerCase() as 'stay' | 'advance' | 'drift' | 'complete' | 'fail';
 		}
 		const poiMatch = mechanicsBlock.match(/points\s*of\s*interest|pointsOfInterest/i)
 			? mechanicsBlock.match(/(?:points\s*of\s*interest|pointsOfInterest)\s*[:\-]\s*([^\n]+)/i)
@@ -2865,9 +3107,18 @@ function parseAIDMResponse(raw: string): {
 		}
 	}
 
+	// If the model used inline markers but forgot to fill mechanics, best-effort hydrate from the marker.
+	if (inline && (!checkDescription || !dc || !ability)) {
+		checkDescription = checkDescription || inline.label;
+		dc = dc || inline.dc;
+		ability = ability || inline.ability;
+		skill = skill || inline.skill;
+		advantage = advantage || 'none';
+	}
+
 	return {
 		narrative,
-		mechanics: { checkDescription, dc, ability, skill, advantage, progress, pointsOfInterest },
+		mechanics: { inlineCheck, checkDescription, dc, ability, skill, advantage, progress, pointsOfInterest },
 	};
 }
 
@@ -4859,12 +5110,13 @@ async function handleAIDMTurn(request: Request, env: Env, origin: string | null)
 
 		const parsedNarrative = buildFallbackNarrativeFromInput(playerInput, adventure);
 		const parsedMechanics = {
+			inlineCheck: false as boolean,
 			checkDescription: null as string | null,
 			dc: 0 as number | null,
 			ability: 'none' as string | null,
 			skill: 'none' as string | null,
 			advantage: 'none' as 'none' | 'advantage' | 'disadvantage' | null,
-			progress: 'stay' as 'stay' | 'advance' | 'complete' | 'fail' | null,
+			progress: 'stay' as 'stay' | 'advance' | 'drift' | 'complete' | 'fail' | null,
 			pointsOfInterest: null as string[] | null,
 		};
 		session.pendingCheck = null;
@@ -4912,7 +5164,7 @@ async function handleAIDMTurn(request: Request, env: Env, origin: string | null)
 		ability: null as string | null,
 		skill: null as string | null,
 		advantage: null as 'none' | 'advantage' | 'disadvantage' | null,
-		progress: null as 'stay' | 'advance' | 'complete' | 'fail' | null,
+		progress: null as 'stay' | 'advance' | 'drift' | 'complete' | 'fail' | null,
 		pointsOfInterest: null as string[] | null,
 	};
 	let quotaHint: string | null = null;
@@ -4950,48 +5202,16 @@ async function handleAIDMTurn(request: Request, env: Env, origin: string | null)
 			? adventure.canonTimeline
 			: null;
 		if (canon) {
-			// Clamp against canon IDs.
-			const canonIds = canon.map((ev) => ev.id);
-			session.checkpointIndex = clampCheckpointIndex(session.checkpointIndex, canonIds);
-			const idx = session.checkpointIndex;
-			const currentEvent = canon[idx] || null;
-			const prog = parsed.mechanics.progress;
-			if (prog === 'fail') {
-				session.status = 'failed';
-			} else if (currentEvent && session.status === 'active') {
-				// Always evaluate the current canon event with Shadow Arbiter.
-				// Rationale: models often forget to emit progress=advance even after clearly resolving the event.
-				// The arbiter is conservative (NO if uncertain), so server-side auto-advance is safe and predictable.
-				const arb = await evaluateCanonEventResolution(env, {
-					canonEvent: currentEvent,
-					playerInput,
-					dmNarrative: parsedNarrative,
-				});
-				const arbAnswer: 'YES' | 'NO' | null = arb.verdict === true ? 'YES' : arb.verdict === false ? 'NO' : null;
-				arbiterUsed = arbAnswer;
-				session.lastArbiter = {
-					prompt: arb.prompt,
-					answer: arbAnswer,
-					at: new Date().toISOString(),
-					canonEventId: currentEvent.id,
-					canonEventTitle: currentEvent.title,
-				};
-
-				// Auto-advance only when arbiter says YES.
-				if (arb.verdict === true) {
-					if (idx < canon.length - 1) {
-						session.checkpointIndex = idx + 1;
-						didAdvance = true;
-					} else {
-						session.isPlotFinished = true;
-					}
-				}
-			}
-			// Plot finished is determined by resolving the final canon event.
-			if (session.checkpointIndex >= Math.max(0, canon.length - 1) && session.isPlotFinished !== true) {
-				// Don't auto-finish plot unless explicitly resolved by arbiter.
-				session.isPlotFinished = session.isPlotFinished ?? false;
-			}
+			const result = await applyCanonProgressionForTurn({
+				session,
+				canonTimeline: canon,
+				playerInput,
+				dmNarrative: parsedNarrative,
+				progress: parsed.mechanics.progress,
+				evaluateCanonEventResolution: (args) => evaluateCanonEventResolution(env, args),
+			});
+			didAdvance = result.didAdvance;
+			arbiterUsed = result.arbiterUsed;
 		} else {
 			// Apply DM-directed progress (checkpoint advances/completion/failure).
 			applyProgressDirective(session, adventure, parsed.mechanics.progress);
@@ -5058,6 +5278,12 @@ async function handleAIDMTurn(request: Request, env: Env, origin: string | null)
 		(campaign as any).isPlotFinished = Boolean(session.isPlotFinished);
 		didCampaignWrite = true;
 	}
+	// Soft Narrative Gravity: expose which canon beats were explicitly skipped via drift.
+	const skippedCanonEventIds = Array.isArray(session.skippedCanonEventIds) ? session.skippedCanonEventIds : [];
+	if (JSON.stringify((campaign as any).skippedCanonEventIds || []) !== JSON.stringify(skippedCanonEventIds)) {
+		(campaign as any).skippedCanonEventIds = skippedCanonEventIds;
+		didCampaignWrite = true;
+	}
 	if (didCampaignWrite) {
 		try {
 			await env.ADA_DATA.put(`campaign:${campaignId}`, JSON.stringify(campaign));
@@ -5081,6 +5307,7 @@ async function handleAIDMTurn(request: Request, env: Env, origin: string | null)
 		checkpointIndex: session.checkpointIndex,
 		checkpointTotal,
 		isPlotFinished: Boolean(session.isPlotFinished),
+		skippedCanonEventIds,
 		status: campaign.status || null,
 		completedAt: campaign.completedAt || null,
 	};
@@ -5091,6 +5318,7 @@ async function handleAIDMTurn(request: Request, env: Env, origin: string | null)
 		checkpoints: canon ? canon.map((ev) => ev.id) : (Array.isArray(adventure.checkpoints) ? adventure.checkpoints : []),
 		status: session.status,
 		isPlotFinished: Boolean(session.isPlotFinished),
+		skippedCanonEventIds,
 		completedAt: campaign.completedAt || null,
 	};
 

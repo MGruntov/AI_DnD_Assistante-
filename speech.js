@@ -1017,13 +1017,13 @@ import { apiGetJson, apiPostJson } from "./js/api-client.js";
   function setStatus(text) {
     const el = activeTranscriptStatusEl || statusEl;
     if (!el) return;
-    el.textContent = text;
+    el.textContent = text || "";
   }
 
   function computePlayerSpeakerLabel({ characters, username }) {
     const u = (username || "").trim();
     const list = Array.isArray(characters) ? characters : [];
-    const owned = u ? list.filter((c) => c && c.owner === u) : [];
+    const owned = list.filter((ch) => String(ch && ch.owner ? ch.owner : "").trim() === u);
     const candidate = owned.length ? owned[0] : null;
     const name = candidate && candidate.name ? String(candidate.name).trim() : "";
     if (name) return name;
@@ -1277,17 +1277,17 @@ import { apiGetJson, apiPostJson } from "./js/api-client.js";
 
   // Public-ish API for the dialogue UI.
   // sender: "dm" | "player" | "system" | string
-  function appendMessage(sender, text) {
+  function appendMessage(sender, text, opts = {}) {
     const trimmed = (text || "").trim();
     if (!trimmed) return;
 
     const s = String(sender || "").toLowerCase();
     if (s === "dm" || s === "ada" || s === "ai") {
-      appendAiDmLog("dm", trimmed);
+      appendAiDmLog("dm", trimmed, opts);
       return;
     }
     if (s === "player" || s === "you") {
-      appendAiDmLog("player", trimmed);
+      appendAiDmLog("player", trimmed, opts);
       return;
     }
 
@@ -1329,19 +1329,52 @@ import { apiGetJson, apiPostJson } from "./js/api-client.js";
     function flushCurrent() {
       if (!current) return;
       const text = String(current.text || "").trim();
-      if (text) messages.push({ role: current.role, speaker: current.speaker, text });
+      if (text) {
+        const msg = { role: current.role, speaker: current.speaker, text };
+        if (Array.isArray(current.pointsOfInterest) && current.pointsOfInterest.length) {
+          msg.pointsOfInterest = current.pointsOfInterest;
+        }
+        messages.push(msg);
+      }
       current = null;
     }
 
     lines.forEach((line) => {
       const rawLine = typeof line === "string" ? line : "";
+
+      // POI metadata line: attach to the current DM message (preferred), otherwise to the last DM message.
+      const poiMatch = rawLine.match(/^\s*\[POI\]\s*(\[[\s\S]*\])\s*$/);
+      if (poiMatch && poiMatch[1]) {
+        let parsed = [];
+        try {
+          const arr = JSON.parse(String(poiMatch[1] || ""));
+          if (Array.isArray(arr)) parsed = arr;
+        } catch {
+          parsed = [];
+        }
+        const poi = parsed.map((p) => String(p || "").trim()).filter(Boolean).slice(0, 8);
+        if (poi.length) {
+          if (current && current.role === "dm") {
+            current.pointsOfInterest = poi;
+          } else {
+            for (let i = messages.length - 1; i >= 0; i--) {
+              if (messages[i] && messages[i].role === "dm") {
+                messages[i].pointsOfInterest = poi;
+                break;
+              }
+            }
+          }
+        }
+        return;
+      }
+
       const m = rawLine.match(/^([A-Za-z0-9_\-\s]{1,40}):\s*(.*)$/);
       if (m) {
         // New speaker turn.
         flushCurrent();
         const speaker = String(m[1] || "").trim();
         const body = String(m[2] || "");
-        current = { speaker, role: speakerRole(speaker), text: body };
+        current = { speaker, role: speakerRole(speaker), text: body, pointsOfInterest: null };
         return;
       }
 
@@ -1370,6 +1403,46 @@ import { apiGetJson, apiPostJson } from "./js/api-client.js";
     const messages = parseCampaignDialogueTranscript(transcript, currentUser, cachedPlayerSpeakerLabel);
     dialogueContainerEl.innerHTML = "";
 
+    function hasInlineRollMarker(text) {
+      return /\[\s*Roll\s*:\s*[^\]]+\]/i.test(String(text || ""));
+    }
+
+    function renderBodyWithInlineRolls(bodyEl, text) {
+      const raw = String(text || "");
+      const rx = /\[\s*Roll\s*:\s*([^\]]+?)\s*\]/gi;
+      let last = 0;
+      let m;
+      while ((m = rx.exec(raw))) {
+        const before = raw.slice(last, m.index);
+        if (before) bodyEl.appendChild(document.createTextNode(before));
+
+        const inside = String(m[1] || "").trim();
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "btn btn--primary btn--small";
+        btn.textContent = inside ? `Quick Roll: ${inside}` : "Quick Roll";
+        btn.addEventListener("click", () => {
+          btn.disabled = true;
+          try {
+            resolveAiDmPendingCheck();
+          } finally {
+            // If resolution fails, re-enable after a short moment so the player isn't stuck.
+            window.setTimeout(() => {
+              // Only re-enable if the backend didn't clear the check (best-effort UX).
+              const desc = lastAiMechanics && lastAiMechanics.checkDescription ? String(lastAiMechanics.checkDescription).trim() : "";
+              const dc = lastAiMechanics ? lastAiMechanics.dc : null;
+              if (desc && desc.toLowerCase() !== "none" && dc) btn.disabled = false;
+            }, 900);
+          }
+        });
+        bodyEl.appendChild(btn);
+
+        last = rx.lastIndex;
+      }
+      const after = raw.slice(last);
+      if (after) bodyEl.appendChild(document.createTextNode(after));
+    }
+
     if (messages.length === 0) {
       const empty = document.createElement("p");
       empty.className = "text-muted";
@@ -1394,12 +1467,53 @@ import { apiGetJson, apiPostJson } from "./js/api-client.js";
 
       const body = document.createElement("div");
       body.className = "chat-msg__body";
-      body.textContent = msg.text;
+      if (msg.role === "dm" && hasInlineRollMarker(msg.text)) {
+        body.textContent = "";
+        renderBodyWithInlineRolls(body, msg.text);
+      } else {
+        body.textContent = msg.text;
+      }
 
       bubble.appendChild(meta);
       bubble.appendChild(body);
+
+
+      // Contextual Action HUD: render Points of Interest as buttons under the DM bubble.
+      const poi = msg && Array.isArray(msg.pointsOfInterest) ? msg.pointsOfInterest : null;
+      if (msg.role === "dm" && poi && poi.length) {
+        const poiWrap = document.createElement("div");
+        poiWrap.className = "chat-msg__poi";
+        poi.slice(0, 8).forEach((p) => {
+          const label = String(p || "").trim();
+          if (!label) return;
+          const btn = document.createElement("button");
+          btn.type = "button";
+          btn.className = "poi-button";
+          btn.textContent = label;
+          btn.addEventListener("click", () => {
+            if (!dialogueTextInputEl) return;
+            if (dialogueTextInputEl.disabled) return;
+            dialogueTextInputEl.value = label;
+            try {
+              dialogueTextInputEl.focus();
+            } catch {
+              // ignore
+            }
+            handleDialoguePlayerInput(label, { source: "poi" });
+          });
+          poiWrap.appendChild(btn);
+        });
+        bubble.appendChild(poiWrap);
+      }
+
       dialogueContainerEl.appendChild(bubble);
     });
+
+    // If the latest message contains an inline check marker, hide the global Roll button.
+    // (This keeps flow inside the narrative.)
+    const lastMsg = messages.length ? messages[messages.length - 1] : null;
+    const hideGlobalRoll = !!(lastMsg && lastMsg.role === "dm" && hasInlineRollMarker(lastMsg.text));
+    if (aiDmRollBtn) aiDmRollBtn.hidden = hideGlobalRoll;
 
     dialogueContainerEl.scrollTop = dialogueContainerEl.scrollHeight;
   }
@@ -1457,23 +1571,11 @@ import { apiGetJson, apiPostJson } from "./js/api-client.js";
 
   function renderAiDmPointsOfInterest(points) {
     if (!aiDmPoiPanelEl || !aiDmPoiListEl) return;
-    const list = Array.isArray(points)
-      ? points.map((p) => String(p || "").trim()).filter(Boolean)
-      : [];
 
-    if (list.length === 0) {
-      aiDmPoiPanelEl.hidden = true;
-      aiDmPoiListEl.innerHTML = "";
-      return;
-    }
-
-    aiDmPoiPanelEl.hidden = false;
+    // Points of Interest are now rendered as contextual buttons inside the DM chat bubble.
+    // Keep the legacy panel hidden to avoid duplicate UI.
+    aiDmPoiPanelEl.hidden = true;
     aiDmPoiListEl.innerHTML = "";
-    list.slice(0, 8).forEach((p) => {
-      const li = document.createElement("li");
-      li.textContent = p;
-      aiDmPoiListEl.appendChild(li);
-    });
   }
 
   function renderShadowArbiterDebug(debug) {
@@ -1492,6 +1594,8 @@ import { apiGetJson, apiPostJson } from "./js/api-client.js";
     const canonEventTitle = d && typeof d.canonEventTitle === "string" ? d.canonEventTitle : "";
     const canonEventId = d && typeof d.canonEventId === "string" ? d.canonEventId : "";
     const at = d && typeof d.at === "string" ? d.at : "";
+    const canonEventSuccessCondition = d && typeof d.canonEventSuccessCondition === "string" ? d.canonEventSuccessCondition : "";
+    const canonEventNudgeIdeas = d && Array.isArray(d.canonEventNudgeIdeas) ? d.canonEventNudgeIdeas : [];
 
     const hasAnything = !!prompt || !!answer || !!canonEventTitle || !!canonEventId;
     // For now, always show the panel when present so the user has feedback.
@@ -1517,6 +1621,71 @@ import { apiGetJson, apiPostJson } from "./js/api-client.js";
       arbiterAnswerBadgeEl.classList.add("arbiter-badge--no");
     } else {
       arbiterAnswerBadgeEl.textContent = "—";
+    }
+
+    // --- Arbiter Transparency UI: Current Objective + Hint ---
+    const objectiveId = "arbiterObjective";
+    const hintId = "arbiterHint";
+    let objectiveEl = document.getElementById(objectiveId);
+    if (!objectiveEl) {
+      objectiveEl = document.createElement("div");
+      objectiveEl.id = objectiveId;
+      objectiveEl.className = "arbiter-objective";
+      arbiterPromptEl.insertAdjacentElement("beforebegin", objectiveEl);
+    }
+
+    objectiveEl.innerHTML = "";
+    const objectiveTitleEl = document.createElement("div");
+    objectiveTitleEl.className = "arbiter-objective__title";
+    objectiveTitleEl.textContent = "Current Objective";
+    const objectiveBodyEl = document.createElement("div");
+    objectiveBodyEl.className = "arbiter-objective__body";
+    objectiveBodyEl.textContent = String(canonEventSuccessCondition || "").trim() || "—";
+    objectiveEl.appendChild(objectiveTitleEl);
+    objectiveEl.appendChild(objectiveBodyEl);
+
+    let hintEl = document.getElementById(hintId);
+    if (!hintEl) {
+      hintEl = document.createElement("div");
+      hintEl.id = hintId;
+      hintEl.className = "arbiter-hint";
+      arbiterPromptEl.insertAdjacentElement("beforebegin", hintEl);
+    }
+
+    const answerIsNo = answer === "NO";
+    const ideas = canonEventNudgeIdeas
+      .map((s) => String(s || "").trim())
+      .filter(Boolean)
+      .slice(0, 8);
+
+    if (!answerIsNo || ideas.length === 0) {
+      hintEl.hidden = true;
+      hintEl.innerHTML = "";
+    } else {
+      hintEl.hidden = false;
+      hintEl.innerHTML = "";
+
+      const hintBtn = document.createElement("button");
+      hintBtn.type = "button";
+      hintBtn.className = "arbiter-hint__btn";
+      hintBtn.textContent = "Hint";
+
+      const hintTextEl = document.createElement("div");
+      hintTextEl.className = "arbiter-hint__text";
+      hintTextEl.hidden = true;
+
+      hintBtn.addEventListener("click", () => {
+        const shouldShow = hintTextEl.hidden;
+        if (shouldShow) {
+          const idx = Math.floor(Math.random() * ideas.length);
+          hintTextEl.textContent = ideas[idx] || "—";
+        }
+        hintTextEl.hidden = !shouldShow;
+        hintBtn.textContent = shouldShow ? "Hide hint" : "Hint";
+      });
+
+      hintEl.appendChild(hintBtn);
+      hintEl.appendChild(hintTextEl);
     }
   }
 
@@ -3041,14 +3210,27 @@ import { apiGetJson, apiPostJson } from "./js/api-client.js";
     });
   }
 
-  function appendAiDmLog(role, text) {
+  function appendAiDmLog(role, text, opts = {}) {
     if (!text) return;
     const playerLabel = cachedPlayerSpeakerLabel || "You";
     const prefix = role === "dm" ? "ADA: " : `${playerLabel}: `;
     const current = campaignDialogueTranscriptEl
       ? campaignDialogueTranscriptEl.value.trim()
       : "";
-    const entry = `${prefix}${text.trim()}`;
+    const poiRaw = opts && Array.isArray(opts.pointsOfInterest) ? opts.pointsOfInterest : null;
+    const poi = poiRaw
+      ? poiRaw.map((p) => String(p || "").trim()).filter(Boolean).slice(0, 8)
+      : [];
+
+    let entry = `${prefix}${text.trim()}`;
+    // Persist POIs as a metadata line that our transcript parser can attach to this DM message.
+    if (role === "dm" && poi.length > 0) {
+      try {
+        entry += `\n[POI] ${JSON.stringify(poi)}`;
+      } catch {
+        // ignore stringify failures
+      }
+    }
     const updated = current ? `${current}\n\n${entry}` : entry;
 
     if (campaignDialogueTranscriptEl) {
@@ -3161,12 +3343,12 @@ import { apiGetJson, apiPostJson } from "./js/api-client.js";
         renderAiDmCampaignProgress({ campaign: activeCampaign, ai: payload.ai || null });
       }
 
-      // Points of interest: show a small, actionable list below ADA's response.
+      // Points of interest: persisted with ADA's response so they can be rendered as buttons in the chat.
       const poi = mechanics && Array.isArray(mechanics.pointsOfInterest) ? mechanics.pointsOfInterest : null;
       renderAiDmPointsOfInterest(poi);
 
       if (narrative) {
-        appendMessage("dm", narrative);
+        appendMessage("dm", narrative, { pointsOfInterest: poi });
       }
 
       if (isHiddenHand) {
@@ -5295,7 +5477,8 @@ import { apiGetJson, apiPostJson } from "./js/api-client.js";
   }
 
   if (aiDmRollBtn) {
-    aiDmRollBtn.addEventListener("click", () => {
+
+    function resolveAiDmPendingCheck() {
       if (!activeCampaign || !isAIDmCampaign(activeCampaign)) return;
 
       const username = getCurrentUser();
@@ -5340,15 +5523,15 @@ import { apiGetJson, apiPostJson } from "./js/api-client.js";
         const debug = payload.debug || null;
         const aiError = payload.aiError ? String(payload.aiError) : "";
 
-    		// Quota hint: show exact remaining messages from backend quota.
-    		setGeminiQuotaHint(formatAiQuotaHint(payload.quota || null, payload.quotaHint || ""));
+		// Quota hint: show exact remaining messages from backend quota.
+		setGeminiQuotaHint(formatAiQuotaHint(payload.quota || null, payload.quotaHint || ""));
 
-            // If the backend returns updated campaign metadata (xp/checkpoints/status), merge it into the active campaign.
-            const campaignPatch = payload.campaignPatch && typeof payload.campaignPatch === "object" ? payload.campaignPatch : null;
-            if (campaignPatch && activeCampaign && typeof activeCampaign === "object") {
-              Object.assign(activeCampaign, campaignPatch);
-              renderAiDmCampaignProgress({ campaign: activeCampaign, ai: payload.ai || null });
-            }
+        // If the backend returns updated campaign metadata (xp/checkpoints/status), merge it into the active campaign.
+        const campaignPatch = payload.campaignPatch && typeof payload.campaignPatch === "object" ? payload.campaignPatch : null;
+        if (campaignPatch && activeCampaign && typeof activeCampaign === "object") {
+          Object.assign(activeCampaign, campaignPatch);
+          renderAiDmCampaignProgress({ campaign: activeCampaign, ai: payload.ai || null });
+        }
 
         const chosen = resolved.rolls && resolved.rolls.chosen ? resolved.rolls.chosen : r1;
         const total = typeof resolved.total === "number" ? resolved.total : null;
@@ -5362,11 +5545,11 @@ import { apiGetJson, apiPostJson } from "./js/api-client.js";
 
         appendAiDmLog("player", rollLine);
 
-        if (narrative) appendAiDmLog("dm", narrative);
-
-        // Points of interest: show a small, actionable list below ADA's response.
+        // Points of interest: persisted with ADA's response so they can be rendered as buttons in the chat.
         const poi = mechanics && Array.isArray(mechanics.pointsOfInterest) ? mechanics.pointsOfInterest : null;
         renderAiDmPointsOfInterest(poi);
+
+        if (narrative) appendAiDmLog("dm", narrative, { pointsOfInterest: poi });
 
         lastAiMechanics = mechanics;
 
@@ -5410,7 +5593,9 @@ import { apiGetJson, apiPostJson } from "./js/api-client.js";
         console.error("[ADA] resolve-check failed", e);
         if (aiDmMechanicsEl) aiDmMechanicsEl.textContent = "Error resolving check.";
       });
-    });
+    }
+
+    aiDmRollBtn.addEventListener("click", () => resolveAiDmPendingCheck());
   }
 
   if (completeJourneyBtn) {

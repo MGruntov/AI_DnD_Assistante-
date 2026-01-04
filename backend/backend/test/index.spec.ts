@@ -1,6 +1,6 @@
 import { env, createExecutionContext, waitOnExecutionContext, SELF } from 'cloudflare:test';
 import { describe, it, expect } from 'vitest';
-import worker from '../src';
+import worker, { applyCanonProgressionForTurn } from '../src';
 
 describe('ADA backend worker', () => {
 	describe('health endpoint', () => {
@@ -72,6 +72,70 @@ describe('ADA backend worker', () => {
 				expect(String(redCloak.canonTimeline[0]?.title || '').length).toBeGreaterThan(0);
 				expect(String(redCloak.canonTimeline[0]?.description || '').length).toBeGreaterThan(0);
 			}
+		});
+	});
+
+	describe('canonTimeline progression (unit)', () => {
+		it('skips the current canon event on progress=drift (without marking plot finished)', async () => {
+			const session: any = {
+				status: 'active',
+				checkpointIndex: 0,
+				isPlotFinished: false,
+				skippedCanonEventIds: [],
+				lastArbiter: null,
+			};
+			const canonTimeline: any[] = [
+				{ id: 'EVT_1', title: 'First Beat', description: 'Do the first thing.' },
+				{ id: 'EVT_2', title: 'Second Beat', description: 'Do the second thing.' },
+			];
+
+			const result = await applyCanonProgressionForTurn({
+				session,
+				canonTimeline,
+				playerInput: 'I ignore the door entirely and ride toward the mountains.',
+				dmNarrative: 'You turn your back on the corridor and saddle up.',
+				progress: 'drift',
+				evaluateCanonEventResolution: async () => {
+					throw new Error('Arbiter should not be invoked on drift');
+				},
+			});
+
+			expect(result.didAdvance).toBe(true);
+			expect(result.arbiterUsed).toBe(null);
+			expect(session.checkpointIndex).toBe(1);
+			expect(session.isPlotFinished).toBe(false);
+			expect(Array.isArray(session.skippedCanonEventIds)).toBe(true);
+			expect(session.skippedCanonEventIds).toContain('EVT_1');
+		});
+
+		it('does not mark plot finished when drifting on the final canon event', async () => {
+			const session: any = {
+				status: 'active',
+				checkpointIndex: 1,
+				isPlotFinished: true,
+				skippedCanonEventIds: [],
+				lastArbiter: null,
+			};
+			const canonTimeline: any[] = [
+				{ id: 'EVT_1', title: 'First Beat', description: 'Do the first thing.' },
+				{ id: 'EVT_2', title: 'Final Beat', description: 'Do the final thing.' },
+			];
+
+			const result = await applyCanonProgressionForTurn({
+				session,
+				canonTimeline,
+				playerInput: 'Nope. I leave this quest behind.',
+				dmNarrative: 'The road splits—and you choose neither signposted path.',
+				progress: 'drift',
+				evaluateCanonEventResolution: async () => {
+					throw new Error('Arbiter should not be invoked on drift');
+				},
+			});
+
+			expect(result.didAdvance).toBe(false);
+			expect(session.checkpointIndex).toBe(1);
+			expect(session.isPlotFinished).toBe(false);
+			expect(session.skippedCanonEventIds).toContain('EVT_2');
 		});
 	});
 

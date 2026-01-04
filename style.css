@@ -38,6 +38,7 @@
   /* Back-compat aliases used throughout the existing CSS */
   --bg: var(--bone-bg);
   --bg-elevated: var(--bone-panel);
+  --bg-card-alt: var(--bone-panel-2);
   --accent: var(--vow-gold);
   --accent-soft: rgba(243, 203, 112, 0.18);
   --text: var(--ink-text);
@@ -2003,6 +2004,49 @@ h1, h2, h3, h4,
   white-space: pre-wrap;
 }
 
+.chat-msg__poi {
+  margin-top: 0.45rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.poi-button {
+  appearance: none;
+  border: 1px solid rgba(30, 23, 18, 0.22);
+  border-radius: 4px;
+  background:
+    radial-gradient(420px 140px at 16% 0%, rgba(243, 203, 112, 0.20), transparent 60%),
+    linear-gradient(180deg, var(--bg-card-alt), rgba(255, 255, 255, 0.76));
+  color: var(--ink-text);
+  font-family: var(--font-display);
+  font-size: 0.78rem;
+  letter-spacing: 0.02em;
+  padding: 6px 10px;
+  cursor: pointer;
+  transition: transform var(--transition-fast),
+    box-shadow var(--transition-fast),
+    border-color var(--transition-fast),
+    background-color var(--transition-fast);
+}
+
+.poi-button:hover {
+  border-color: rgba(224, 28, 41, 0.30);
+  box-shadow: 0 6px 14px rgba(30, 23, 18, 0.12);
+  transform: translateY(-1px);
+}
+
+.poi-button:active {
+  transform: translateY(0px);
+  box-shadow: 0 4px 10px rgba(30, 23, 18, 0.10);
+}
+
+.poi-button:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(243, 203, 112, 0.28);
+  border-color: rgba(224, 28, 41, 0.42);
+}
+
 .chat-msg--dm {
   align-self: flex-start;
   background: rgba(224, 28, 41, 0.08);
@@ -2112,6 +2156,56 @@ h1, h2, h3, h4,
   font-size: 0.78rem;
   line-height: 1.25;
   max-height: 360px;
+}
+
+.arbiter-objective,
+.arbiter-hint {
+  border: 1px solid rgba(30, 23, 18, 0.14);
+  background: rgba(255, 255, 255, 0.72);
+  border-radius: var(--radius-sm);
+  padding: 0.45rem 0.55rem;
+}
+
+.arbiter-objective__title {
+  font-size: 0.75rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-weight: 800;
+  color: rgba(30, 23, 18, 0.68);
+  margin-bottom: 0.25rem;
+}
+
+.arbiter-objective__body {
+  font-size: 0.92rem;
+  line-height: 1.25;
+  color: rgba(30, 23, 18, 0.92);
+}
+
+.arbiter-hint {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.arbiter-hint__btn {
+  align-self: flex-start;
+  font-weight: 800;
+  font-size: 0.85rem;
+  padding: 0.3rem 0.55rem;
+  border-radius: 999px;
+  border: 1px solid rgba(224, 28, 41, 0.22);
+  background: rgba(224, 28, 41, 0.08);
+  color: rgba(30, 23, 18, 0.92);
+}
+
+.arbiter-hint__btn:hover {
+  background: rgba(224, 28, 41, 0.12);
+}
+
+.arbiter-hint__text {
+  font-size: 0.92rem;
+  line-height: 1.25;
+  color: rgba(30, 23, 18, 0.92);
 }
 
 @media (max-width: 860px) {

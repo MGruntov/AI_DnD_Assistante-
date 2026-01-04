@@ -35,6 +35,46 @@ describe('ADA backend worker', () => {
 		});
 	});
 
+	describe('adventure templates', () => {
+		it('returns RED_CLOAK canonTimeline even when the stored D1 row has an empty canon_timeline_json', async () => {
+			// Prime the adventures table/seed.
+			{
+				const request = new Request('http://example.com/api/adventures');
+				const ctx = createExecutionContext();
+				const response = await worker.fetch(request, env, ctx);
+				await waitOnExecutionContext(ctx);
+				expect(response.status).toBe(200);
+			}
+
+			// Simulate an older seed/migration where RED_CLOAK exists but canon_timeline_json is empty.
+			if ((env as any).ADA_DB) {
+				try {
+					await (env as any).ADA_DB.prepare("UPDATE adventures SET canon_timeline_json = '[]' WHERE id = 'RED_CLOAK'").run();
+				} catch {
+					// ignore; test still verifies runtime fallback behavior.
+				}
+			}
+
+			// Fetch adventures again; RED_CLOAK should still have a canonTimeline for Shadow Arbiter progression.
+			{
+				const request = new Request('http://example.com/api/adventures');
+				const ctx = createExecutionContext();
+				const response = await worker.fetch(request, env, ctx);
+				await waitOnExecutionContext(ctx);
+				expect(response.status).toBe(200);
+				const json = (await response.json()) as any;
+				const adventures = Array.isArray(json?.adventures) ? json.adventures : [];
+				const redCloak = adventures.find((a: any) => String(a?.id || '').trim().toUpperCase() === 'RED_CLOAK');
+				expect(redCloak).toBeTruthy();
+				expect(Array.isArray(redCloak.canonTimeline)).toBe(true);
+				expect(redCloak.canonTimeline.length).toBeGreaterThan(0);
+				expect(String(redCloak.canonTimeline[0]?.id || '').length).toBeGreaterThan(0);
+				expect(String(redCloak.canonTimeline[0]?.title || '').length).toBeGreaterThan(0);
+				expect(String(redCloak.canonTimeline[0]?.description || '').length).toBeGreaterThan(0);
+			}
+		});
+	});
+
 	describe('AI-solo campaign start', () => {
 		it('rejects starting a solo run if the character is already linked to another campaign', async () => {
 			const username = `test_user_${Math.random().toString(16).slice(2)}`;

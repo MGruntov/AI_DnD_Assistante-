@@ -1596,6 +1596,32 @@ type DbAdventureRow = {
 	created_at: string;
 };
 
+// Backwards-compatibility: RED_CLOAK is relied on by the frontend and tests.
+// Some deployed databases may have an older RED_CLOAK row with an empty canon_timeline_json.
+// In that case, we still want canonTimeline-driven progression + Shadow Arbiter to work.
+const RED_CLOAK_DEFAULT_CANON_TIMELINE: CanonEvent[] = [
+	{
+		id: 'crossroads',
+		title: 'The Crossroads',
+		description: "Condition: The player must choose the path to Grandmother’s and begin the journey.",
+	},
+	{
+		id: 'thicket',
+		title: 'The Thicket',
+		description: 'Condition: The player must navigate or survive the shadow-touched vines.',
+	},
+	{
+		id: 'wolves_hunt',
+		title: "The Wolf's Hunt",
+		description: 'Condition: The Shadow-Touched Wolf must be confronted or evaded.',
+	},
+	{
+		id: 'final_confrontation',
+		title: 'The Final Confrontation (Finish Line)',
+		description: 'Condition: The Wolf must be neutralized/killed, or the player must reach the cottage threshold.',
+	},
+];
+
 function safeParseJsonCanonTimeline(raw: unknown): CanonEvent[] {
 	if (Array.isArray(raw)) {
 		return raw
@@ -1639,7 +1665,10 @@ function normalizeDbDifficulty(raw: unknown): AdventureDifficulty {
 }
 
 function dbAdventureRowToTemplate(row: DbAdventureRow): AdventureTemplate {
-	const canonTimeline = safeParseJsonCanonTimeline((row as any).canon_timeline_json);
+	let canonTimeline = safeParseJsonCanonTimeline((row as any).canon_timeline_json);
+	if (!canonTimeline.length && String(row.id).trim().toUpperCase() === 'RED_CLOAK') {
+		canonTimeline = RED_CLOAK_DEFAULT_CANON_TIMELINE;
+	}
 	return {
 		id: String(row.id),
 		title: String(row.title),
@@ -1706,28 +1735,6 @@ async function ensureAdventuresD1Schema(env: Env): Promise<void> {
 			.run();
 
 		// Seed RED_CLOAK for backwards compatibility (frontend + tests rely on it).
-		const redCloakCanonTimeline: CanonEvent[] = [
-			{
-				id: 'crossroads',
-				title: 'The Crossroads',
-				description: "Condition: The player must choose the path to Grandmother’s and begin the journey.",
-			},
-			{
-				id: 'thicket',
-				title: 'The Thicket',
-				description: 'Condition: The player must navigate or survive the shadow-touched vines.',
-			},
-			{
-				id: 'wolves_hunt',
-				title: "The Wolf's Hunt",
-				description: 'Condition: The Shadow-Touched Wolf must be confronted or evaded.',
-			},
-			{
-				id: 'final_confrontation',
-				title: 'The Final Confrontation (Finish Line)',
-				description: 'Condition: The Wolf must be neutralized/killed, or the player must reach the cottage threshold.',
-			},
-		];
 		await db
 			.prepare(
 				`INSERT OR IGNORE INTO adventures (
@@ -1748,8 +1755,8 @@ async function ensureAdventuresD1Schema(env: Env): Promise<void> {
 				'Normal',
 				'A short, spooky solo adventure in the Whispering Woods where you must deliver spirit-warding herbs to your Grandmother while a corrupted wolf stalks the paths.',
 				'You are acting as an AI Dungeon Master for D&D 5e. You are running a contained adventure in the Whispering Woods. The player is a low-level messenger wearing a red cloak, tasked with carrying spirit-warding herbs to their Grandmother. The forest is haunted by a Shadow-Touched Wolf that corrupts spirits and hunts travelers. Keep the tone atmospheric and slightly eerie, but not grotesque.',
-				JSON.stringify(redCloakCanonTimeline.map((ev) => ev.id)),
-				JSON.stringify(redCloakCanonTimeline),
+				JSON.stringify(RED_CLOAK_DEFAULT_CANON_TIMELINE.map((ev) => ev.id)),
+				JSON.stringify(RED_CLOAK_DEFAULT_CANON_TIMELINE),
 				JSON.stringify([
 					"The player successfully reaches Grandmother's cottage and delivers the spirit-warding herbs.",
 					'The Shadow-Touched Wolf is neutralized, driven away, or otherwise no longer a threat.',
@@ -1762,6 +1769,18 @@ async function ensureAdventuresD1Schema(env: Env): Promise<void> {
 				'Whispering Woods',
 				null,
 				'2026-01-02T00:00:00.000Z',
+			)
+			.run();
+
+		// If RED_CLOAK already exists from an older seed, it may have an empty canon_timeline_json.
+		// Best-effort backfill so canonTimeline-driven progression (Shadow Arbiter) works reliably.
+		await db
+			.prepare(
+				"UPDATE adventures SET canon_timeline_json = ?1, checkpoints_json = ?2 WHERE id = 'RED_CLOAK' AND (canon_timeline_json IS NULL OR TRIM(canon_timeline_json) = '' OR canon_timeline_json = '[]')",
+			)
+			.bind(
+				JSON.stringify(RED_CLOAK_DEFAULT_CANON_TIMELINE),
+				JSON.stringify(RED_CLOAK_DEFAULT_CANON_TIMELINE.map((ev) => ev.id)),
 			)
 			.run();
 	} catch {

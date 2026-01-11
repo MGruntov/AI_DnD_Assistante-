@@ -240,39 +240,51 @@
     import { InteractiveCharacterCreator } from './js/character-generator.js';
 
     let creator = null;
+    let startBtn, restartBtn, interactivePanel, progressDiv, forgeStatus, forgedCharacterDiv, finishBtn;
+    let categories = {};
+    let choiceContainers = {};
 
-    const startBtn = document.getElementById('startInteractiveForgeBtn');
-    const restartBtn = document.getElementById('restartForgeBtn');
-    const interactivePanel = document.getElementById('interactiveForgePanel');
-    const progressDiv = document.getElementById('currentProgress');
-    const forgeStatus = document.getElementById('forgeStatus');
-    const forgedCharacterDiv = document.getElementById('forgedCharacter');
-    const finishBtn = document.getElementById('finishCharacterBtn');
+    function initializeElements() {
+      startBtn = document.getElementById('startInteractiveForgeBtn');
+      restartBtn = document.getElementById('restartForgeBtn');
+      interactivePanel = document.getElementById('interactiveForgePanel');
+      progressDiv = document.getElementById('currentProgress');
+      forgeStatus = document.getElementById('forgeStatus');
+      forgedCharacterDiv = document.getElementById('forgedCharacter');
+      finishBtn = document.getElementById('finishCharacterBtn');
 
-    // Category containers
-    const categories = {
-      race: document.getElementById('raceChoices'),
-      class: document.getElementById('classChoices'),
-      background: document.getElementById('backgroundChoices'),
-      skills: document.getElementById('skillChoices'),
-      equipment: document.getElementById('equipmentChoices'),
-      other: document.getElementById('otherChoices')
-    };
+      // Category containers
+      categories = {
+        race: document.getElementById('raceChoices'),
+        class: document.getElementById('classChoices'),
+        background: document.getElementById('backgroundChoices'),
+        skills: document.getElementById('skillChoices'),
+        equipment: document.getElementById('equipmentChoices'),
+        other: document.getElementById('otherChoices')
+      };
 
-    // Choice button containers
-    const choiceContainers = {
-      race: document.getElementById('raceChoiceButtons'),
-      class: document.getElementById('classChoiceButtons'),
-      background: document.getElementById('backgroundChoiceButtons'),
-      skills: document.getElementById('skillChoiceButtons'),
-      equipment: document.getElementById('equipmentChoiceButtons'),
-      other: document.getElementById('otherChoiceButtons')
-    };
+      // Choice button containers
+      choiceContainers = {
+        race: document.getElementById('raceChoiceButtons'),
+        class: document.getElementById('classChoiceButtons'),
+        background: document.getElementById('backgroundChoiceButtons'),
+        skills: document.getElementById('skillChoiceButtons'),
+        equipment: document.getElementById('equipmentChoiceButtons'),
+        other: document.getElementById('otherChoiceButtons')
+      };
+
+      // Event listeners
+      startBtn.addEventListener('click', startInteractiveForge);
+      restartBtn.addEventListener('click', restartForge);
+    }
 
     async function startInteractiveForge() {
+      console.log('Starting interactive forge...');
       try {
         creator = new InteractiveCharacterCreator();
+        console.log('Creator instantiated');
         await creator.initialize();
+        console.log('Creator initialized');
         
         startBtn.style.display = 'none';
         restartBtn.style.display = 'inline-block';
@@ -290,6 +302,8 @@
 
     function updateChoices() {
       if (!creator) return;
+      
+      console.log('Updating choices...');
 
       // Update progress
       const state = creator.getCharacterState();
@@ -457,9 +471,12 @@
       });
     }
 
-    // Event listeners
-    startBtn.addEventListener('click', startInteractiveForge);
-    restartBtn.addEventListener('click', restartForge);
+    // Initialize when DOM is ready
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', initializeElements);
+    } else {
+      initializeElements();
+    }
   </script>
 
   <script type="module" src="js/app.js"></script>

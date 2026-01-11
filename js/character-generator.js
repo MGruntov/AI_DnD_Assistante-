@@ -123,6 +123,10 @@ function canTakeAction(sheet, decision) {
     if (Array.isArray(pre)) {
       const [param, op, expected] = pre;
       const cur = readCurrent(param, expected);
+      // DEBUG: Log checks for is_valid_sheet
+      if (param === 'is_valid_sheet' && decision.id && decision.id.startsWith('choose_class')) {
+        console.log(`[${decision.id}] Checking is_valid_sheet: cur=${cur}, expected=${expected}, op=${op}`);
+      }
       if (op === '==') {
         if (cur !== expected) return false;
       } else if (op === '!=') {

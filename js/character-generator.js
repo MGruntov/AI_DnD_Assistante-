@@ -180,6 +180,9 @@ function applyAction(sheet, decision) {
       } else if (op === 'inc') {
         const cur = sheet[param] ?? 0;
         sheet[param] = cur + (typeof value === 'number' ? value : 1);
+      } else if (op === 'dec') {
+        const cur = sheet[param] ?? 0;
+        sheet[param] = cur - (typeof value === 'number' ? value : 1);
       }
     } else {
       const key = eff.state_key;

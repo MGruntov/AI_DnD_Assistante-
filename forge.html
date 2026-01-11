@@ -134,7 +134,7 @@
         <section class="panel" aria-label="Character forging">
           <div class="forge__header">
             <h3 class="panel__title">Forge a Character</h3>
-            <button id="startInteractiveForgeBtn" class="btn btn--primary">Start Interactive Character Creation</button>
+            <button id="startInteractiveForgeBtn" class="btn btn--primary" onclick="window.__startInteractiveForge && window.__startInteractiveForge()">Start Interactive Character Creation</button>
             <button id="restartForgeBtn" class="btn btn--secondary" style="display:none;">Restart</button>
           </div>
           
@@ -273,6 +273,8 @@
         other: document.getElementById('otherChoiceButtons')
       };
 
+      // Expose start function globally as a fallback
+      window.__startInteractiveForge = startInteractiveForge;
       // Event listeners
       startBtn.addEventListener('click', startInteractiveForge);
       restartBtn.addEventListener('click', restartForge);

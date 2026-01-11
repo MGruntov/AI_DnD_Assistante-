@@ -335,6 +335,29 @@
         
         const formatList = (arr) => Array.isArray(arr) && arr.length > 0 ? arr.join(', ') : 'None';
         
+        // Get counter info
+        const counters = [
+          { key: 'skills_to_choose', label: 'Skills' },
+          { key: 'languages_to_choose', label: 'Languages' },
+          { key: 'martial_weapons_to_choose', label: 'Martial Weapons' },
+          { key: 'simple_weapons_to_choose', label: 'Simple Weapons' },
+          { key: 'cantrips_to_choose', label: 'Cantrips' },
+          { key: 'bard_spells_to_choose', label: 'Bard Spells' },
+          { key: 'cleric_spells_to_choose', label: 'Cleric Spells' },
+          { key: 'instruments_to_choose', label: 'Instruments' },
+          { key: 'expertise_to_choose', label: 'Expertise' },
+          { key: 'asi_to_choose', label: 'ASI' },
+          { key: 'fighting_style_to_choose', label: 'Fighting Style' },
+          { key: 'fighter_equip_choices_to_choose', label: 'Fighter Equipment' },
+          { key: 'barbarian_primal_path_to_choose', label: 'Primal Path' },
+          { key: 'bard_college_to_choose', label: 'Bard College' },
+          { key: 'divine_domain_to_choose', label: 'Divine Domain' },
+          { key: 'fighter_archetype_to_choose', label: 'Fighter Archetype' }
+        ].filter(c => sheet[c.key] && sheet[c.key] > 0)
+         .map(c => `${c.label}: ${sheet[c.key]}`)
+         .join(' | ');
+        const countersText = counters || 'All choices made';
+        
         progressDiv.innerHTML = `
           <div style="display:grid;gap:1em;">
             <div>
@@ -342,6 +365,10 @@
               <p><strong>Class:</strong> ${classText}</p>
               <p><strong>Background:</strong> ${backgroundText}</p>
               <p><strong>Level:</strong> ${state.level} | <strong>HP:</strong> ${state.maxHp} | <strong>AC:</strong> ${state.armorClass}</p>
+            </div>
+            
+            <div style="background:#1a1a1a;padding:0.5em;border-radius:4px;">
+              <p><strong>Choices Remaining:</strong> ${countersText}</p>
             </div>
             
             <div>
@@ -438,8 +465,31 @@
         }
       });
 
-      // Check if character is complete
-      if (creator.isComplete()) {
+      // Check if validate action is available (all counters zero and base choices made)
+      const availableChoices = creator.getAvailableChoices();
+      const validateAvailable = availableChoices.some(c => c.id === 'validate_character_sheet');
+      
+      // Enable finish button if sheet is valid
+      if (state && state.rawSheet && state.rawSheet.is_valid_sheet === true) {
+        finishBtn.disabled = false;
+        finishBtn.textContent = 'Finish Character Creation';
+      } else if (validateAvailable) {
+        finishBtn.disabled = false;
+        finishBtn.textContent = 'Validate & Continue';
+        finishBtn.onclick = () => {
+          const validateAction = availableChoices.find(c => c.id === 'validate_character_sheet');
+          if (validateAction) {
+            makeChoice(validateAction);
+            finishBtn.onclick = null; // Reset to default behavior
+          }
+        };
+      } else {
+        finishBtn.disabled = true;
+        finishBtn.textContent = 'Complete all choices first';
+      }
+      
+      // Auto-finish if validation passed and we have class
+      if (state && state.rawSheet && state.rawSheet.is_valid_sheet === true && state.classes.length > 0 && availableChoices.length === 0) {
         finishCharacterCreation();
       }
     }

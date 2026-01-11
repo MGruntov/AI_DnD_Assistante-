@@ -228,7 +228,7 @@
           <button id="finishCharacterBtn" class="btn btn--primary forge__finish" disabled>
             Finish character creation
           </button>
-          <p class="forge__finish-hint text-muted">
+          <p id="finishHint" class="forge__finish-hint text-muted">
             This preview is not saved yet. Choose a portrait and click “Finish character creation” to add it to My Characters.
           </p>
         </section>
@@ -545,6 +545,10 @@
       
       forgeStatus.textContent = 'Character creation complete!';
       forgeStatus.className = 'forge__status forge__status--success';
+      const hint = document.getElementById('finishHint');
+      if (hint) {
+        hint.textContent = 'Character preview ready. Choose a portrait and click “Finish character creation” to save to My Characters.';
+      }
       
       // Hide choice panels
       interactivePanel.style.display = 'none';

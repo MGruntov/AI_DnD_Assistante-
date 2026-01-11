@@ -277,6 +277,21 @@
       // Event listeners
       startBtn.addEventListener('click', startInteractiveForge);
       restartBtn.addEventListener('click', restartForge);
+      finishBtn.addEventListener('click', () => {
+        if (finishBtn.disabled) return;
+        
+        const mode = finishBtn.dataset.mode;
+        if (mode === 'validate') {
+          // Find and apply the validate action
+          const availableChoices = creator ? creator.getAvailableChoices() : [];
+          const validateAction = availableChoices.find(c => c.id === 'validate_character_sheet');
+          if (validateAction) {
+            makeChoice(validateAction);
+          }
+        } else if (mode === 'finish') {
+          finishCharacterCreation();
+        }
+      });
     }
 
     async function startInteractiveForge() {
@@ -473,19 +488,15 @@
       if (state && state.rawSheet && state.rawSheet.is_valid_sheet === true) {
         finishBtn.disabled = false;
         finishBtn.textContent = 'Finish Character Creation';
+        finishBtn.dataset.mode = 'finish';
       } else if (validateAvailable) {
         finishBtn.disabled = false;
         finishBtn.textContent = 'Validate & Continue';
-        finishBtn.onclick = () => {
-          const validateAction = availableChoices.find(c => c.id === 'validate_character_sheet');
-          if (validateAction) {
-            makeChoice(validateAction);
-            finishBtn.onclick = null; // Reset to default behavior
-          }
-        };
+        finishBtn.dataset.mode = 'validate';
       } else {
         finishBtn.disabled = true;
         finishBtn.textContent = 'Complete all choices first';
+        finishBtn.dataset.mode = 'disabled';
       }
       
       // Auto-finish if validation passed and we have class

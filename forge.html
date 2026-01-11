@@ -347,6 +347,9 @@
 
       // Get available choices by category
       const choicesByCategory = creator.getChoicesByCategory();
+      
+      console.log('Available choices by category:', choicesByCategory);
+      console.log('Sample choice structure:', choicesByCategory.race[0] || choicesByCategory.other[0]);
 
       // Hide all categories first
       Object.values(categories).forEach(cat => cat.style.display = 'none');

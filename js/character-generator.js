@@ -17,8 +17,11 @@ export async function loadDecisionTree() {
       fetch('./character_sheet_initial.json')
     ]);
     
-    decisionTree = await treeResponse.json();
-    initialSheet = await sheetResponse.json();
+    const treeData = await treeResponse.json();
+    const sheetData = await sheetResponse.json();
+    // The decision tree file is an object with a `decisions` array
+    decisionTree = Array.isArray(treeData) ? treeData : (treeData.decisions || []);
+    initialSheet = sheetData;
   } catch (error) {
     console.error('Failed to load decision tree:', error);
     throw new Error('Could not load character creation data');

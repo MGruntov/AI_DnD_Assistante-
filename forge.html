@@ -326,22 +326,88 @@
       // Update progress
       const state = creator.getCharacterState();
       if (state) {
+        const sheet = state.rawSheet;
         const raceText = state.race !== 'Unknown' ? state.race : 'Not chosen';
         const classText = state.classes.length > 0 
           ? state.classes.map(c => `${c.name} ${c.level}`).join(', ')
           : 'Not chosen';
         const backgroundText = state.background !== 'Unknown' ? state.background : 'Not chosen';
         
+        const formatList = (arr) => Array.isArray(arr) && arr.length > 0 ? arr.join(', ') : 'None';
+        
         progressDiv.innerHTML = `
-          <p><strong>Race:</strong> ${raceText}</p>
-          <p><strong>Class:</strong> ${classText}</p>
-          <p><strong>Background:</strong> ${backgroundText}</p>
-          <p><strong>Ability Scores:</strong> STR ${state.abilityScores.strength}, 
-             DEX ${state.abilityScores.dexterity}, 
-             CON ${state.abilityScores.constitution}, 
-             INT ${state.abilityScores.intelligence}, 
-             WIS ${state.abilityScores.wisdom}, 
-             CHA ${state.abilityScores.charisma}</p>
+          <div style="display:grid;gap:1em;">
+            <div>
+              <p><strong>Race:</strong> ${raceText}</p>
+              <p><strong>Class:</strong> ${classText}</p>
+              <p><strong>Background:</strong> ${backgroundText}</p>
+              <p><strong>Level:</strong> ${state.level} | <strong>HP:</strong> ${state.maxHp} | <strong>AC:</strong> ${state.armorClass}</p>
+            </div>
+            
+            <div>
+              <p><strong>Ability Scores:</strong><br>
+                STR ${state.abilityScores.strength} (${state.abilityScores.strength >= 10 ? '+' : ''}${Math.floor((state.abilityScores.strength - 10) / 2)}), 
+                DEX ${state.abilityScores.dexterity} (${state.abilityScores.dexterity >= 10 ? '+' : ''}${Math.floor((state.abilityScores.dexterity - 10) / 2)}), 
+                CON ${state.abilityScores.constitution} (${state.abilityScores.constitution >= 10 ? '+' : ''}${Math.floor((state.abilityScores.constitution - 10) / 2)}),<br>
+                INT ${state.abilityScores.intelligence} (${state.abilityScores.intelligence >= 10 ? '+' : ''}${Math.floor((state.abilityScores.intelligence - 10) / 2)}), 
+                WIS ${state.abilityScores.wisdom} (${state.abilityScores.wisdom >= 10 ? '+' : ''}${Math.floor((state.abilityScores.wisdom - 10) / 2)}), 
+                CHA ${state.abilityScores.charisma} (${state.abilityScores.charisma >= 10 ? '+' : ''}${Math.floor((state.abilityScores.charisma - 10) / 2)})
+              </p>
+            </div>
+            
+            ${sheet.feature_entries && sheet.feature_entries.length > 0 ? `
+            <div>
+              <p><strong>Features:</strong> ${formatList(sheet.feature_entries)}</p>
+            </div>` : ''}
+            
+            ${sheet.proficiencies && sheet.proficiencies.length > 0 ? `
+            <div>
+              <p><strong>Proficiencies:</strong> ${formatList(sheet.proficiencies)}</p>
+            </div>` : ''}
+            
+            ${sheet.languages && sheet.languages.length > 0 ? `
+            <div>
+              <p><strong>Languages:</strong> ${formatList(sheet.languages)}</p>
+            </div>` : ''}
+            
+            ${sheet.equipment && sheet.equipment.length > 0 ? `
+            <div>
+              <p><strong>Equipment:</strong> ${formatList(sheet.equipment)}</p>
+            </div>` : ''}
+            
+            ${sheet.cantrips_known && sheet.cantrips_known.length > 0 ? `
+            <div>
+              <p><strong>Cantrips:</strong> ${formatList(sheet.cantrips_known)}</p>
+            </div>` : ''}
+            
+            ${sheet.spells_known && sheet.spells_known.length > 0 ? `
+            <div>
+              <p><strong>Spells:</strong> ${sheet.spells_known.map(s => {
+                const parts = s.split(':');
+                return parts[1] || s;
+              }).join(', ')}</p>
+            </div>` : ''}
+            
+            ${sheet.rages_per_long_rest > 0 ? `
+            <div>
+              <p><strong>Barbarian:</strong> ${sheet.rages_per_long_rest} rages/long rest, +${sheet.rage_damage_bonus} rage damage</p>
+            </div>` : ''}
+            
+            ${sheet.bardic_inspiration_die > 0 ? `
+            <div>
+              <p><strong>Bard:</strong> d${sheet.bardic_inspiration_die} Bardic Inspiration${sheet.song_of_rest_die ? `, d${sheet.song_of_rest_die} Song of Rest` : ''}</p>
+            </div>` : ''}
+            
+            ${sheet.channel_divinity_uses > 0 ? `
+            <div>
+              <p><strong>Cleric:</strong> ${sheet.channel_divinity_uses} Channel Divinity uses</p>
+            </div>` : ''}
+            
+            ${sheet.action_surge_uses > 0 ? `
+            <div>
+              <p><strong>Fighter:</strong> ${sheet.action_surge_uses} Action Surge${sheet.extra_attacks > 1 ? `, ${sheet.extra_attacks} attacks` : ''}</p>
+            </div>` : ''}
+          </div>
         `;
       }
 

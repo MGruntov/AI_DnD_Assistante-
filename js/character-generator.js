@@ -35,20 +35,18 @@ export async function generateCharacter({ characterClass, level, race }) {
   const sheet = JSON.parse(JSON.stringify(initialSheet));
   const actions = [];
   
-  // Assign ability scores (standard array)
-  const standardArray = [15, 14, 13, 12, 10, 8];
-  shuffleArray(standardArray);
-  sheet.strength_score = standardArray[0];
-  sheet.dexterity_score = standardArray[1];
-  sheet.constitution_score = standardArray[2];
-  sheet.intelligence_score = standardArray[3];
-  sheet.wisdom_score = standardArray[4];
-  sheet.charisma_score = standardArray[5];
+  // Ability scores are assigned via the decision tree; do not set here.
   
   // Choose race if specified
   if (race && race !== 'any') {
+    const raceId = {
+      human: 'choose_race_Human',
+      elf: 'choose_race_Elf',
+      dwarf: 'choose_race_Dwarf',
+      halfling: 'choose_race_Halfling'
+    }[String(race).toLowerCase()];
     const raceAction = findDecision(sheet, d => 
-      d.action.startsWith(`choose_race_${race}`) && canTakeAction(sheet, d)
+      d.id === raceId && canTakeAction(sheet, d)
     );
     if (raceAction) {
       applyAction(sheet, raceAction);
@@ -56,10 +54,10 @@ export async function generateCharacter({ characterClass, level, race }) {
     }
   } else {
     // Random race
-    const races = ['human', 'elf', 'dwarf', 'halfling'];
-    const randomRace = races[Math.floor(Math.random() * races.length)];
+    const races = ['choose_race_Human', 'choose_race_Elf', 'choose_race_Dwarf', 'choose_race_Halfling'];
+    const randomRaceId = races[Math.floor(Math.random() * races.length)];
     const raceAction = findDecision(sheet, d => 
-      d.action.startsWith(`choose_race_${randomRace}`) && canTakeAction(sheet, d)
+      d.id === randomRaceId && canTakeAction(sheet, d)
     );
     if (raceAction) {
       applyAction(sheet, raceAction);
@@ -68,10 +66,11 @@ export async function generateCharacter({ characterClass, level, race }) {
   }
   
   // Add class levels
-  const classKey = `class_${characterClass}_level`;
-  for (let i = 0; i < level; i++) {
+  const className = String(characterClass).toLowerCase();
+  for (let i = 1; i <= level; i++) {
+    const levelId = `choose_class_${className}_level_${i}`;
     const levelAction = findDecision(sheet, d => 
-      d.action === `levelup_${characterClass}` && canTakeAction(sheet, d)
+      d.id === levelId && canTakeAction(sheet, d)
     );
     if (levelAction) {
       applyAction(sheet, levelAction);
@@ -95,46 +94,95 @@ export async function generateCharacter({ characterClass, level, race }) {
 }
 
 function canTakeAction(sheet, decision) {
-  if (!decision.preconditions || decision.preconditions.length === 0) {
-    return true;
-  }
-  
-  for (const pre of decision.preconditions) {
-    const key = pre.state_key;
-    const value = sheet[key];
-    
-    if (pre.operator === '==') {
-      if (value != pre.value) return false;
-    } else if (pre.operator === '!=') {
-      if (value == pre.value) return false;
-    } else if (pre.operator === '>') {
-      if (!(value > pre.value)) return false;
-    } else if (pre.operator === '<') {
-      if (!(value < pre.value)) return false;
-    } else if (pre.operator === '>=') {
-      if (!(value >= pre.value)) return false;
-    } else if (pre.operator === '<=') {
-      if (!(value <= pre.value)) return false;
+  const preconditions = decision.preconditions || [];
+  if (preconditions.length === 0) return true;
+
+  const readCurrent = (param, expected) => {
+    let cur = sheet[param];
+    if (cur === undefined || cur === null) {
+      if (typeof expected === 'boolean') cur = false;
+      else if (typeof expected === 'number') cur = 0;
+      else if (typeof expected === 'string') cur = '';
+      else if (Array.isArray(expected)) cur = [];
+    }
+    return cur;
+  };
+
+  for (const pre of preconditions) {
+    if (Array.isArray(pre)) {
+      const [param, op, expected] = pre;
+      const cur = readCurrent(param, expected);
+      if (op === '==') {
+        if (cur !== expected) return false;
+      } else if (op === '!=') {
+        if (cur === expected) return false;
+      } else if (op === '>=') {
+        if (!(cur >= expected)) return false;
+      } else if (op === '<=') {
+        if (!(cur <= expected)) return false;
+      } else if (op === '>') {
+        if (!(cur > expected)) return false;
+      } else if (op === '<') {
+        if (!(cur < expected)) return false;
+      } else if (op === 'has') {
+        if (!cur || (Array.isArray(cur) ? !cur.includes(expected) : true)) return false;
+      } else if (op === 'not has') {
+        if (cur && (Array.isArray(cur) ? cur.includes(expected) : false)) return false;
+      }
+    } else {
+      // Legacy object format
+      const key = pre.state_key;
+      const value = sheet[key];
+      if (pre.operator === '==') {
+        if (value != pre.value) return false;
+      } else if (pre.operator === '!=') {
+        if (value == pre.value) return false;
+      } else if (pre.operator === '>') {
+        if (!(value > pre.value)) return false;
+      } else if (pre.operator === '<') {
+        if (!(value < pre.value)) return false;
+      } else if (pre.operator === '>=') {
+        if (!(value >= pre.value)) return false;
+      } else if (pre.operator === '<=') {
+        if (!(value <= pre.value)) return false;
+      }
     }
   }
-  
   return true;
 }
 
 function applyAction(sheet, decision) {
-  if (!decision.effects) return;
-  
-  for (const eff of decision.effects) {
-    const key = eff.state_key;
-    
-    if (eff.operation === 'set') {
-      sheet[key] = eff.value;
-    } else if (eff.operation === 'add') {
-      sheet[key] = (sheet[key] || 0) + eff.value;
-    } else if (eff.operation === 'append') {
-      if (!sheet[key]) sheet[key] = [];
-      if (Array.isArray(sheet[key])) {
-        sheet[key].push(eff.value);
+  const effects = decision.effects || [];
+  for (const eff of effects) {
+    if (Array.isArray(eff)) {
+      const [param, op, value] = eff;
+      if (op === 'set') {
+        sheet[param] = value;
+      } else if (op === 'add') {
+        // Ensure list and add unique items (single or list)
+        if (!Array.isArray(sheet[param])) sheet[param] = [];
+        if (Array.isArray(value)) {
+          for (const item of value) {
+            if (!sheet[param].includes(item)) sheet[param].push(item);
+          }
+        } else {
+          if (!sheet[param].includes(value)) sheet[param].push(value);
+        }
+      } else if (op === 'inc') {
+        const cur = sheet[param] ?? 0;
+        sheet[param] = cur + (typeof value === 'number' ? value : 1);
+      }
+    } else {
+      const key = eff.state_key;
+      if (eff.operation === 'set') {
+        sheet[key] = eff.value;
+      } else if (eff.operation === 'add') {
+        sheet[key] = (sheet[key] || 0) + eff.value;
+      } else if (eff.operation === 'append') {
+        if (!sheet[key]) sheet[key] = [];
+        if (Array.isArray(sheet[key])) {
+          sheet[key].push(eff.value);
+        }
       }
     }
   }
@@ -208,7 +256,7 @@ function formatCharacter(sheet, actions) {
     maxHp: maxHp,
     currentHp: maxHp,
     rawSheet: sheet,
-    actions: actions.map(a => a.action)
+    actions: actions.map(a => a.id)
   };
 }
 
@@ -271,7 +319,7 @@ export class InteractiveCharacterCreator {
     };
 
     choices.forEach(choice => {
-      const action = choice.action.toLowerCase();
+      const action = (choice.id || '').toLowerCase();
       if (action.includes('race')) {
         categories.race.push(choice);
       } else if (action.includes('levelup') || action.includes('class')) {

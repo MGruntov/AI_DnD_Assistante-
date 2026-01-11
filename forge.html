@@ -285,6 +285,10 @@
         // Dynamic import to avoid named export errors
         if (!InteractiveCharacterCreator) {
           const mod = await import('./js/character-generator.js');
+          console.log('character-generator module keys:', Object.keys(mod));
+          if (mod.default) {
+            console.log('character-generator default keys:', Object.keys(mod.default));
+          }
           InteractiveCharacterCreator = mod.InteractiveCharacterCreator || (mod.default && mod.default.InteractiveCharacterCreator) || null;
         }
 

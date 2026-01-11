@@ -237,8 +237,7 @@
   </main>
 
   <script type="module">
-    import { InteractiveCharacterCreator } from './js/character-generator.js';
-
+    let InteractiveCharacterCreator = null;
     let creator = null;
     let startBtn, restartBtn, interactivePanel, progressDiv, forgeStatus, forgedCharacterDiv, finishBtn;
     let categories = {};
@@ -283,6 +282,19 @@
     async function startInteractiveForge() {
       console.log('Starting interactive forge...');
       try {
+        // Dynamic import to avoid named export errors
+        if (!InteractiveCharacterCreator) {
+          const mod = await import('./js/character-generator.js');
+          InteractiveCharacterCreator = mod.InteractiveCharacterCreator || (mod.default && mod.default.InteractiveCharacterCreator) || null;
+        }
+
+        if (!InteractiveCharacterCreator) {
+          console.error('InteractiveCharacterCreator export not found');
+          forgeStatus.textContent = 'Error: InteractiveCharacterCreator export not found.';
+          forgeStatus.className = 'forge__status forge__status--error';
+          return;
+        }
+
         creator = new InteractiveCharacterCreator();
         console.log('Creator instantiated');
         await creator.initialize();

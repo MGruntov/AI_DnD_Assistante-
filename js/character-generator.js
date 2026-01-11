@@ -290,3 +290,10 @@ export class InteractiveCharacterCreator {
     return categories;
   }
 }
+
+// Provide a default export for environments that only read default
+export default {
+  loadDecisionTree,
+  generateCharacter,
+  InteractiveCharacterCreator
+};

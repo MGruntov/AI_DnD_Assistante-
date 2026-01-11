@@ -329,18 +329,34 @@ export class InteractiveCharacterCreator {
     };
 
     choices.forEach(choice => {
-      const action = (choice.id || '').toLowerCase();
-      if (action.includes('race') || action === 'choose_human' || action === 'choose_elf' || action === 'choose_dwarf' || action === 'choose_halfling') {
+      const id = choice.id || '';
+      const action = id.toLowerCase();
+      console.log('Categorizing:', id, 'lowercase:', action);
+      
+      // Check for race choices: includes 'race' OR is one of the specific race IDs
+      const isRace = action.includes('race') || 
+                     id === 'choose_Human' || 
+                     id === 'choose_Elf' || 
+                     id === 'choose_Dwarf' || 
+                     id === 'choose_Halfling';
+      
+      if (isRace) {
+        console.log('  -> race');
         categories.race.push(choice);
       } else if (action.includes('levelup') || action.includes('class')) {
+        console.log('  -> class');
         categories.class.push(choice);
       } else if (action.includes('background')) {
+        console.log('  -> background');
         categories.background.push(choice);
       } else if (action.includes('skill')) {
+        console.log('  -> skills');
         categories.skills.push(choice);
       } else if (action.includes('equipment') || action.includes('weapon') || action.includes('armor')) {
+        console.log('  -> equipment');
         categories.equipment.push(choice);
       } else {
+        console.log('  -> other');
         categories.other.push(choice);
       }
     });

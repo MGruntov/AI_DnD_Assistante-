@@ -9,7 +9,13 @@ let initialSheet = null;
  * Load the decision tree and initial sheet JSON files
  */
 export async function loadDecisionTree() {
-  if (decisionTree && initialSheet) return;
+  // If already loaded, ensure `decisionTree` is an array (not legacy object)
+  if (decisionTree && initialSheet) {
+    if (!Array.isArray(decisionTree)) {
+      decisionTree = decisionTree.decisions || [];
+    }
+    return;
+  }
   
   try {
     const [treeResponse, sheetResponse] = await Promise.all([

@@ -1060,6 +1060,12 @@ import { generateCharacter } from "./js/character-generator.js";
 
   function updateFinishCharacterButtonState() {
     if (!finishCharacterBtn) return;
+    // Let the interactive builder control its own finish button state
+    try {
+      if (window && window.__interactiveForgeActive) return;
+    } catch {
+      // ignore
+    }
     const enabled = !!pendingForgedCharacter && hasSelectedPortrait();
     finishCharacterBtn.disabled = !enabled;
   }

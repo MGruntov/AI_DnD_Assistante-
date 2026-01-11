@@ -408,68 +408,145 @@
 
     function displayCharacter(character) {
       const classesText = character.classes.map(c => `${c.name} (Level ${c.level})`).join(', ');
-      const actionsText = character.actions.slice(0, 10).join(', ') + (character.actions.length > 10 ? '...' : '');
+      const sheet = character.rawSheet;
+      
+      // Helper to format array fields
+      const formatList = (arr) => Array.isArray(arr) && arr.length > 0 ? arr.join(', ') : '—';
+      
+      // Build spells by class if available
+      let spellsHtml = '';
+      if (sheet.spells_known && sheet.spells_known.length > 0) {
+        const spellsByClass = {};
+        sheet.spells_known.forEach(spell => {
+          const [cls, name, level] = spell.split(':');
+          if (!spellsByClass[cls]) spellsByClass[cls] = {};
+          if (!spellsByClass[cls][level]) spellsByClass[cls][level] = [];
+          spellsByClass[cls][level].push(name);
+        });
+        spellsHtml = Object.entries(spellsByClass).map(([cls, levels]) => `
+          <div class="spell-section">
+            <strong>${cls}:</strong>
+            ${Object.entries(levels).map(([lvl, spells]) => `
+              <div style="margin-left: 1em;">
+                <em>Level ${lvl}:</em> ${spells.join(', ')}
+              </div>
+            `).join('')}
+          </div>
+        `).join('');
+      }
       
       forgedCharacterDiv.innerHTML = `
         <div class="character-summary">
           <h4 class="character-summary__title">Your Character</h4>
-          <dl class="character-summary__stats">
-            <div class="stat-row">
-              <dt>Race:</dt>
-              <dd>${character.race}</dd>
-            </div>
-            <div class="stat-row">
-              <dt>Class:</dt>
-              <dd>${classesText}</dd>
-            </div>
-            <div class="stat-row">
-              <dt>Background:</dt>
-              <dd>${character.background}</dd>
-            </div>
-            <div class="stat-row">
-              <dt>Level:</dt>
-              <dd>${character.level}</dd>
-            </div>
-            <div class="stat-row">
-              <dt>HP:</dt>
-              <dd>${character.maxHp}</dd>
-            </div>
-            <div class="stat-row">
-              <dt>AC:</dt>
-              <dd>${character.armorClass}</dd>
-            </div>
-            <div class="stat-row">
-              <dt>Proficiency:</dt>
-              <dd>+${character.proficiencyBonus}</dd>
-            </div>
-            <div class="stat-row">
-              <dt>STR:</dt>
-              <dd>${character.abilityScores.strength}</dd>
-            </div>
-            <div class="stat-row">
-              <dt>DEX:</dt>
-              <dd>${character.abilityScores.dexterity}</dd>
-            </div>
-            <div class="stat-row">
-              <dt>CON:</dt>
-              <dd>${character.abilityScores.constitution}</dd>
-            </div>
-            <div class="stat-row">
-              <dt>INT:</dt>
-              <dd>${character.abilityScores.intelligence}</dd>
-            </div>
-            <div class="stat-row">
-              <dt>WIS:</dt>
-              <dd>${character.abilityScores.wisdom}</dd>
-            </div>
-            <div class="stat-row">
-              <dt>CHA:</dt>
-              <dd>${character.abilityScores.charisma}</dd>
-            </div>
-          </dl>
+          
+          <section class="character-section">
+            <h5>Identity</h5>
+            <dl class="character-summary__stats">
+              <div class="stat-row"><dt>Race:</dt><dd>${character.race}</dd></div>
+              <div class="stat-row"><dt>Class:</dt><dd>${classesText}</dd></div>
+              <div class="stat-row"><dt>Background:</dt><dd>${character.background}</dd></div>
+              <div class="stat-row"><dt>Level:</dt><dd>${character.level}</dd></div>
+            </dl>
+          </section>
+          
+          <section class="character-section">
+            <h5>Combat Stats</h5>
+            <dl class="character-summary__stats">
+              <div class="stat-row"><dt>HP:</dt><dd>${character.maxHp}</dd></div>
+              <div class="stat-row"><dt>AC:</dt><dd>${character.armorClass}</dd></div>
+              <div class="stat-row"><dt>Proficiency Bonus:</dt><dd>+${character.proficiencyBonus}</dd></div>
+              <div class="stat-row"><dt>Speed:</dt><dd>${sheet.speed} ft.</dd></div>
+            </dl>
+          </section>
+          
+          <section class="character-section">
+            <h5>Ability Scores</h5>
+            <dl class="character-summary__stats">
+              <div class="stat-row"><dt>STR:</dt><dd>${character.abilityScores.strength} (${character.abilityScores.strength >= 10 ? '+' : ''}${Math.floor((character.abilityScores.strength - 10) / 2)})</dd></div>
+              <div class="stat-row"><dt>DEX:</dt><dd>${character.abilityScores.dexterity} (${character.abilityScores.dexterity >= 10 ? '+' : ''}${Math.floor((character.abilityScores.dexterity - 10) / 2)})</dd></div>
+              <div class="stat-row"><dt>CON:</dt><dd>${character.abilityScores.constitution} (${character.abilityScores.constitution >= 10 ? '+' : ''}${Math.floor((character.abilityScores.constitution - 10) / 2)})</dd></div>
+              <div class="stat-row"><dt>INT:</dt><dd>${character.abilityScores.intelligence} (${character.abilityScores.intelligence >= 10 ? '+' : ''}${Math.floor((character.abilityScores.intelligence - 10) / 2)})</dd></div>
+              <div class="stat-row"><dt>WIS:</dt><dd>${character.abilityScores.wisdom} (${character.abilityScores.wisdom >= 10 ? '+' : ''}${Math.floor((character.abilityScores.wisdom - 10) / 2)})</dd></div>
+              <div class="stat-row"><dt>CHA:</dt><dd>${character.abilityScores.charisma} (${character.abilityScores.charisma >= 10 ? '+' : ''}${Math.floor((character.abilityScores.charisma - 10) / 2)})</dd></div>
+            </dl>
+          </section>
+          
+          <section class="character-section">
+            <h5>Features & Traits</h5>
+            <div>${formatList(sheet.feature_entries)}</div>
+          </section>
+          
+          <section class="character-section">
+            <h5>Proficiencies</h5>
+            <div>${formatList(sheet.proficiencies)}</div>
+          </section>
+          
+          <section class="character-section">
+            <h5>Languages</h5>
+            <div>${formatList(sheet.languages)}</div>
+          </section>
+          
+          ${sheet.skills ? `<section class="character-section">
+            <h5>Skills</h5>
+            <div>${formatList(sheet.skills)}</div>
+          </section>` : ''}
+          
+          <section class="character-section">
+            <h5>Equipment</h5>
+            <div>${formatList(sheet.equipment)}</div>
+          </section>
+          
+          ${sheet.cantrips_known && sheet.cantrips_known.length > 0 ? `<section class="character-section">
+            <h5>Cantrips</h5>
+            <div>${formatList(sheet.cantrips_known)}</div>
+          </section>` : ''}
+          
+          ${spellsHtml ? `<section class="character-section">
+            <h5>Spells Known</h5>
+            ${spellsHtml}
+          </section>` : ''}
+          
+          ${sheet.instruments_known && sheet.instruments_known.length > 0 ? `<section class="character-section">
+            <h5>Instruments</h5>
+            <div>${formatList(sheet.instruments_known)}</div>
+          </section>` : ''}
+          
+          ${sheet.rages_per_long_rest > 0 ? `<section class="character-section">
+            <h5>Barbarian Resources</h5>
+            <dl class="character-summary__stats">
+              <div class="stat-row"><dt>Rages per Long Rest:</dt><dd>${sheet.rages_per_long_rest}</dd></div>
+              ${sheet.rage_damage_bonus ? `<div class="stat-row"><dt>Rage Damage Bonus:</dt><dd>+${sheet.rage_damage_bonus}</dd></div>` : ''}
+            </dl>
+          </section>` : ''}
+          
+          ${sheet.bardic_inspiration_die > 0 ? `<section class="character-section">
+            <h5>Bard Resources</h5>
+            <dl class="character-summary__stats">
+              <div class="stat-row"><dt>Bardic Inspiration Die:</dt><dd>d${sheet.bardic_inspiration_die}</dd></div>
+              ${sheet.song_of_rest_die ? `<div class="stat-row"><dt>Song of Rest Die:</dt><dd>d${sheet.song_of_rest_die}</dd></div>` : ''}
+            </dl>
+          </section>` : ''}
+          
+          ${sheet.channel_divinity_uses > 0 ? `<section class="character-section">
+            <h5>Cleric Resources</h5>
+            <dl class="character-summary__stats">
+              <div class="stat-row"><dt>Channel Divinity Uses:</dt><dd>${sheet.channel_divinity_uses}</dd></div>
+            </dl>
+          </section>` : ''}
+          
+          ${sheet.action_surge_uses > 0 ? `<section class="character-section">
+            <h5>Fighter Resources</h5>
+            <dl class="character-summary__stats">
+              <div class="stat-row"><dt>Action Surge Uses:</dt><dd>${sheet.action_surge_uses}</dd></div>
+              ${sheet.extra_attacks && sheet.extra_attacks > 1 ? `<div class="stat-row"><dt>Extra Attacks:</dt><dd>${sheet.extra_attacks}</dd></div>` : ''}
+            </dl>
+          </section>` : ''}
+          
           <details class="character-summary__details">
-            <summary>Actions taken (${character.actions.length})</summary>
-            <p class="actions-list">${actionsText}</p>
+            <summary>All Decisions Taken (${character.actions.length})</summary>
+            <ul class="actions-list" style="columns: 2;">
+              ${character.actions.map(a => `<li>${a}</li>`).join('')}
+            </ul>
           </details>
         </div>
       `;

@@ -286,7 +286,8 @@ export class InteractiveCharacterCreator {
 
   getAvailableChoices() {
     if (!this.sheet || !decisionTree) return [];
-    return decisionTree.filter(d => canTakeAction(this.sheet, d));
+    const tree = Array.isArray(decisionTree) ? decisionTree : (decisionTree.decisions || []);
+    return tree.filter(d => canTakeAction(this.sheet, d));
   }
 
   applyChoice(decision) {

@@ -1141,8 +1141,8 @@ h1, h2, h3, h4,
 }
 
 .forge__choice-grid {
-  display: flex;
-  flex-direction: column;
+  display: flex !important;
+  flex-direction: column !important;
   gap: 10px;
 }
 

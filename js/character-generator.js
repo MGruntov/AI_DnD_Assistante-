@@ -330,7 +330,7 @@ export class InteractiveCharacterCreator {
 
     choices.forEach(choice => {
       const action = (choice.id || '').toLowerCase();
-      if (action.includes('race')) {
+      if (action.includes('race') || action === 'choose_human' || action === 'choose_elf' || action === 'choose_dwarf' || action === 'choose_halfling') {
         categories.race.push(choice);
       } else if (action.includes('levelup') || action.includes('class')) {
         categories.class.push(choice);

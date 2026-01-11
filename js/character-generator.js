@@ -18,9 +18,11 @@ export async function loadDecisionTree() {
   }
   
   try {
+    // Cache-bust and force network fetch so we don't serve stale trees from CDN/browser
+    const cacheBust = `v=${Date.now()}`;
     const [treeResponse, sheetResponse] = await Promise.all([
-      fetch('./character_decision_tree.json'),
-      fetch('./character_sheet_initial.json')
+      fetch(`./character_decision_tree.json?${cacheBust}`, { cache: 'no-store' }),
+      fetch(`./character_sheet_initial.json?${cacheBust}`, { cache: 'no-store' })
     ]);
     
     const treeData = await treeResponse.json();

@@ -478,6 +478,7 @@ type Character = {
 	campaignIds: string[];
 	createdAt: string;
 	updatedAt: string;
+	rawSheet?: any;
 };
 
 const MAX_CHARACTER_LEVEL = 20;
@@ -7423,6 +7424,103 @@ function forgeCharacterFromNarrative(owner: string, narrativeText: string, portr
 	return ensureCharacterProgression(character);
 }
 
+function forgeCharacterFromSheet(owner: string, payload: any): Character {
+	const now = new Date().toISOString();
+	const id = crypto.randomUUID();
+
+	const race = String(payload?.race || 'Unknown');
+	const background = String(payload?.background || '').trim();
+	const classesRaw = Array.isArray(payload?.classes) ? payload.classes : [];
+	const classes: CharacterClass[] = classesRaw
+		.map((c: any) => ({
+			name: String(c?.name || 'Adventurer'),
+			level: clampLevel(Number(c?.level ?? 1)),
+		}))
+		.filter((c) => Boolean(c.name));
+
+	const classSummary = classes.map((c) => c.name).join('/') || 'Adventurer';
+	const levelSummary = classes.map((c) => String(c.level)).join('/') || '1';
+
+	const abilityScores = payload?.abilityScores || {};
+	const mechanicsAbilityScores = {
+		str: Number(abilityScores.strength ?? abilityScores.str ?? 10),
+		dex: Number(abilityScores.dexterity ?? abilityScores.dex ?? 10),
+		con: Number(abilityScores.constitution ?? abilityScores.con ?? 10),
+		int: Number(abilityScores.intelligence ?? abilityScores.int ?? 10),
+		wis: Number(abilityScores.wisdom ?? abilityScores.wis ?? 10),
+		cha: Number(abilityScores.charisma ?? abilityScores.cha ?? 10),
+	};
+
+	const skillsRaw = Array.isArray(payload?.skills) ? payload.skills : [];
+	const skills: string[] = skillsRaw.map((s: any) => {
+		if (typeof s === 'string') return s;
+		if (s && typeof s.name === 'string') return s.name;
+		return '';
+	}).filter(Boolean);
+
+	const feats = Array.isArray(payload?.feats) ? payload.feats.map((f: any) => String(f)) : [];
+	const features = Array.isArray(payload?.features) ? payload.features.map((f: any) => String(f)) : [];
+	const equipment = Array.isArray(payload?.equipment) ? payload.equipment.map((e: any) => String(e)) : [];
+	const rawSheet = payload?.rawSheet ?? null;
+
+	const castingStat = rawSheet?.spellcasting_ability ?? null;
+	const cantrips = Array.isArray(rawSheet?.cantrips_known) ? rawSheet.cantrips_known : [];
+	const leveledSpells = Array.isArray(rawSheet?.spells_known) ? rawSheet.spells_known : [];
+
+	const character: Character = {
+		id,
+		owner,
+		name: String(payload?.name || `${race} ${classes[0]?.name || 'Adventurer'}`).trim(),
+		narrative: {
+			rawTranscript: String(payload?.narrativeText || 'Forged via interactive builder'),
+			summary: '',
+			tags: [],
+		},
+		concept: {
+			race,
+			background,
+			alignment: '',
+			classes,
+			classSummary,
+			levelSummary,
+		},
+		mechanics: {
+			abilityScores: mechanicsAbilityScores,
+			proficiencyBonus: Number(payload?.proficiencyBonus ?? 2),
+			savingThrows: Array.isArray(payload?.savingThrows)
+				? payload.savingThrows.map((s: any) => String(s))
+				: Array.isArray(rawSheet?.saving_throws_proficient)
+					? rawSheet.saving_throws_proficient
+					: [],
+			skills,
+			hitPoints: Number(payload?.maxHp ?? payload?.currentHp ?? 0),
+			armorClass: Number(payload?.armorClass ?? 10),
+			speed: Number(rawSheet?.speed ?? 30),
+			classFeatures: features,
+			feats,
+			equipment,
+			spells: {
+				castingStat,
+				cantrips,
+				leveledSpells,
+			},
+		},
+		portraitUrl: payload?.portraitUrl ?? null,
+		validation: {
+			isValid: rawSheet?.is_valid_sheet === true,
+			issues: Array.isArray(rawSheet?.validation_errors)
+				? rawSheet.validation_errors.map((v: any) => String(v))
+				: [],
+		},
+		campaignIds: Array.isArray(payload?.campaignIds) ? payload.campaignIds : [],
+		createdAt: now,
+		updatedAt: now,
+		rawSheet,
+	};
+
+	return ensureCharacterProgression(character);
+}
+
 async function handleForgeCharacter(request: Request, env: Env, origin: string | null): Promise<Response> {
 	let body: any;
 	try {
@@ -7734,6 +7832,95 @@ async function handleCharacterLevelUp(request: Request, env: Env, origin: string
 	return jsonResponse({ ok: true, character }, { status: 200 }, origin);
 }
 
+async function handleSaveCharacterSheet(request: Request, env: Env, origin: string | null): Promise<Response> {
+	let body: any;
+	try {
+		body = await request.json();
+	} catch {
+		return errorResponse('Invalid JSON body', 400, origin);
+	}
+
+	const username = (body?.username ?? '').trim();
+	const payload = body?.character ?? null;
+	const characterId = typeof body?.characterId === 'string' ? body.characterId.trim() : '';
+
+	if (!username) {
+		return errorResponse('Username is required', 400, origin);
+	}
+	if (!payload) {
+		return errorResponse('Character payload is required', 400, origin);
+	}
+
+	// Ensure the user exists before saving a character
+	const userKey = `user:${username}`;
+	const userRecord = await env.ADA_DATA.get(userKey);
+	if (!userRecord) {
+		return errorResponse('Unknown user', 404, origin);
+	}
+
+	// Enforce roster limit: max 5 characters per user
+	const rosterIndexKey = `charactersByUser:${username}`;
+	const existingRoster = await env.ADA_DATA.get(rosterIndexKey);
+	let existingIds: string[] = [];
+	if (existingRoster) {
+		try {
+			existingIds = JSON.parse(existingRoster) as string[];
+			if (!Array.isArray(existingIds)) existingIds = [];
+		} catch {
+			existingIds = [];
+		}
+	}
+	const isUpdate = Boolean(characterId);
+	let existingCharacter: Character | null = null;
+
+	if (isUpdate) {
+		const stored = await env.ADA_DATA.get(`character:${characterId}`);
+		if (!stored) {
+			return errorResponse('Character not found', 404, origin);
+		}
+		try {
+			existingCharacter = JSON.parse(stored) as Character;
+		} catch {
+			return errorResponse('Corrupted character record', 500, origin);
+		}
+		if (!existingCharacter || existingCharacter.owner !== username) {
+			return errorResponse('Not authorized to update this character', 403, origin);
+		}
+	} else if (existingIds.length >= 5) {
+		return errorResponse(
+			'You have reached the maximum of 5 characters. Delete an existing character before saving a new one.',
+			400,
+			origin,
+		);
+	}
+
+	let character = forgeCharacterFromSheet(username, payload);
+
+	if (isUpdate && existingCharacter) {
+		character.id = existingCharacter.id;
+		character.createdAt = existingCharacter.createdAt;
+		// Preserve campaign links if present
+		character.campaignIds = Array.isArray(existingCharacter.campaignIds)
+			? existingCharacter.campaignIds
+			: [];
+		// Preserve portrait when none provided
+		if (!character.portraitUrl && existingCharacter.portraitUrl) {
+			character.portraitUrl = existingCharacter.portraitUrl;
+		}
+	}
+
+	const charKey = `character:${character.id}`;
+
+	await env.ADA_DATA.put(charKey, JSON.stringify(character));
+
+	// Update roster index only when creating new characters
+	if (!isUpdate) {
+		await env.ADA_DATA.put(rosterIndexKey, JSON.stringify([...existingIds, character.id]));
+	}
+
+	return jsonResponse({ ok: true, character }, { status: 200 }, origin);
+}
+
 /**
  * Simple BM25-inspired retriever for SRD data
  */
@@ -7949,6 +8136,10 @@ async function legacyFetch(request: Request, env: Env, _ctx?: ExecutionContext):
 
 	if (pathname === '/api/characters/forge' && method === 'POST') {
 		return handleForgeCharacter(request, env, origin);
+	}
+
+	if (pathname === '/api/characters/save-sheet' && method === 'POST') {
+		return handleSaveCharacterSheet(request, env, origin);
 	}
 
 	if (pathname === '/api/characters/delete' && method === 'POST') {

@@ -237,11 +237,16 @@
   </main>
 
   <script type="module">
+    import { authHeaders } from './js/api.js';
+
     let InteractiveCharacterCreator = null;
     let creator = null;
     let startBtn, restartBtn, interactivePanel, progressDiv, forgeStatus, forgedCharacterDiv, finishBtn;
     let categories = {};
     let choiceContainers = {};
+    let isSaving = false;
+    let needsSave = false;
+    let savedCharacterId = null;
 
     function initializeElements() {
       startBtn = document.getElementById('startInteractiveForgeBtn');
@@ -277,7 +282,7 @@
       // Event listeners
       startBtn.addEventListener('click', startInteractiveForge);
       restartBtn.addEventListener('click', restartForge);
-      finishBtn.addEventListener('click', () => {
+      finishBtn.addEventListener('click', async () => {
         if (finishBtn.disabled) return;
         
         const mode = finishBtn.dataset.mode;
@@ -289,9 +294,17 @@
             makeChoice(validateAction);
           }
         } else if (mode === 'finish') {
-          finishCharacterCreation();
+          await finishCharacterCreation();
         }
       });
+    }
+
+    function getCurrentUser() {
+      try {
+        return localStorage.getItem('adaCurrentUser');
+      } catch {
+        return null;
+      }
     }
 
     async function startInteractiveForge() {
@@ -318,6 +331,9 @@
         console.log('Creator instantiated');
         await creator.initialize();
         console.log('Creator initialized');
+        needsSave = false;
+        isSaving = false;
+        savedCharacterId = null;
         
         startBtn.style.display = 'none';
         restartBtn.style.display = 'inline-block';
@@ -533,6 +549,7 @@
       if (success) {
         forgeStatus.textContent = `Applied: ${decision.title || decision.id}`;
         forgeStatus.className = 'forge__status forge__status--success';
+        markUnsavedChanges();
         updateChoices();
       } else {
         forgeStatus.textContent = `Failed to apply: ${decision.title || decision.id}`;
@@ -540,23 +557,112 @@
       }
     }
 
-    function finishCharacterCreation() {
+    function markUnsavedChanges() {
+      needsSave = true;
+      const hint = document.getElementById('finishHint');
+      if (hint) {
+        hint.textContent = 'Character preview is ready. Click “Finish character creation” to save to My Characters.';
+      }
+    }
+
+    function getBackendBaseUrl() {
+      const cfg = window.ADA && window.ADA.config;
+      return (cfg && cfg.BACKEND_BASE_URL) || '';
+    }
+
+    async function saveCharacter(character, username) {
+      if (isSaving) return false;
+      isSaving = true;
+      finishBtn.disabled = true;
+      finishBtn.textContent = 'Saving...';
+      finishBtn.dataset.mode = 'saving';
+
+      try {
+        const res = await fetch(`${getBackendBaseUrl()}/api/characters/save-sheet`, {
+          method: 'POST',
+          headers: authHeaders({ 'Content-Type': 'application/json' }),
+          body: JSON.stringify({ username, character, characterId: savedCharacterId })
+        });
+        const data = await res.json().catch(() => ({}));
+
+        if (!res.ok || !data || data.ok !== true) {
+          const msg = (data && (data.error || data.message)) || 'Could not save character. Please try again.';
+          forgeStatus.textContent = msg;
+          forgeStatus.className = 'forge__status forge__status--error';
+          return false;
+        }
+
+        if (data.character && data.character.id) {
+          savedCharacterId = data.character.id;
+        }
+
+        return true;
+      } catch (err) {
+        console.error('Failed to save character sheet', err);
+        forgeStatus.textContent = 'Network error while saving. Please try again.';
+        forgeStatus.className = 'forge__status forge__status--error';
+        return false;
+      } finally {
+        isSaving = false;
+        finishBtn.textContent = 'Finish Character Creation';
+      }
+    }
+
+    async function finishCharacterCreation() {
+      if (!creator) return;
       const character = creator.getCharacterState();
-      
+      if (!character) return;
+
+      // Bring over any chosen portrait or name
+      try {
+        const portraitUrl = localStorage.getItem('adaCurrentCharacterPortraitUrl');
+        if (portraitUrl) character.portraitUrl = portraitUrl;
+      } catch {
+        // ignore portrait read errors
+      }
+      const nameInput = document.getElementById('forgeCharacterName');
+      if (nameInput && nameInput.value && nameInput.value.trim()) {
+        character.name = nameInput.value.trim();
+      }
+      const currentUser = getCurrentUser();
+
       forgeStatus.textContent = 'Character creation complete!';
       forgeStatus.className = 'forge__status forge__status--success';
       const hint = document.getElementById('finishHint');
       if (hint) {
-        hint.textContent = 'Character preview ready. Choose a portrait and click “Finish character creation” to save to My Characters.';
+        hint.textContent = 'Saving your character to My Characters...';
       }
-      
-      // Hide choice panels
-      interactivePanel.style.display = 'none';
-      
-      // Display character
+
+      // Keep the choice panels visible so players can continue tweaking after saving
+      interactivePanel.style.display = 'block';
+
+      // Display character summary immediately
       displayCharacter(character);
-      
+
+      // Persist to backend (or show error)
+      if (!currentUser) {
+        forgeStatus.textContent = 'Log in to save this character to My Characters.';
+        forgeStatus.className = 'forge__status forge__status--error';
+        markUnsavedChanges();
+        finishBtn.disabled = false;
+        finishBtn.dataset.mode = 'finish';
+        return;
+      }
+
+      const saved = await saveCharacter(character, currentUser);
+      if (saved) {
+        needsSave = false;
+        if (hint) {
+          hint.textContent = 'Saved to My Characters. You can adjust choices and click “Finish character creation” again to update the sheet.';
+        }
+        forgeStatus.textContent = 'Character saved to My Characters.';
+        forgeStatus.className = 'forge__status forge__status--success';
+      } else {
+        markUnsavedChanges();
+      }
+
       finishBtn.disabled = false;
+      finishBtn.dataset.mode = 'finish';
     }
 
     function displayCharacter(character) {

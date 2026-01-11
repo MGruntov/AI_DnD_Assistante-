@@ -382,10 +382,6 @@
               <p><strong>Level:</strong> ${state.level} | <strong>HP:</strong> ${state.maxHp} | <strong>AC:</strong> ${state.armorClass}</p>
             </div>
             
-            <div style="background:#1a1a1a;padding:0.5em;border-radius:4px;">
-              <p><strong>Choices Remaining:</strong> ${countersText}</p>
-            </div>
-            
             <div>
               <p><strong>Ability Scores:</strong><br>
                 STR ${state.abilityScores.strength} (${state.abilityScores.strength >= 10 ? '+' : ''}${Math.floor((state.abilityScores.strength - 10) / 2)}), 
@@ -453,6 +449,19 @@
         `;
       }
 
+      // Display counters before choices
+      const countersDiv = document.createElement('div');
+      countersDiv.style.cssText = 'background:#2a2a2a;padding:1em;border-radius:6px;margin:1em 0;border:1px solid #444;';
+      countersDiv.innerHTML = `<p style="margin:0;color:#fff;font-size:0.95em;"><strong>Choices Remaining:</strong> ${countersText}</p>`;
+      
+      const categoriesContainer = document.getElementById('choiceCategories');
+      const existingCounters = categoriesContainer.querySelector('.counters-display');
+      if (existingCounters) {
+        existingCounters.remove();
+      }
+      countersDiv.className = 'counters-display';
+      categoriesContainer.insertBefore(countersDiv, categoriesContainer.firstChild);
+      
       // Get available choices by category
       const choicesByCategory = creator.getChoicesByCategory();
       
@@ -484,15 +493,25 @@
       const availableChoices = creator.getAvailableChoices();
       const validateAvailable = availableChoices.some(c => c.id === 'validate_character_sheet');
       
+      // Auto-run validation when it becomes available (sneaky automation!)
+      if (validateAvailable && state && state.rawSheet && state.rawSheet.is_valid_sheet !== true) {
+        const validateAction = availableChoices.find(c => c.id === 'validate_character_sheet');
+        if (validateAction) {
+          setTimeout(() => {
+            makeChoice(validateAction);
+          }, 100);
+        }
+      }
+      
       // Enable finish button if sheet is valid
       if (state && state.rawSheet && state.rawSheet.is_valid_sheet === true) {
         finishBtn.disabled = false;
         finishBtn.textContent = 'Finish Character Creation';
         finishBtn.dataset.mode = 'finish';
       } else if (validateAvailable) {
-        finishBtn.disabled = false;
-        finishBtn.textContent = 'Validate & Continue';
-        finishBtn.dataset.mode = 'validate';
+        finishBtn.disabled = true;
+        finishBtn.textContent = 'Validating...';
+        finishBtn.dataset.mode = 'validating';
       } else {
         finishBtn.disabled = true;
         finishBtn.textContent = 'Complete all choices first';

@@ -15548,8 +15548,8 @@
           false
         ]
       ],
-      "title": "Assign Ability Scores Pick 0 Set Strength",
-      "description": "Assign Ability Scores Pick 0 Set Strength"
+      "title": "Assign highest value (15) to Strength",
+      "description": "Assign highest value (15) to Strength"
     },
     {
       "id": "assign_ability_scores_pick_0_set_dexterity",
@@ -15582,8 +15582,8 @@
           false
         ]
       ],
-      "title": "Assign Ability Scores Pick 0 Set Dexterity",
-      "description": "Assign Ability Scores Pick 0 Set Dexterity"
+      "title": "Assign highest value (15) to Dexterity",
+      "description": "Assign highest value (15) to Dexterity"
     },
     {
       "id": "assign_ability_scores_pick_0_set_constitution",
@@ -15616,8 +15616,8 @@
           false
         ]
       ],
-      "title": "Assign Ability Scores Pick 0 Set Constitution",
-      "description": "Assign Ability Scores Pick 0 Set Constitution"
+      "title": "Assign highest value (15) to Constitution",
+      "description": "Assign highest value (15) to Constitution"
     },
     {
       "id": "assign_ability_scores_pick_0_set_intelligence",
@@ -15650,8 +15650,8 @@
           false
         ]
       ],
-      "title": "Assign Ability Scores Pick 0 Set Intelligence",
-      "description": "Assign Ability Scores Pick 0 Set Intelligence"
+      "title": "Assign highest value (15) to Intelligence",
+      "description": "Assign highest value (15) to Intelligence"
     },
     {
       "id": "assign_ability_scores_pick_0_set_wisdom",
@@ -15684,8 +15684,8 @@
           false
         ]
       ],
-      "title": "Assign Ability Scores Pick 0 Set Wisdom",
-      "description": "Assign Ability Scores Pick 0 Set Wisdom"
+      "title": "Assign highest value (15) to Wisdom",
+      "description": "Assign highest value (15) to Wisdom"
     },
     {
       "id": "assign_ability_scores_pick_0_set_charisma",
@@ -15718,8 +15718,8 @@
           false
         ]
       ],
-      "title": "Assign Ability Scores Pick 0 Set Charisma",
-      "description": "Assign Ability Scores Pick 0 Set Charisma"
+      "title": "Assign highest value (15) to Charisma",
+      "description": "Assign highest value (15) to Charisma"
     },
     {
       "id": "assign_ability_scores_pick_1_set_strength",
@@ -15757,8 +15757,8 @@
           true
         ]
       ],
-      "title": "Assign Ability Scores Pick 1 Set Strength",
-      "description": "Assign Ability Scores Pick 1 Set Strength"
+      "title": "Assign second highest value (14) to Strength",
+      "description": "Assign second highest value (14) to Strength"
     },
     {
       "id": "assign_ability_scores_pick_1_set_dexterity",
@@ -15796,8 +15796,8 @@
           true
         ]
       ],
-      "title": "Assign Ability Scores Pick 1 Set Dexterity",
-      "description": "Assign Ability Scores Pick 1 Set Dexterity"
+      "title": "Assign second highest value (14) to Dexterity",
+      "description": "Assign second highest value (14) to Dexterity"
     },
     {
       "id": "assign_ability_scores_pick_1_set_constitution",
@@ -15835,8 +15835,8 @@
           true
         ]
       ],
-      "title": "Assign Ability Scores Pick 1 Set Constitution",
-      "description": "Assign Ability Scores Pick 1 Set Constitution"
+      "title": "Assign second highest value (14) to Constitution",
+      "description": "Assign second highest value (14) to Constitution"
     },
     {
       "id": "assign_ability_scores_pick_1_set_intelligence",
@@ -15874,8 +15874,8 @@
           true
         ]
       ],
-      "title": "Assign Ability Scores Pick 1 Set Intelligence",
-      "description": "Assign Ability Scores Pick 1 Set Intelligence"
+      "title": "Assign second highest value (14) to Intelligence",
+      "description": "Assign second highest value (14) to Intelligence"
     },
     {
       "id": "assign_ability_scores_pick_1_set_wisdom",
@@ -15913,8 +15913,8 @@
           true
         ]
       ],
-      "title": "Assign Ability Scores Pick 1 Set Wisdom",
-      "description": "Assign Ability Scores Pick 1 Set Wisdom"
+      "title": "Assign second highest value (14) to Wisdom",
+      "description": "Assign second highest value (14) to Wisdom"
     },
     {
       "id": "assign_ability_scores_pick_1_set_charisma",
@@ -15952,8 +15952,8 @@
           true
         ]
       ],
-      "title": "Assign Ability Scores Pick 1 Set Charisma",
-      "description": "Assign Ability Scores Pick 1 Set Charisma"
+      "title": "Assign second highest value (14) to Charisma",
+      "description": "Assign second highest value (14) to Charisma"
     },
     {
       "id": "assign_ability_scores_pick_2_set_strength",
@@ -15991,8 +15991,8 @@
           true
         ]
       ],
-      "title": "Assign Ability Scores Pick 2 Set Strength",
-      "description": "Assign Ability Scores Pick 2 Set Strength"
+      "title": "Assign third highest value (13) to Strength",
+      "description": "Assign third highest value (13) to Strength"
     },
     {
       "id": "assign_ability_scores_pick_2_set_dexterity",
@@ -16030,8 +16030,8 @@
           true
         ]
       ],
-      "title": "Assign Ability Scores Pick 2 Set Dexterity",
-      "description": "Assign Ability Scores Pick 2 Set Dexterity"
+      "title": "Assign third highest value (13) to Dexterity",
+      "description": "Assign third highest value (13) to Dexterity"
     },
     {
       "id": "assign_ability_scores_pick_2_set_constitution",
@@ -16069,8 +16069,8 @@
           true
         ]
       ],
-      "title": "Assign Ability Scores Pick 2 Set Constitution",
-      "description": "Assign Ability Scores Pick 2 Set Constitution"
+      "title": "Assign third highest value (13) to Constitution",
+      "description": "Assign third highest value (13) to Constitution"
     },
     {
       "id": "assign_ability_scores_pick_2_set_intelligence",
@@ -16108,8 +16108,8 @@
           true
         ]
       ],
-      "title": "Assign Ability Scores Pick 2 Set Intelligence",
-      "description": "Assign Ability Scores Pick 2 Set Intelligence"
+      "title": "Assign third highest value (13) to Intelligence",
+      "description": "Assign third highest value (13) to Intelligence"
     },
     {
       "id": "assign_ability_scores_pick_2_set_wisdom",
@@ -16147,8 +16147,8 @@
           true
         ]
       ],
-      "title": "Assign Ability Scores Pick 2 Set Wisdom",
-      "description": "Assign Ability Scores Pick 2 Set Wisdom"
+      "title": "Assign third highest value (13) to Wisdom",
+      "description": "Assign third highest value (13) to Wisdom"
     },
     {
       "id": "assign_ability_scores_pick_2_set_charisma",
@@ -16186,8 +16186,8 @@
           true
         ]
       ],
-      "title": "Assign Ability Scores Pick 2 Set Charisma",
-      "description": "Assign Ability Scores Pick 2 Set Charisma"
+      "title": "Assign third highest value (13) to Charisma",
+      "description": "Assign third highest value (13) to Charisma"
     },
     {
       "id": "assign_ability_scores_pick_3_set_strength",
@@ -16225,8 +16225,8 @@
           true
         ]
       ],
-      "title": "Assign Ability Scores Pick 3 Set Strength",
-      "description": "Assign Ability Scores Pick 3 Set Strength"
+      "title": "Assign fourth highest value (12) to Strength",
+      "description": "Assign fourth highest value (12) to Strength"
     },
     {
       "id": "assign_ability_scores_pick_3_set_dexterity",
@@ -16264,8 +16264,8 @@
           true
         ]
       ],
-      "title": "Assign Ability Scores Pick 3 Set Dexterity",
-      "description": "Assign Ability Scores Pick 3 Set Dexterity"
+      "title": "Assign fourth highest value (12) to Dexterity",
+      "description": "Assign fourth highest value (12) to Dexterity"
     },
     {
       "id": "assign_ability_scores_pick_3_set_constitution",
@@ -16303,8 +16303,8 @@
           true
         ]
       ],
-      "title": "Assign Ability Scores Pick 3 Set Constitution",
-      "description": "Assign Ability Scores Pick 3 Set Constitution"
+      "title": "Assign fourth highest value (12) to Constitution",
+      "description": "Assign fourth highest value (12) to Constitution"
     },
     {
       "id": "assign_ability_scores_pick_3_set_intelligence",
@@ -16342,8 +16342,8 @@
           true
         ]
       ],
-      "title": "Assign Ability Scores Pick 3 Set Intelligence",
-      "description": "Assign Ability Scores Pick 3 Set Intelligence"
+      "title": "Assign fourth highest value (12) to Intelligence",
+      "description": "Assign fourth highest value (12) to Intelligence"
     },
     {
       "id": "assign_ability_scores_pick_3_set_wisdom",
@@ -16381,8 +16381,8 @@
           true
         ]
       ],
-      "title": "Assign Ability Scores Pick 3 Set Wisdom",
-      "description": "Assign Ability Scores Pick 3 Set Wisdom"
+      "title": "Assign fourth highest value (12) to Wisdom",
+      "description": "Assign fourth highest value (12) to Wisdom"
     },
     {
       "id": "assign_ability_scores_pick_3_set_charisma",
@@ -16420,8 +16420,8 @@
           true
         ]
       ],
-      "title": "Assign Ability Scores Pick 3 Set Charisma",
-      "description": "Assign Ability Scores Pick 3 Set Charisma"
+      "title": "Assign fourth highest value (12) to Charisma",
+      "description": "Assign fourth highest value (12) to Charisma"
     },
     {
       "id": "assign_ability_scores_pick_4_set_strength",
@@ -16459,8 +16459,8 @@
           true
         ]
       ],
-      "title": "Assign Ability Scores Pick 4 Set Strength",
-      "description": "Assign Ability Scores Pick 4 Set Strength"
+      "title": "Assign fifth highest value (10) to Strength",
+      "description": "Assign fifth highest value (10) to Strength"
     },
     {
       "id": "assign_ability_scores_pick_4_set_dexterity",
@@ -16498,8 +16498,8 @@
           true
         ]
       ],
-      "title": "Assign Ability Scores Pick 4 Set Dexterity",
-      "description": "Assign Ability Scores Pick 4 Set Dexterity"
+      "title": "Assign fifth highest value (10) to Dexterity",
+      "description": "Assign fifth highest value (10) to Dexterity"
     },
     {
       "id": "assign_ability_scores_pick_4_set_constitution",
@@ -16537,8 +16537,8 @@
           true
         ]
       ],
-      "title": "Assign Ability Scores Pick 4 Set Constitution",
-      "description": "Assign Ability Scores Pick 4 Set Constitution"
+      "title": "Assign fifth highest value (10) to Constitution",
+      "description": "Assign fifth highest value (10) to Constitution"
     },
     {
       "id": "assign_ability_scores_pick_4_set_intelligence",
@@ -16576,8 +16576,8 @@
           true
         ]
       ],
-      "title": "Assign Ability Scores Pick 4 Set Intelligence",
-      "description": "Assign Ability Scores Pick 4 Set Intelligence"
+      "title": "Assign fifth highest value (10) to Intelligence",
+      "description": "Assign fifth highest value (10) to Intelligence"
     },
     {
       "id": "assign_ability_scores_pick_4_set_wisdom",
@@ -16615,8 +16615,8 @@
           true
         ]
       ],
-      "title": "Assign Ability Scores Pick 4 Set Wisdom",
-      "description": "Assign Ability Scores Pick 4 Set Wisdom"
+      "title": "Assign fifth highest value (10) to Wisdom",
+      "description": "Assign fifth highest value (10) to Wisdom"
     },
     {
       "id": "assign_ability_scores_pick_4_set_charisma",
@@ -16654,8 +16654,8 @@
           true
         ]
       ],
-      "title": "Assign Ability Scores Pick 4 Set Charisma",
-      "description": "Assign Ability Scores Pick 4 Set Charisma"
+      "title": "Assign fifth highest value (10) to Charisma",
+      "description": "Assign fifth highest value (10) to Charisma"
     },
     {
       "id": "assign_ability_scores_pick_5_set_strength",
@@ -16693,8 +16693,8 @@
           true
         ]
       ],
-      "title": "Assign Ability Scores Pick 5 Set Strength",
-      "description": "Assign Ability Scores Pick 5 Set Strength"
+      "title": "Assign lowest value (8) to Strength",
+      "description": "Assign lowest value (8) to Strength"
     },
     {
       "id": "assign_ability_scores_pick_5_set_dexterity",
@@ -16732,8 +16732,8 @@
           true
         ]
       ],
-      "title": "Assign Ability Scores Pick 5 Set Dexterity",
-      "description": "Assign Ability Scores Pick 5 Set Dexterity"
+      "title": "Assign lowest value (8) to Dexterity",
+      "description": "Assign lowest value (8) to Dexterity"
     },
     {
       "id": "assign_ability_scores_pick_5_set_constitution",
@@ -16771,8 +16771,8 @@
           true
         ]
       ],
-      "title": "Assign Ability Scores Pick 5 Set Constitution",
-      "description": "Assign Ability Scores Pick 5 Set Constitution"
+      "title": "Assign lowest value (8) to Constitution",
+      "description": "Assign lowest value (8) to Constitution"
     },
     {
       "id": "assign_ability_scores_pick_5_set_intelligence",
@@ -16810,8 +16810,8 @@
           true
         ]
       ],
-      "title": "Assign Ability Scores Pick 5 Set Intelligence",
-      "description": "Assign Ability Scores Pick 5 Set Intelligence"
+      "title": "Assign lowest value (8) to Intelligence",
+      "description": "Assign lowest value (8) to Intelligence"
     },
     {
       "id": "assign_ability_scores_pick_5_set_wisdom",
@@ -16849,8 +16849,8 @@
           true
         ]
       ],
-      "title": "Assign Ability Scores Pick 5 Set Wisdom",
-      "description": "Assign Ability Scores Pick 5 Set Wisdom"
+      "title": "Assign lowest value (8) to Wisdom",
+      "description": "Assign lowest value (8) to Wisdom"
     },
     {
       "id": "assign_ability_scores_pick_5_set_charisma",
@@ -16888,8 +16888,8 @@
           true
         ]
       ],
-      "title": "Assign Ability Scores Pick 5 Set Charisma",
-      "description": "Assign Ability Scores Pick 5 Set Charisma"
+      "title": "Assign lowest value (8) to Charisma",
+      "description": "Assign lowest value (8) to Charisma"
     },
     {
       "id": "choose_Human",

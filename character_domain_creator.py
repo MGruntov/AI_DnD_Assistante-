@@ -159,15 +159,20 @@ class AbilityScoresChoice(Action):
         # global flags preventing an ability being picked more than once
         ability_flags = {ab: f"{id}_ability_{ab}_chosen" for ab in abilities}
         # ensure flags start False via adding effects on the root action (no-op here)
+        
+        # Ordinal names for the picks
+        ordinals = ['highest', 'second highest', 'third highest', 'fourth highest', 'fifth highest', 'lowest']
 
         steps = []
         for i, score in enumerate(scores):
             # For this step, create one Action per ability that sets the ability score
             pick_actions = []
+            ordinal = ordinals[i] if i < len(ordinals) else f"{i+1}th"
             for ab in abilities:
                 act_id = f"{id}_pick_{i}_set_{ab}"
                 effs = [(f"{ab}_score", 'set', int(score)), (ability_flags[ab], 'set', True)]
-                act = Action(act_id, effects=effs)
+                title = f"Assign {ordinal} value ({score}) to {ab.capitalize()}"
+                act = Action(act_id, effects=effs, title=title)
                 # cannot pick this ability if it's already chosen
                 act.add_precondition((ability_flags[ab], '==', False))
                 pick_actions.append(act)

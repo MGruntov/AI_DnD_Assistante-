@@ -21,13 +21,21 @@ class DomainManager:
         self.actions.append(action.to_dict)
 
 class Action:
-    def __init__(self, id, effects=None, preconditions=None):
+    def __init__(self, id, effects=None, preconditions=None, description=None, flavor_text=None):
         self.id = id
+        self.description = description if description else id.replace('_', ' ').title()
+        self.flavor_text = flavor_text if flavor_text else ''
         if not effects:
             effects = []
         if not preconditions:
             preconditions = []
-        self.compiled_actions = [{'id':id, 'effects':effects, 'preconditions':preconditions}]
+        self.compiled_actions = [{
+            'id': id, 
+            'effects': effects, 
+            'preconditions': preconditions,
+            'description': self.description,
+            'flavor_text': self.flavor_text
+        }]
 
     def __str__(self):
         return str(self.compiled_actions)
@@ -107,6 +115,11 @@ class Sequence(Action):
 
 
 class Multi(Action):
+    """Allow choosing k items from a list of actions.
+    
+    If mutex=True, each action can only be chosen once across all k choices.
+    The choices are not forced - the sequence completes after k selections OR when no more valid choices exist.
+    """
     def __init__(self, id, actions, k, mutex=True):
         super().__init__(id)
         self.actions = actions
@@ -120,9 +133,12 @@ class Multi(Action):
             if mutex:
                 sub_choice.add_effect_series([(flag, 'set', True) for flag in choice_complete_at_some_step_flag])
                 sub_choice.add_precondition_series([(flag, '==', False) for flag in choice_complete_at_some_step_flag])
+            # Mark each step as optional by not requiring previous step completion
             k_subchoices.append(sub_choice)
-        self.seq = Sequence(id, k_subchoices)
-        self.compiled_actions = self.seq.compiled_actions
+        
+        # Use Sequence but don't enforce that all steps must complete
+        # Instead, just aggregate all the compiled actions without strict ordering
+        self.aggregate_compiled_actions(k_subchoices)
 
 
 class AbilityScoresChoice(Action):
@@ -156,7 +172,9 @@ class AbilityScoresChoice(Action):
             for ab in abilities:
                 act_id = f"{id}_pick_{i}_set_{ab}"
                 effs = [(f"{ab}_score", 'set', int(score)), (ability_flags[ab], 'set', True)]
-                act = Action(act_id, effects=effs)
+                desc = f"Assign {score} to {ab.capitalize()}"
+                flavor = f"Set your {ab.capitalize()} ability score to {score}, making this a {'strong' if score >= 14 else 'moderate' if score >= 10 else 'weak'} attribute."
+                act = Action(act_id, effects=effs, description=desc, flavor_text=flavor)
                 # cannot pick this ability if it's already chosen
                 act.add_precondition((ability_flags[ab], '==', False))
                 pick_actions.append(act)
@@ -1117,27 +1135,43 @@ class ChooseRace(Action):
     def __init__(self,
                 race:RaceData, subraces:List[RaceData]
                  ):
-        super().__init__(f'choose_{race.race_name}')
+        race_name = race.race_name
+        desc = f"Choose {race_name} as your race"
+        flavor = f"Play as a {race_name}, gaining racial abilities and traits that shape your character's heritage and capabilities."
+        super().__init__(f'choose_{race_name}', description=desc, flavor_text=flavor)
+        
         if not subraces:
             self.add_precondition(('has_race', '==', False))
             for eff in race.to_effects():
                 self.add_effect(eff)
             self.add_effect(('has_race', 'set', True))
             return
-        choose_race = Action(f'choose_race_{race.race_name}')
+        
+        choose_race = Action(
+            f'choose_race_{race_name}',
+            description=f"Select {race_name} race",
+            flavor_text=f"Begin your journey as a {race_name}."
+        )
         for eff in race.to_effects():
             choose_race.add_effect(eff)
         choose_race.add_precondition(('has_race', '==', False))
+        
         subraces_choices = []
         for subrace in subraces:
-            choose_subrace = Action(f'choose_sub_race_{subrace.race_name}')
+            subrace_name = subrace.race_name
+            choose_subrace = Action(
+                f'choose_sub_race_{subrace_name}',
+                description=f"Choose {subrace_name} subrace",
+                flavor_text=f"Specialize as a {subrace_name}, gaining unique features and abilities."
+            )
             for eff in subrace.to_effects():
                 choose_subrace.add_effect(eff)
-            choose_subrace.add_precondition(('race', '==', race.race_name))
+            choose_subrace.add_precondition(('race', '==', race_name))
             subraces_choices.append(choose_subrace)
-        choose_subrace = MutEx(f'{race.race_name}_choose_subrace',subraces_choices)
+        
+        choose_subrace = MutEx(f'{race_name}_choose_subrace', subraces_choices)
         choose_subrace.add_effect(('has_race', 'set', True))
-        self.compiled_actions = Sequence('race_and_subrace',[choose_race, choose_subrace]).compiled_actions
+        self.compiled_actions = Sequence('race_and_subrace', [choose_race, choose_subrace]).compiled_actions
 
 
 

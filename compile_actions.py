@@ -294,6 +294,25 @@ if __name__ == "__main__":
         json.dump(tree, f, indent=2)
     print(f"Saved to character_decision_tree.json")
     
+    # Extract descriptions and flavor texts
+    print("\nExtracting descriptions and flavor texts...")
+    descriptions = {}
+    flavor_texts = {}
+    
+    for decision in tree.get('decisions', []):
+        decision_id = decision.get('id')
+        if decision_id:
+            descriptions[decision_id] = decision.get('description', decision_id.replace('_', ' ').title())
+            flavor_texts[decision_id] = decision.get('flavor_text', '')
+    
+    with open('character_descriptions.json', 'w') as f:
+        json.dump(descriptions, f, indent=2)
+    print(f"Saved {len(descriptions)} descriptions to character_descriptions.json")
+    
+    with open('character_flavor_texts.json', 'w') as f:
+        json.dump(flavor_texts, f, indent=2)
+    print(f"Saved {len(flavor_texts)} flavor texts to character_flavor_texts.json")
+    
     print("\nCreating initial character sheet...")
     sheet = create_initial_sheet()
     with open('character_sheet_initial.json', 'w') as f:

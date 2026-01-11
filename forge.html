@@ -589,6 +589,12 @@
         });
         const data = await res.json().catch(() => ({}));
 
+        // If this route doesn't exist on the backend (404), fallback to legacy forge route
+        if (res.status === 404) {
+          const fallbackSaved = await saveCharacterViaForge(character, username);
+          return fallbackSaved || false;
+        }
+
         if (!res.ok || !data || data.ok !== true) {
           const msg = (data && (data.error || data.message)) || 'Could not save character. Please try again.';
           forgeStatus.textContent = msg;
@@ -609,6 +615,58 @@
       } finally {
         isSaving = false;
         finishBtn.textContent = 'Finish Character Creation';
+      }
+    }
+
+    function buildForgeNarrativeFromState(character) {
+      try {
+        const name = character.name && String(character.name).trim();
+        const race = character.race && String(character.race).trim();
+        const background = character.background && String(character.background).trim();
+        const classesText = Array.isArray(character.classes)
+          ? character.classes.map(c => `${c.name} ${c.level}`).join(', ')
+          : '';
+        const parts = [];
+        if (name) parts.push(`${name}.`);
+        if (race) parts.push(`${race}.`);
+        if (classesText) parts.push(`${classesText}.`);
+        if (background) parts.push(`Background: ${background}.`);
+        // Add a hint for spellcasting stat if present
+        const sheet = character.rawSheet || {};
+        if (sheet.spellcasting_ability) parts.push(`Casting uses ${sheet.spellcasting_ability}.`);
+        return parts.join(' ');
+      } catch {
+        return 'Forged via interactive builder.';
+      }
+    }
+
+    async function saveCharacterViaForge(character, username) {
+      try {
+        const payload = {
+          username,
+          narrativeText: buildForgeNarrativeFromState(character),
+          name: character.name || '',
+          portraitUrl: character.portraitUrl || null
+        };
+        const url = `${getBackendBaseUrl()}/api/characters/forge`;
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: authHeaders({ 'Content-Type': 'application/json' }),
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data || data.ok !== true) {
+          const msg = (data && (data.error || data.message)) || 'Could not save character (forge fallback failed).';
+          forgeStatus.textContent = msg;
+          forgeStatus.className = 'forge__status forge__status--error';
+          return false;
+        }
+        const saved = data.character || null;
+        if (saved && saved.id) savedCharacterId = saved.id;
+        return saved || false;
+      } catch (e) {
+        console.error('Forge fallback save failed', e);
+        return false;
       }
     }
 

@@ -568,7 +568,10 @@
 
     function getBackendBaseUrl() {
       const cfg = window.ADA && window.ADA.config;
-      return (cfg && cfg.BACKEND_BASE_URL) || '';
+      const url = (cfg && cfg.BACKEND_BASE_URL) || '';
+      if (url) return url;
+      // Fallback to production backend if config is not initialized yet
+      return 'https://backend.ada-assistante.workers.dev';
     }
 
     async function saveCharacter(character, username) {
@@ -597,7 +600,7 @@
           savedCharacterId = data.character.id;
         }
 
-        return true;
+        return data.character || true;
       } catch (err) {
         console.error('Failed to save character sheet', err);
         forgeStatus.textContent = 'Network error while saving. Please try again.';
@@ -658,6 +661,18 @@
         }
         forgeStatus.textContent = 'Character saved to My Characters.';
         forgeStatus.className = 'forge__status forge__status--success';
+
+        // Navigate to vault and set active character if available
+        try {
+          if (window.ADA && typeof window.ADA.showView === 'function') {
+            window.ADA.showView('vault');
+          } else if (window.ADA && typeof window.ADA.navigateTo === 'function') {
+            window.ADA.navigateTo('vault');
+          }
+          if (window.ADA && typeof window.ADA.setActiveCharacter === 'function') {
+            window.ADA.setActiveCharacter(saved);
+          }
+        } catch {}
       } else {
         markUnsavedChanges();
       }

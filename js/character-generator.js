@@ -211,3 +211,82 @@ function formatCharacter(sheet, actions) {
     actions: actions.map(a => a.action)
   };
 }
+
+/**
+ * Interactive character creation session - step by step with user choices
+ */
+export class InteractiveCharacterCreator {
+  constructor() {
+    this.sheet = null;
+    this.actions = [];
+  }
+
+  async initialize() {
+    await loadDecisionTree();
+    this.sheet = JSON.parse(JSON.stringify(initialSheet));
+    this.actions = [];
+  }
+
+  getAvailableChoices() {
+    if (!this.sheet || !decisionTree) return [];
+    return decisionTree.filter(d => canTakeAction(this.sheet, d));
+  }
+
+  applyChoice(decision) {
+    if (!this.sheet || !decision) return false;
+    if (!canTakeAction(this.sheet, decision)) return false;
+    
+    applyAction(this.sheet, decision);
+    this.actions.push(decision);
+    return true;
+  }
+
+  isComplete() {
+    const availableChoices = this.getAvailableChoices();
+    const hasRace = this.sheet && this.sheet.race && this.sheet.race !== '';
+    const hasClass = this.sheet && (
+      this.sheet.class_fighter_level > 0 ||
+      this.sheet.class_cleric_level > 0 ||
+      this.sheet.class_barbarian_level > 0 ||
+      this.sheet.class_bard_level > 0
+    );
+    
+    return hasRace && hasClass && availableChoices.length === 0;
+  }
+
+  getCharacterState() {
+    if (!this.sheet) return null;
+    return formatCharacter(this.sheet, this.actions);
+  }
+
+  getChoicesByCategory() {
+    const choices = this.getAvailableChoices();
+    const categories = {
+      race: [],
+      class: [],
+      background: [],
+      skills: [],
+      equipment: [],
+      other: []
+    };
+
+    choices.forEach(choice => {
+      const action = choice.action.toLowerCase();
+      if (action.includes('race')) {
+        categories.race.push(choice);
+      } else if (action.includes('levelup') || action.includes('class')) {
+        categories.class.push(choice);
+      } else if (action.includes('background')) {
+        categories.background.push(choice);
+      } else if (action.includes('skill')) {
+        categories.skills.push(choice);
+      } else if (action.includes('equipment') || action.includes('weapon') || action.includes('armor')) {
+        categories.equipment.push(choice);
+      } else {
+        categories.other.push(choice);
+      }
+    });
+
+    return categories;
+  }
+}

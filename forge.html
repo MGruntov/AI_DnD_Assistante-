@@ -134,10 +134,50 @@
         <section class="panel" aria-label="Character forging">
           <div class="forge__header">
             <h3 class="panel__title">Forge a Character</h3>
-            <button id="forgeCharacterBtn" class="btn btn--primary">Generate Random Character</button>
+            <button id="startInteractiveForgeBtn" class="btn btn--primary">Start Interactive Character Creation</button>
+            <button id="restartForgeBtn" class="btn btn--secondary" style="display:none;">Restart</button>
           </div>
           
-          <div class="forge__options">
+          <div id="interactiveForgePanel" style="display:none;">
+            <div class="forge__progress">
+              <h4>Character Creation Progress</h4>
+              <div id="currentProgress" class="forge__progress-info"></div>
+            </div>
+            
+            <div id="choiceCategories" class="forge__categories">
+              <div id="raceChoices" class="forge__category" style="display:none;">
+                <h4 class="forge__category-title">Choose a Race</h4>
+                <div class="forge__choice-grid" id="raceChoiceButtons"></div>
+              </div>
+              
+              <div id="classChoices" class="forge__category" style="display:none;">
+                <h4 class="forge__category-title">Choose a Class</h4>
+                <div class="forge__choice-grid" id="classChoiceButtons"></div>
+              </div>
+              
+              <div id="backgroundChoices" class="forge__category" style="display:none;">
+                <h4 class="forge__category-title">Choose a Background</h4>
+                <div class="forge__choice-grid" id="backgroundChoiceButtons"></div>
+              </div>
+              
+              <div id="skillChoices" class="forge__category" style="display:none;">
+                <h4 class="forge__category-title">Choose Skills</h4>
+                <div class="forge__choice-grid" id="skillChoiceButtons"></div>
+              </div>
+              
+              <div id="equipmentChoices" class="forge__category" style="display:none;">
+                <h4 class="forge__category-title">Choose Equipment</h4>
+                <div class="forge__choice-grid" id="equipmentChoiceButtons"></div>
+              </div>
+              
+              <div id="otherChoices" class="forge__category" style="display:none;">
+                <h4 class="forge__category-title">Other Choices</h4>
+                <div class="forge__choice-grid" id="otherChoiceButtons"></div>
+              </div>
+            </div>
+          </div>
+          
+          <div class="forge__options" style="display:none;">
             <div class="field">
               <label for="forgeClassSelect">Class</label>
               <select id="forgeClassSelect" name="forgeClassSelect">
@@ -195,6 +235,232 @@
       </section>
     </section>
   </main>
+
+  <script type="module">
+    import { InteractiveCharacterCreator } from './js/character-generator.js';
+
+    let creator = null;
+
+    const startBtn = document.getElementById('startInteractiveForgeBtn');
+    const restartBtn = document.getElementById('restartForgeBtn');
+    const interactivePanel = document.getElementById('interactiveForgePanel');
+    const progressDiv = document.getElementById('currentProgress');
+    const forgeStatus = document.getElementById('forgeStatus');
+    const forgedCharacterDiv = document.getElementById('forgedCharacter');
+    const finishBtn = document.getElementById('finishCharacterBtn');
+
+    // Category containers
+    const categories = {
+      race: document.getElementById('raceChoices'),
+      class: document.getElementById('classChoices'),
+      background: document.getElementById('backgroundChoices'),
+      skills: document.getElementById('skillChoices'),
+      equipment: document.getElementById('equipmentChoices'),
+      other: document.getElementById('otherChoices')
+    };
+
+    // Choice button containers
+    const choiceContainers = {
+      race: document.getElementById('raceChoiceButtons'),
+      class: document.getElementById('classChoiceButtons'),
+      background: document.getElementById('backgroundChoiceButtons'),
+      skills: document.getElementById('skillChoiceButtons'),
+      equipment: document.getElementById('equipmentChoiceButtons'),
+      other: document.getElementById('otherChoiceButtons')
+    };
+
+    async function startInteractiveForge() {
+      try {
+        creator = new InteractiveCharacterCreator();
+        await creator.initialize();
+        
+        startBtn.style.display = 'none';
+        restartBtn.style.display = 'inline-block';
+        interactivePanel.style.display = 'block';
+        forgeStatus.textContent = 'Character creation started!';
+        forgeStatus.className = 'forge__status forge__status--success';
+        
+        updateChoices();
+      } catch (error) {
+        console.error('Error starting interactive forge:', error);
+        forgeStatus.textContent = `Error: ${error.message}`;
+        forgeStatus.className = 'forge__status forge__status--error';
+      }
+    }
+
+    function updateChoices() {
+      if (!creator) return;
+
+      // Update progress
+      const state = creator.getCharacterState();
+      if (state) {
+        const raceText = state.race !== 'Unknown' ? state.race : 'Not chosen';
+        const classText = state.classes.length > 0 
+          ? state.classes.map(c => `${c.name} ${c.level}`).join(', ')
+          : 'Not chosen';
+        const backgroundText = state.background !== 'Unknown' ? state.background : 'Not chosen';
+        
+        progressDiv.innerHTML = `
+          <p><strong>Race:</strong> ${raceText}</p>
+          <p><strong>Class:</strong> ${classText}</p>
+          <p><strong>Background:</strong> ${backgroundText}</p>
+          <p><strong>Ability Scores:</strong> STR ${state.abilityScores.strength}, 
+             DEX ${state.abilityScores.dexterity}, 
+             CON ${state.abilityScores.constitution}, 
+             INT ${state.abilityScores.intelligence}, 
+             WIS ${state.abilityScores.wisdom}, 
+             CHA ${state.abilityScores.charisma}</p>
+        `;
+      }
+
+      // Get available choices by category
+      const choicesByCategory = creator.getChoicesByCategory();
+
+      // Hide all categories first
+      Object.values(categories).forEach(cat => cat.style.display = 'none');
+
+      // Show categories with choices and populate buttons
+      Object.keys(choicesByCategory).forEach(category => {
+        const choices = choicesByCategory[category];
+        if (choices.length > 0) {
+          categories[category].style.display = 'block';
+          choiceContainers[category].innerHTML = '';
+          
+          choices.forEach(choice => {
+            const button = document.createElement('button');
+            button.className = 'btn btn--choice';
+            button.textContent = choice.action;
+            button.onclick = () => makeChoice(choice);
+            choiceContainers[category].appendChild(button);
+          });
+        }
+      });
+
+      // Check if character is complete
+      if (creator.isComplete()) {
+        finishCharacterCreation();
+      }
+    }
+
+    function makeChoice(decision) {
+      if (!creator) return;
+
+      const success = creator.applyChoice(decision);
+      if (success) {
+        forgeStatus.textContent = `Applied: ${decision.action}`;
+        forgeStatus.className = 'forge__status forge__status--success';
+        updateChoices();
+      } else {
+        forgeStatus.textContent = `Failed to apply: ${decision.action}`;
+        forgeStatus.className = 'forge__status forge__status--error';
+      }
+    }
+
+    function finishCharacterCreation() {
+      const character = creator.getCharacterState();
+      
+      forgeStatus.textContent = 'Character creation complete!';
+      forgeStatus.className = 'forge__status forge__status--success';
+      
+      // Hide choice panels
+      interactivePanel.style.display = 'none';
+      
+      // Display character
+      displayCharacter(character);
+      
+      finishBtn.disabled = false;
+    }
+
+    function displayCharacter(character) {
+      const classesText = character.classes.map(c => `${c.name} (Level ${c.level})`).join(', ');
+      const actionsText = character.actions.slice(0, 10).join(', ') + (character.actions.length > 10 ? '...' : '');
+      
+      forgedCharacterDiv.innerHTML = `
+        <div class="character-summary">
+          <h4 class="character-summary__title">Your Character</h4>
+          <dl class="character-summary__stats">
+            <div class="stat-row">
+              <dt>Race:</dt>
+              <dd>${character.race}</dd>
+            </div>
+            <div class="stat-row">
+              <dt>Class:</dt>
+              <dd>${classesText}</dd>
+            </div>
+            <div class="stat-row">
+              <dt>Background:</dt>
+              <dd>${character.background}</dd>
+            </div>
+            <div class="stat-row">
+              <dt>Level:</dt>
+              <dd>${character.level}</dd>
+            </div>
+            <div class="stat-row">
+              <dt>HP:</dt>
+              <dd>${character.maxHp}</dd>
+            </div>
+            <div class="stat-row">
+              <dt>AC:</dt>
+              <dd>${character.armorClass}</dd>
+            </div>
+            <div class="stat-row">
+              <dt>Proficiency:</dt>
+              <dd>+${character.proficiencyBonus}</dd>
+            </div>
+            <div class="stat-row">
+              <dt>STR:</dt>
+              <dd>${character.abilityScores.strength}</dd>
+            </div>
+            <div class="stat-row">
+              <dt>DEX:</dt>
+              <dd>${character.abilityScores.dexterity}</dd>
+            </div>
+            <div class="stat-row">
+              <dt>CON:</dt>
+              <dd>${character.abilityScores.constitution}</dd>
+            </div>
+            <div class="stat-row">
+              <dt>INT:</dt>
+              <dd>${character.abilityScores.intelligence}</dd>
+            </div>
+            <div class="stat-row">
+              <dt>WIS:</dt>
+              <dd>${character.abilityScores.wisdom}</dd>
+            </div>
+            <div class="stat-row">
+              <dt>CHA:</dt>
+              <dd>${character.abilityScores.charisma}</dd>
+            </div>
+          </dl>
+          <details class="character-summary__details">
+            <summary>Actions taken (${character.actions.length})</summary>
+            <p class="actions-list">${actionsText}</p>
+          </details>
+        </div>
+      `;
+      forgedCharacterDiv.hidden = false;
+    }
+
+    function restartForge() {
+      creator = null;
+      startBtn.style.display = 'inline-block';
+      restartBtn.style.display = 'none';
+      interactivePanel.style.display = 'none';
+      forgedCharacterDiv.hidden = true;
+      finishBtn.disabled = true;
+      forgeStatus.textContent = '';
+      progressDiv.innerHTML = '';
+      
+      // Clear all choice buttons
+      Object.values(choiceContainers).forEach(container => {
+        container.innerHTML = '';
+      });
+    }
+
+    // Event listeners
+    startBtn.addEventListener('click', startInteractiveForge);
+    restartBtn.addEventListener('click', restartForge);
+  </script>
 
   <script type="module" src="js/app.js"></script>
 </body>

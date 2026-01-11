@@ -1102,6 +1102,135 @@ h1, h2, h3, h4,
   font-size: 0.8rem;
 }
 
+/* Interactive forge styles */
+.forge__progress {
+  padding: 15px;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 4px;
+  margin-bottom: 20px;
+}
+
+.forge__progress h4 {
+  margin-top: 0;
+  margin-bottom: 10px;
+  color: #d4af37;
+}
+
+.forge__progress-info p {
+  margin: 5px 0;
+}
+
+.forge__categories {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.forge__category {
+  padding: 15px;
+  background: rgba(0, 0, 0, 0.1);
+  border-radius: 4px;
+}
+
+.forge__category-title {
+  margin-top: 0;
+  margin-bottom: 15px;
+  color: #d4af37;
+  border-bottom: 1px solid rgba(212, 175, 55, 0.3);
+  padding-bottom: 8px;
+}
+
+.forge__choice-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 10px;
+}
+
+.btn--choice {
+  padding: 10px 15px;
+  background: rgba(212, 175, 55, 0.2);
+  border: 1px solid #d4af37;
+  color: #d4af37;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: all 0.2s;
+  font-size: 0.9rem;
+}
+
+.btn--choice:hover {
+  background: rgba(212, 175, 55, 0.4);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
+}
+
+.btn--choice:active {
+  transform: translateY(0);
+}
+
+.forge__status--success {
+  color: #4caf50;
+}
+
+.forge__status--error {
+  color: #f44336;
+}
+
+.character-summary {
+  padding: 20px;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 4px;
+  margin-top: 20px;
+}
+
+.character-summary__title {
+  margin-top: 0;
+  margin-bottom: 15px;
+  color: #d4af37;
+}
+
+.character-summary__stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 10px;
+  margin: 0;
+}
+
+.stat-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 5px 10px;
+  background: rgba(0, 0, 0, 0.1);
+  border-radius: 2px;
+}
+
+.stat-row dt {
+  font-weight: bold;
+  color: #d4af37;
+}
+
+.stat-row dd {
+  margin: 0;
+}
+
+.character-summary__details {
+  margin-top: 15px;
+  padding: 10px;
+  background: rgba(0, 0, 0, 0.1);
+  border-radius: 4px;
+}
+
+.character-summary__details summary {
+  cursor: pointer;
+  color: #d4af37;
+  font-weight: bold;
+}
+
+.actions-list {
+  margin-top: 10px;
+  font-size: 0.9rem;
+  color: rgba(255, 255, 255, 0.8);
+}
+
 .auth {
   margin-top: 16px;
 }

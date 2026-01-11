@@ -361,7 +361,7 @@
           choices.forEach(choice => {
             const button = document.createElement('button');
             button.className = 'btn btn--choice';
-            button.textContent = choice.action;
+            button.textContent = choice.id;
             button.onclick = () => makeChoice(choice);
             choiceContainers[category].appendChild(button);
           });
@@ -379,11 +379,11 @@
 
       const success = creator.applyChoice(decision);
       if (success) {
-        forgeStatus.textContent = `Applied: ${decision.action}`;
+        forgeStatus.textContent = `Applied: ${decision.id}`;
         forgeStatus.className = 'forge__status forge__status--success';
         updateChoices();
       } else {
-        forgeStatus.textContent = `Failed to apply: ${decision.action}`;
+        forgeStatus.textContent = `Failed to apply: ${decision.id}`;
         forgeStatus.className = 'forge__status forge__status--error';
       }
     }

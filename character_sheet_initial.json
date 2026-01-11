@@ -57,7 +57,7 @@
   "cantrips_known": [],
   "spells_known": [],
   "instruments_known": [],
-  "is_valid_sheet": true,
+  "is_valid_sheet": false,
   "spellcasting_ability": "",
   "speed": 0,
   "size": "medium",

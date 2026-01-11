@@ -21,20 +21,19 @@ class DomainManager:
         self.actions.append(action.to_dict)
 
 class Action:
-    def __init__(self, id, effects=None, preconditions=None, description=None, flavor_text=None):
+    def __init__(self, id, effects=None, preconditions=None, title: Optional[str] = None, description: Optional[str] = None):
         self.id = id
-        self.description = description if description else id.replace('_', ' ').title()
-        self.flavor_text = flavor_text if flavor_text else ''
         if not effects:
             effects = []
         if not preconditions:
             preconditions = []
+        default_title = title if title is not None else self._default_title(id)
         self.compiled_actions = [{
-            'id': id, 
-            'effects': effects, 
+            'id': id,
+            'effects': effects,
             'preconditions': preconditions,
-            'description': self.description,
-            'flavor_text': self.flavor_text
+            'title': default_title,
+            'description': description if description is not None else default_title
         }]
 
     def __str__(self):
@@ -83,6 +82,10 @@ class Action:
     def set_complete_flag(self, ):
         self.add_effect((self.complete_flag, '==', True))
 
+    def _default_title(self, raw_id: str) -> str:
+        # Simple human-friendly title from id
+        return raw_id.replace('_', ' ').strip().title()
+
     @property
     def complete_flag(self):
         return f"{self.id}_complete"
@@ -115,11 +118,6 @@ class Sequence(Action):
 
 
 class Multi(Action):
-    """Allow choosing k items from a list of actions.
-    
-    If mutex=True, each action can only be chosen once across all k choices.
-    The choices are not forced - the sequence completes after k selections OR when no more valid choices exist.
-    """
     def __init__(self, id, actions, k, mutex=True):
         super().__init__(id)
         self.actions = actions
@@ -133,12 +131,9 @@ class Multi(Action):
             if mutex:
                 sub_choice.add_effect_series([(flag, 'set', True) for flag in choice_complete_at_some_step_flag])
                 sub_choice.add_precondition_series([(flag, '==', False) for flag in choice_complete_at_some_step_flag])
-            # Mark each step as optional by not requiring previous step completion
             k_subchoices.append(sub_choice)
-        
-        # Use Sequence but don't enforce that all steps must complete
-        # Instead, just aggregate all the compiled actions without strict ordering
-        self.aggregate_compiled_actions(k_subchoices)
+        self.seq = Sequence(id, k_subchoices)
+        self.compiled_actions = self.seq.compiled_actions
 
 
 class AbilityScoresChoice(Action):
@@ -172,9 +167,7 @@ class AbilityScoresChoice(Action):
             for ab in abilities:
                 act_id = f"{id}_pick_{i}_set_{ab}"
                 effs = [(f"{ab}_score", 'set', int(score)), (ability_flags[ab], 'set', True)]
-                desc = f"Assign {score} to {ab.capitalize()}"
-                flavor = f"Set your {ab.capitalize()} ability score to {score}, making this a {'strong' if score >= 14 else 'moderate' if score >= 10 else 'weak'} attribute."
-                act = Action(act_id, effects=effs, description=desc, flavor_text=flavor)
+                act = Action(act_id, effects=effs)
                 # cannot pick this ability if it's already chosen
                 act.add_precondition((ability_flags[ab], '==', False))
                 pick_actions.append(act)
@@ -223,6 +216,8 @@ class ClassLevel1(Action):
         # Preconditions: don't allow choosing the level if it's already set
         class_field = f'class_{class_name}_level'
         self.add_precondition((class_field, '==', 0))
+        # Require a validated base sheet (race/background/abilities chosen)
+        self.add_precondition(('is_valid_sheet', '==', True))
         
         # Require ability scores to be set before taking level 1
         for ability in ['strength', 'dexterity', 'constitution', 'intelligence', 'wisdom', 'charisma']:
@@ -376,20 +371,19 @@ class ChooseOptions(Action):
     """
     def __init__(self, id, counter_key, options, effect_kind='proficiencies'):
         super().__init__(id)
+        # Drop the base placeholder action to avoid no-op decisions
+        self.compiled_actions = []
         self.counter_key = counter_key
         self.options = options
         self.effect_kind = effect_kind
 
-        # no-op precondition: available only when counter >= 1
-        self.add_precondition((counter_key, '>=', 1))
-
-        # For each option create a normal and final variant
+        # Create one actionable choice per option
         for opt in options:
             opt_norm = opt
             norm_id = f"{id}_{self._norm(opt_norm)}"
             # preconds: counter >=1 and option not already chosen
             chosen_flag = f"{id}_{self._norm(opt_norm)}_chosen"
-            a = Action(norm_id)
+            a = Action(norm_id, title=f"{self._default_title(id)}: {opt_norm}")
             a.add_precondition((counter_key, '>=', 1))
             a.add_precondition((chosen_flag, '==', False))
             # effect: add chosen value to target, mark chosen, decrement counter
@@ -412,31 +406,6 @@ class ChooseOptions(Action):
             a.add_effect((chosen_flag, 'set', True))
             a.add_effect((counter_key, 'dec', 1))
             self.compiled_actions += a.compiled_actions
-
-            # final variant: available when this pick will finish the counter
-            final_id = f"{norm_id}_final"
-            af = Action(final_id)
-            af.add_precondition((counter_key, '==', 1))
-            af.add_precondition((chosen_flag, '==', False))
-            if effect_kind == 'languages':
-                af.add_effect(('languages', 'add', opt_norm))
-            elif effect_kind == 'equipment':
-                af.add_effect(('equipment', 'add', opt_norm))
-            elif effect_kind == 'features':
-                af.add_effect(('feature_entries', 'add', opt_norm))
-                # Also set a boolean flag for this feature
-                flag = opt_norm.lower().replace(' ', '_').replace('-', '_').replace('(', '').replace(')', '')
-                af.add_effect((flag, 'set', True))
-            elif effect_kind == 'cantrips':
-                af.add_effect(('cantrips_known', 'add', opt_norm))
-            elif effect_kind == 'instruments':
-                af.add_effect(('instruments_known', 'add', opt_norm))
-            else:
-                af.add_effect(('proficiencies', 'add', opt_norm))
-            af.add_effect((chosen_flag, 'set', True))
-            af.add_effect((counter_key, 'dec', 1))
-            af.add_effect(('is_valid_sheet', 'set', True))
-            self.compiled_actions += af.compiled_actions
 
     def _norm(self, s: str):
         return s.lower().replace(' ', '_').replace("/", '_').replace('-', '_')
@@ -513,6 +482,7 @@ def bard_level_2():
         ('bard_spells_to_choose', 'inc', 1),  # 5 spells known
         ('spell_slots_1st', 'set', 3),
         ('song_of_rest_die', 'set', 6),
+        ('is_valid_sheet', 'set', False),
     ]
     return ClassLevelUp('bard', 2, features=features, additional_effects=additional)
 
@@ -567,6 +537,7 @@ def bard_level_5():
         ('spell_slots_2nd', 'set', 3),
         ('spell_slots_3rd', 'set', 2),
         ('bardic_inspiration_die', 'set', 8),
+        ('is_valid_sheet', 'set', False),
     ]
     return ClassLevelUp('bard', 5, features=features, additional_effects=additional)
 
@@ -589,13 +560,12 @@ class ChooseSpells(Action):
     """
     def __init__(self, id, class_name, spells_by_level, counter_key=None, max_level_key=None):
         super().__init__(id)
+        # Drop the base placeholder action to avoid no-op decisions
+        self.compiled_actions = []
         self.class_name = class_name
         self.spells_by_level = spells_by_level
         self.counter_key = counter_key or f"{class_name}_spells_to_choose"
         self.max_level_key = max_level_key or f"{class_name}_max_spell_level"
-
-        # available only when there's at least one pick remaining
-        self.add_precondition((self.counter_key, '>=', 1))
 
         # iterate spells and create actions with level constraint
         for level, spells in sorted(spells_by_level.items()):
@@ -604,7 +574,7 @@ class ChooseSpells(Action):
                 opt_id = f"{id}_{norm}"
                 chosen_flag = f"{id}_{norm}_chosen"
 
-                a = Action(opt_id)
+                a = Action(opt_id, title=f"{self._default_title(id)}: {sp}")
                 a.add_precondition((self.counter_key, '>=', 1))
                 a.add_precondition((chosen_flag, '==', False))
                 # require max level on sheet to allow choosing this spell
@@ -614,17 +584,6 @@ class ChooseSpells(Action):
                 a.add_effect((chosen_flag, 'set', True))
                 a.add_effect((self.counter_key, 'dec', 1))
                 self.compiled_actions += a.compiled_actions
-
-                # final variant: finishes the picks
-                af = Action(f"{opt_id}_final")
-                af.add_precondition((self.counter_key, '==', 1))
-                af.add_precondition((chosen_flag, '==', False))
-                af.add_precondition((self.max_level_key, '>=', int(level)))
-                af.add_effect(( 'spells_known', 'add', f"{class_name}:{sp}:{level}"))
-                af.add_effect((chosen_flag, 'set', True))
-                af.add_effect((self.counter_key, 'dec', 1))
-                af.add_effect(('is_valid_sheet', 'set', True))
-                self.compiled_actions += af.compiled_actions
 
     def _norm(self, s: str):
         return s.lower().replace(' ', '_').replace("/", '_').replace('-', '_')
@@ -696,6 +655,7 @@ def cleric_level_2():
         ('spell_slots_1st', 'set', 3),
         ('channel_divinity_uses', 'set', 1),
         # Note: Divine Domain feature would be domain-specific
+        ('is_valid_sheet', 'set', False),
     ]
     return ClassLevelUp('cleric', 2, features=features, additional_effects=additional)
 
@@ -708,6 +668,7 @@ def cleric_level_3():
         ('cleric_max_spell_level', 'set', 2),
         ('spell_slots_1st', 'set', 4),
         ('spell_slots_2nd', 'set', 2),
+        ('is_valid_sheet', 'set', False),
     ]
     return ClassLevelUp('cleric', 3, features=[], additional_effects=additional)
 
@@ -736,6 +697,7 @@ def cleric_level_5():
         ('spell_slots_2nd', 'set', 3),
         ('spell_slots_3rd', 'set', 2),
         ('destroy_undead_cr', 'set', 0.5),
+        ('is_valid_sheet', 'set', False),
     ]
     return ClassLevelUp('cleric', 5, features=features, additional_effects=additional)
 
@@ -860,9 +822,9 @@ class ASI_Choice(Action):
     """
     def __init__(self, id='choose_asi'):
         super().__init__(id)
+        # Drop placeholder action
+        self.compiled_actions = []
         abilities = ['strength', 'dexterity', 'constitution', 'intelligence', 'wisdom', 'charisma']
-        
-        self.add_precondition(('asi_to_choose', '>=', 1))
         
         # Generate all combinations (with replacement) of 2 abilities
         for i, ab1 in enumerate(abilities):
@@ -870,29 +832,17 @@ class ASI_Choice(Action):
                 if ab1 == ab2:
                     # Same ability twice: increase by 2
                     action_id = f"{id}_{ab1}_{ab1}"
-                    action_name = f"{ab1.capitalize()} +2"
-                    a = Action(action_id)
+                    a = Action(action_id, title=f"ASI: {ab1.capitalize()} +2")
                     a.add_precondition(('asi_to_choose', '>=', 1))
                     a.add_precondition((f"{action_id}_chosen", '==', False))
                     a.add_effect((f"{ab1}_score", 'inc', 2))
                     a.add_effect((f"{action_id}_chosen", 'set', True))
                     a.add_effect(('asi_to_choose', 'dec', 1))
                     self.compiled_actions += a.compiled_actions
-                    
-                    # Final variant
-                    af = Action(f"{action_id}_final")
-                    af.add_precondition(('asi_to_choose', '==', 1))
-                    af.add_precondition((f"{action_id}_chosen", '==', False))
-                    af.add_effect((f"{ab1}_score", 'inc', 2))
-                    af.add_effect((f"{action_id}_chosen", 'set', True))
-                    af.add_effect(('asi_to_choose', 'dec', 1))
-                    af.add_effect(('is_valid_sheet', 'set', True))
-                    self.compiled_actions += af.compiled_actions
                 else:
                     # Two different abilities: increase each by 1
                     action_id = f"{id}_{ab1}_{ab2}"
-                    action_name = f"{ab1.capitalize()} +1, {ab2.capitalize()} +1"
-                    a = Action(action_id)
+                    a = Action(action_id, title=f"ASI: {ab1.capitalize()} +1, {ab2.capitalize()} +1")
                     a.add_precondition(('asi_to_choose', '>=', 1))
                     a.add_precondition((f"{action_id}_chosen", '==', False))
                     a.add_effect((f"{ab1}_score", 'inc', 1))
@@ -900,27 +850,16 @@ class ASI_Choice(Action):
                     a.add_effect((f"{action_id}_chosen", 'set', True))
                     a.add_effect(('asi_to_choose', 'dec', 1))
                     self.compiled_actions += a.compiled_actions
-                    
-                    # Final variant
-                    af = Action(f"{action_id}_final")
-                    af.add_precondition(('asi_to_choose', '==', 1))
-                    af.add_precondition((f"{action_id}_chosen", '==', False))
-                    af.add_effect((f"{ab1}_score", 'inc', 1))
-                    af.add_effect((f"{ab2}_score", 'inc', 1))
-                    af.add_effect((f"{action_id}_chosen", 'set', True))
-                    af.add_effect(('asi_to_choose', 'dec', 1))
-                    af.add_effect(('is_valid_sheet', 'set', True))
-                    self.compiled_actions += af.compiled_actions
 
 
 def choose_feat_action():
     """Choose a feat instead of ASI. Currently only Grappler is available."""
     chooser = Action('choose_feat')
-    chooser.add_precondition(('asi_to_choose', '>=', 1))
+    chooser.compiled_actions = []
     
     # Grappler feat - requires Strength >= 13
     grappler_id = 'choose_feat_grappler'
-    g = Action(grappler_id)
+    g = Action(grappler_id, title='Feat: Grappler')
     g.add_precondition(('asi_to_choose', '>=', 1))
     g.add_precondition(('strength_score', '>=', 13))
     g.add_precondition((f"{grappler_id}_chosen", '==', False))
@@ -928,17 +867,6 @@ def choose_feat_action():
     g.add_effect((f"{grappler_id}_chosen", 'set', True))
     g.add_effect(('asi_to_choose', 'dec', 1))
     chooser.compiled_actions += g.compiled_actions
-    
-    # Final variant
-    gf = Action(f"{grappler_id}_final")
-    gf.add_precondition(('asi_to_choose', '==', 1))
-    gf.add_precondition(('strength_score', '>=', 13))
-    gf.add_precondition((f"{grappler_id}_chosen", '==', False))
-    gf.add_effect(('feature_entries', 'add', 'Grappler'))
-    gf.add_effect((f"{grappler_id}_chosen", 'set', True))
-    gf.add_effect(('asi_to_choose', 'dec', 1))
-    gf.add_effect(('is_valid_sheet', 'set', True))
-    chooser.compiled_actions += gf.compiled_actions
     
     return chooser
 
@@ -962,14 +890,23 @@ def fighter_level_5():
 class ValidateCharacterSheet(Action):
     def __init__(self):
         super().__init__('validate_character_sheet')
+        # level 0 completeness
+        self.add_precondition(('has_race', '==', True))
+        self.add_precondition(('has_background', '==', True))
+        for ability in ['strength', 'dexterity', 'constitution', 'intelligence', 'wisdom', 'charisma']:
+            self.add_precondition((f'{ability}_score', '>', 0))
 
-        # all counters must be zero
-        self.add_precondition(('skills_to_choose', '==', 0))
-        self.add_precondition(('martial_weapons_to_choose', '==', 0))
-        self.add_precondition(('simple_weapons_to_choose', '==', 0))
-        self.add_precondition(('languages_to_choose', '==', 0))
-        self.add_precondition(('cantrips_to_choose', '==', 0))
-        self.add_precondition(('asi_to_choose', '==', 0))
+        # all counters must be zero before declaring the sheet valid
+        counters = [
+            'skills_to_choose', 'martial_weapons_to_choose', 'simple_weapons_to_choose',
+            'languages_to_choose', 'cantrips_to_choose', 'asi_to_choose',
+            'bard_spells_to_choose', 'cleric_spells_to_choose', 'instruments_to_choose',
+            'expertise_to_choose', 'fighting_style_to_choose', 'fighter_equip_choices_to_choose',
+            'barbarian_primal_path_to_choose', 'bard_college_to_choose', 'divine_domain_to_choose',
+            'fighter_archetype_to_choose'
+        ]
+        for counter in counters:
+            self.add_precondition((counter, '==', 0))
 
         self.add_effect(('is_valid_sheet', 'set', True))
 
@@ -1042,8 +979,6 @@ class ChooseBackground(Action):
 
         # background can only be chosen after race
         self.add_precondition(('has_race', '==', True))
-        # require sheet to be valid before picking a background
-        self.add_precondition(('is_valid_sheet', '==', True))
         self.add_precondition(('has_background', '==', False))
 
         for eff in background.to_effects():
@@ -1135,43 +1070,27 @@ class ChooseRace(Action):
     def __init__(self,
                 race:RaceData, subraces:List[RaceData]
                  ):
-        race_name = race.race_name
-        desc = f"Choose {race_name} as your race"
-        flavor = f"Play as a {race_name}, gaining racial abilities and traits that shape your character's heritage and capabilities."
-        super().__init__(f'choose_{race_name}', description=desc, flavor_text=flavor)
-        
+        super().__init__(f'choose_{race.race_name}')
         if not subraces:
             self.add_precondition(('has_race', '==', False))
             for eff in race.to_effects():
                 self.add_effect(eff)
             self.add_effect(('has_race', 'set', True))
             return
-        
-        choose_race = Action(
-            f'choose_race_{race_name}',
-            description=f"Select {race_name} race",
-            flavor_text=f"Begin your journey as a {race_name}."
-        )
+        choose_race = Action(f'choose_race_{race.race_name}')
         for eff in race.to_effects():
             choose_race.add_effect(eff)
         choose_race.add_precondition(('has_race', '==', False))
-        
         subraces_choices = []
         for subrace in subraces:
-            subrace_name = subrace.race_name
-            choose_subrace = Action(
-                f'choose_sub_race_{subrace_name}',
-                description=f"Choose {subrace_name} subrace",
-                flavor_text=f"Specialize as a {subrace_name}, gaining unique features and abilities."
-            )
+            choose_subrace = Action(f'choose_sub_race_{subrace.race_name}')
             for eff in subrace.to_effects():
                 choose_subrace.add_effect(eff)
-            choose_subrace.add_precondition(('race', '==', race_name))
+            choose_subrace.add_precondition(('race', '==', race.race_name))
             subraces_choices.append(choose_subrace)
-        
-        choose_subrace = MutEx(f'{race_name}_choose_subrace', subraces_choices)
+        choose_subrace = MutEx(f'{race.race_name}_choose_subrace',subraces_choices)
         choose_subrace.add_effect(('has_race', 'set', True))
-        self.compiled_actions = Sequence('race_and_subrace', [choose_race, choose_subrace]).compiled_actions
+        self.compiled_actions = Sequence('race_and_subrace',[choose_race, choose_subrace]).compiled_actions
 
 
 

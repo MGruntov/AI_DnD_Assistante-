@@ -340,6 +340,8 @@
 
       // Update progress
       const state = creator.getCharacterState();
+      let countersText = 'All choices made';
+      
       if (state) {
         const sheet = state.rawSheet;
         const raceText = state.race !== 'Unknown' ? state.race : 'Not chosen';
@@ -371,7 +373,7 @@
         ].filter(c => sheet[c.key] && sheet[c.key] > 0)
          .map(c => `${c.label}: ${sheet[c.key]}`)
          .join(' | ');
-        const countersText = counters || 'All choices made';
+        countersText = counters || 'All choices made';
         
         progressDiv.innerHTML = `
           <div style="display:grid;gap:1em;">

@@ -600,7 +600,7 @@
           savedCharacterId = data.character.id;
         }
 
-        return data.character || true;
+        return data.character || false;
       } catch (err) {
         console.error('Failed to save character sheet', err);
         forgeStatus.textContent = 'Network error while saving. Please try again.';
@@ -637,11 +637,7 @@
         hint.textContent = 'Saving your character to My Characters...';
       }
 
-      // Keep the choice panels visible so players can continue tweaking after saving
-      interactivePanel.style.display = 'block';
-
-      // Display character summary immediately
-      displayCharacter(character);
+      // Do not re-render the summary here; navigate to Vault on success
 
       // Persist to backend (or show error)
       if (!currentUser) {
@@ -662,15 +658,17 @@
         forgeStatus.textContent = 'Character saved to My Characters.';
         forgeStatus.className = 'forge__status forge__status--success';
 
-        // Navigate to vault and set active character if available
+        // Navigate to vault and set active character
         try {
+          if (window.ADA && typeof window.ADA.setActiveCharacter === 'function') {
+            window.ADA.setActiveCharacter(saved);
+          }
           if (window.ADA && typeof window.ADA.showView === 'function') {
             window.ADA.showView('vault');
           } else if (window.ADA && typeof window.ADA.navigateTo === 'function') {
             window.ADA.navigateTo('vault');
-          }
-          if (window.ADA && typeof window.ADA.setActiveCharacter === 'function') {
-            window.ADA.setActiveCharacter(saved);
+          } else if (typeof window !== 'undefined') {
+            window.location.href = 'vault.html';
           }
         } catch {}
       } else {

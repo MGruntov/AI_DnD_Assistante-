@@ -36,8 +36,8 @@ async function loadDecisionEmbeddings(env: any) {
 	if (embeddingsLoaded) return decisionEmbeddings;
 	
 	try {
-		// Try to fetch from public directory first
-		const response = await fetch('./decision_embeddings.json');
+		// Try to fetch from public directory using absolute path
+		const response = await fetch('/decision_embeddings.json');
 		if (response.ok) {
 			const data = await response.json();
 			decisionEmbeddings = data;

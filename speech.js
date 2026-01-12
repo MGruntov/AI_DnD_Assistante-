@@ -2473,47 +2473,25 @@ import { searchDecisionsByPrompt } from "./js/decision-matcher.js";
       return;
     }
 
-    const { concept, mechanics } = character;
-    const classes = concept?.classSummary || "";
-    const levels = concept?.levelSummary || "";
-
-    const ability = mechanics?.abilityScores || {};
-
     forgedCharacterEl.hidden = false;
-    forgedCharacterEl.innerHTML = "";
-
+    
+    // Use the shared renderer so automatic and interactive forge show the same format
+    const sheetHTML = renderCharacterSheetHTML(character, { compact: false });
+    
     const title = document.createElement("h3");
     title.className = "forge__result-title";
+    const { concept } = character;
+    const classes = concept?.classSummary || "";
     title.textContent = concept?.race
       ? `${concept.race} ${classes || "Adventurer"}`
       : classes || "Forged Adventurer";
 
-    const row1 = document.createElement("p");
-    row1.className = "forge__result-row";
-    row1.textContent = `Classes: ${classes || "Unknown"} | Levels: ${
-      levels || "?"
-    }`;
-
-    const row2 = document.createElement("p");
-    row2.className = "forge__result-row";
-    row2.textContent = `HP: ${
-      mechanics?.hitPoints ?? "?"
-    } | AC: ${mechanics?.armorClass ?? "?"} | Speed: ${
-      mechanics?.speed ?? "?"
-    }`;
-
-    const row3 = document.createElement("p");
-    row3.className = "forge__result-row";
-    row3.textContent = `STR ${ability.str ?? "-"}, DEX ${
-      ability.dex ?? "-"
-    }, CON ${ability.con ?? "-"}, INT ${ability.int ?? "-"}, WIS ${
-      ability.wis ?? "-"
-    }, CHA ${ability.cha ?? "-"}`;
-
+    forgedCharacterEl.innerHTML = "";
     forgedCharacterEl.appendChild(title);
-    forgedCharacterEl.appendChild(row1);
-    forgedCharacterEl.appendChild(row2);
-    forgedCharacterEl.appendChild(row3);
+    
+    const contentDiv = document.createElement("div");
+    contentDiv.innerHTML = sheetHTML;
+    forgedCharacterEl.appendChild(contentDiv);
   }
 
   async function apiGet(path) {

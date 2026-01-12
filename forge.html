@@ -360,12 +360,14 @@
         if (transcriptText) {
           try {
             const { searchDecisionsByPrompt } = await import('./js/decision-matcher.js');
-            const response = await searchDecisionsByPrompt(transcriptText);
+            // Get backend URL from speech.js module if available, otherwise use current origin
+            let backendUrl = window.BACKEND_BASE_URL || new URL(window.location).origin;
+            // Request all 433 decisions, not just top 15
+            const response = await searchDecisionsByPrompt(backendUrl, transcriptText, 433);
             // Response has { ok, prompt, results: Array, totalDecisions, topK }
             if (response && response.results && Array.isArray(response.results)) {
               creator.setSimilarityScores(response.results);
-              console.log(`[forge] Loaded ${response.results.length} similarity scores from search`);
-            }
+              console.log(`[forge] Loaded ${response.results.length} similarity scores from search (out of ${response.totalDecisions} total)`);\n            }
           } catch (err) {
             console.warn('[forge] Could not fetch similarity scores:', err);
           }

@@ -578,6 +578,7 @@ export class InteractiveCharacterCreator {
       decisionMatches.forEach(match => {
         this.similarityScores[match.decisionId] = match.similarity;
       });
+      console.log('[InteractiveCharacterCreator] Stored similarity scores for', Object.keys(this.similarityScores).length, 'decisions');
     }
   }
 

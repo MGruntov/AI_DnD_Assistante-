@@ -358,16 +358,16 @@
         const transcriptEl = document.getElementById('transcript');
         const transcriptText = transcriptEl ? transcriptEl.value.trim() : '';
         if (transcriptText) {
-          console.log('Fetching similarity scores from transcript...');
           try {
             const { searchDecisionsByPrompt } = await import('./js/decision-matcher.js');
-            const results = await searchDecisionsByPrompt(transcriptText);
-            if (results && Array.isArray(results)) {
-              creator.setSimilarityScores(results);
-              console.log(`Loaded ${results.length} similarity scores`);
+            const response = await searchDecisionsByPrompt(transcriptText);
+            // Response has { ok, prompt, results: Array, totalDecisions, topK }
+            if (response && response.results && Array.isArray(response.results)) {
+              creator.setSimilarityScores(response.results);
+              console.log(`[forge] Loaded ${response.results.length} similarity scores from search`);
             }
           } catch (err) {
-            console.warn('Could not fetch similarity scores:', err);
+            console.warn('[forge] Could not fetch similarity scores:', err);
           }
         }
         
@@ -464,6 +464,7 @@
             // Use title if available, otherwise fall back to id
             const label = choice.title || choice.id;
             const similarity = choice.similarity || 0;
+            console.log('[forge button]', label, 'similarity:', similarity);
             // Show similarity score in parentheses if > 0
             const displayText = similarity > 0 
               ? `${label} (${similarity.toFixed(3)})`

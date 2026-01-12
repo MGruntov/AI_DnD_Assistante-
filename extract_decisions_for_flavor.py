@@ -28,7 +28,7 @@ def build_search_query(decision_id: str, title: str, description: str) -> str:
 def retrieve_relevant_rules(query: str, retriever) -> List[Dict[str, Any]]:
     """
     Use BM25 retriever to find relevant SRD rule blocks.
-    Returns a list of {title, path, url, score, text_preview} objects.
+    Returns a list of {title, path, url, score, text} objects with full text.
     """
     try:
         results = retriever.retrieve(query, k=3)  # Get top 3 results
@@ -45,7 +45,7 @@ def retrieve_relevant_rules(query: str, retriever) -> List[Dict[str, Any]]:
                 'path': path_str,
                 'url': result.get('url', ''),
                 'score': round(result.get('score', 0.0), 2),
-                'text_preview': (result.get('text', '')[:300] + '...') if result.get('text') else ''
+                'text': result.get('text', '')
             })
         
         return formatted
@@ -93,46 +93,6 @@ def extract_decisions():
         decision_id = decision.get('id', 'unknown')
         title = decision.get('title', '')
         description = decision.get('description', '')
-        preconditions = decision.get('preconditions', [])
-        effects = decision.get('effects', [])
-        
-        # Build relevant_rules from preconditions and effects
-        relevant_rules = []
-        
-        # Add preconditions
-        for pre in preconditions:
-            if isinstance(pre, list) and len(pre) >= 3:
-                relevant_rules.append({
-                    'type': 'precondition',
-                    'field': pre[0],
-                    'operator': pre[1],
-                    'value': str(pre[2])
-                })
-            elif isinstance(pre, dict):
-                relevant_rules.append({
-                    'type': 'precondition',
-                    'field': pre.get('state_key', ''),
-                    'operator': pre.get('operator', ''),
-                    'value': str(pre.get('value', ''))
-                })
-        
-        # Add effects
-        for eff in effects:
-            if isinstance(eff, list) and len(eff) >= 3:
-                relevant_rules.append({
-                    'type': 'effect',
-                    'field': eff[0],
-                    'operation': eff[1],
-                    'value': str(eff[2])
-                })
-            elif isinstance(eff, dict):
-                relevant_rules.append({
-                    'type': 'effect',
-                    'field': eff.get('state_key', ''),
-                    'operation': eff.get('operation', ''),
-                    'value': str(eff.get('value', ''))
-                })
-        
         # Retrieve SRD rules if retriever is available
         srd_rules = []
         if retriever:
@@ -145,7 +105,6 @@ def extract_decisions():
         flavor_structure[decision_id] = {
             'title': title,
             'description': description,
-            'preconditions_and_effects': relevant_rules,
             'srd_rules': srd_rules,
             'flavor_text': ''  # Empty, to be filled in
         }

@@ -153,40 +153,9 @@
           
           <!-- Auto-Generate Mode -->
           <div id="autoForgePanel" style="display:none;">
-            <div class="forge__options">
-              <div class="field">
-                <label for="forgeClassSelect">Class</label>
-                <select id="forgeClassSelect" name="forgeClassSelect">
-                  <option value="barbarian">Barbarian</option>
-                  <option value="bard">Bard</option>
-                  <option value="cleric">Cleric</option>
-                  <option value="fighter" selected>Fighter</option>
-                </select>
-              </div>
-              
-              <div class="field">
-                <label for="forgeLevelSelect">Level</label>
-                <select id="forgeLevelSelect" name="forgeLevelSelect">
-                  <option value="1" selected>1</option>
-                  <option value="2">2</option>
-                  <option value="3">3</option>
-                  <option value="4">4</option>
-                  <option value="5">5</option>
-                </select>
-              </div>
-              
-              <div class="field">
-                <label for="forgeRaceSelect">Race (Optional)</label>
-                <select id="forgeRaceSelect" name="forgeRaceSelect">
-                  <option value="">Any</option>
-                  <option value="human">Human</option>
-                  <option value="elf">Elf</option>
-                  <option value="dwarf">Dwarf</option>
-                  <option value="halfling">Halfling</option>
-                </select>
-              </div>
-            </div>
-            
+            <p class="forge__hint text-muted" style="margin-bottom:20px;">
+              Your narrative transcript above will be analyzed using AI embeddings. The system will automatically traverse the decision tree and make all choices (race, class, background, skills, equipment) based on semantic similarity to your story.
+            </p>
             <div class="forge__name field">
               <label for="forgeCharacterName">Character name (optional)</label>
               <input
@@ -196,17 +165,14 @@
                 placeholder="Elaria of the Moonlit Isles"
               />
             </div>
-            <p class="forge__hint text-muted">
-              Your narrative transcript will guide the character creation. All decisions are made automatically based on semantic similarity to your story.
-            </p>
             <div id="forgeStatus" class="forge__status"></div>
             <div id="forgedCharacter" class="forge__result" hidden></div>
             <button id="forgeCharacterBtn" class="btn btn--primary forge__finish">
-              Generate character
+              Generate Character from Narrative
             </button>
             <button id="backToModeBtn" class="btn btn--secondary" style="margin-left:10px;">Back</button>
-            <p id="finishHint" class="forge__finish-hint text-muted">
-              This preview is not saved yet. Choose a portrait and click "Finish character creation" to add it to My Characters.
+            <p id="finishHint" class="forge__finish-hint text-muted" style="margin-top:15px;">
+              This preview is not saved yet. Choose a portrait above and click "Finish character creation" to save to My Characters.
             </p>
           </div>
           
@@ -257,10 +223,7 @@
             <button id="restartForgeBtn" class="btn btn--secondary">Back to Mode Selection</button>
           </div>
         </section>
-          <p id="finishHint" class="forge__finish-hint text-muted">
-            This preview is not saved yet. Choose a portrait and click “Finish character creation” to add it to My Characters.
-          </p>
-        </section>
+
       </section>
     </section>
   </main>
@@ -286,7 +249,7 @@
       progressDiv = document.getElementById('currentProgress');
       forgeStatus = document.getElementById('forgeStatus');
       forgedCharacterDiv = document.getElementById('forgedCharacter');
-      finishBtn = document.getElementById('finishCharacterBtn');
+      finishBtn = document.getElementById('forgeCharacterBtn');
 
       // Category containers
       categories = {

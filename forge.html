@@ -134,8 +134,87 @@
         <section class="panel" aria-label="Character forging">
           <div class="forge__header">
             <h3 class="panel__title">Forge a Character</h3>
-            <button id="startInteractiveForgeBtn" class="btn btn--primary" onclick="window.__startInteractiveForge && window.__startInteractiveForge()">Start Interactive Character Creation</button>
-            <button id="restartForgeBtn" class="btn btn--secondary" style="display:none;">Restart</button>
+            <p class="text-muted" style="font-size:14px;margin-top:5px;">Choose how to create your character</p>
+          </div>
+          
+          <!-- Mode Selection -->
+          <div id="forgeModeSelection" class="forge__mode-selection">
+            <div class="forge__mode-buttons" style="display:flex;flex-direction:column;gap:15px;">
+              <button id="autoForgeBtn" class="btn btn--primary forge__mode-btn" style="padding:20px;text-align:left;font-size:16px;cursor:pointer;">
+                <div><strong>Auto-Generate</strong></div>
+                <div style="font-size:14px;font-weight:normal;margin-top:5px;color:inherit;">Uses your narrative to create a character aligned with your story</div>
+              </button>
+              <button id="manualForgeBtn" class="btn btn--secondary forge__mode-btn" style="padding:20px;text-align:left;font-size:16px;cursor:pointer;">
+                <div><strong>Build Manually</strong></div>
+                <div style="font-size:14px;font-weight:normal;margin-top:5px;color:inherit;">Make each decision step-by-step to customize your character</div>
+              </button>
+            </div>
+          </div>
+          
+          <!-- Auto-Generate Mode -->
+          <div id="autoForgePanel" style="display:none;">
+            <div class="forge__options">
+              <div class="field">
+                <label for="forgeClassSelect">Class</label>
+                <select id="forgeClassSelect" name="forgeClassSelect">
+                  <option value="barbarian">Barbarian</option>
+                  <option value="bard">Bard</option>
+                  <option value="cleric">Cleric</option>
+                  <option value="fighter" selected>Fighter</option>
+                </select>
+              </div>
+              
+              <div class="field">
+                <label for="forgeLevelSelect">Level</label>
+                <select id="forgeLevelSelect" name="forgeLevelSelect">
+                  <option value="1" selected>1</option>
+                  <option value="2">2</option>
+                  <option value="3">3</option>
+                  <option value="4">4</option>
+                  <option value="5">5</option>
+                </select>
+              </div>
+              
+              <div class="field">
+                <label for="forgeRaceSelect">Race (Optional)</label>
+                <select id="forgeRaceSelect" name="forgeRaceSelect">
+                  <option value="">Any</option>
+                  <option value="human">Human</option>
+                  <option value="elf">Elf</option>
+                  <option value="dwarf">Dwarf</option>
+                  <option value="halfling">Halfling</option>
+                </select>
+              </div>
+            </div>
+            
+            <div class="forge__name field">
+              <label for="forgeCharacterName">Character name (optional)</label>
+              <input
+                type="text"
+                id="forgeCharacterName"
+                name="forgeCharacterName"
+                placeholder="Elaria of the Moonlit Isles"
+              />
+            </div>
+            <p class="forge__hint text-muted">
+              Your narrative transcript will guide the character creation. All decisions are made automatically based on semantic similarity to your story.
+            </p>
+            <div id="forgeStatus" class="forge__status"></div>
+            <div id="forgedCharacter" class="forge__result" hidden></div>
+            <button id="forgeCharacterBtn" class="btn btn--primary forge__finish">
+              Generate character
+            </button>
+            <button id="backToModeBtn" class="btn btn--secondary" style="margin-left:10px;">Back</button>
+            <p id="finishHint" class="forge__finish-hint text-muted">
+              This preview is not saved yet. Choose a portrait and click "Finish character creation" to add it to My Characters.
+            </p>
+          </div>
+          
+          <!-- Manual Build Mode -->
+          <div id="manualForgePanel" style="display:none;">
+            <p class="text-muted" style="margin-bottom:20px;">Build your character step-by-step, making each choice manually.</p>
+            <button id="startInteractiveForgeBtn" class="btn btn--primary">Begin Step-by-Step Creation</button>
+            <button id="backToModeBtn2" class="btn btn--secondary" style="margin-left:10px;">Back</button>
           </div>
           
           <div id="interactiveForgePanel" style="display:none;">
@@ -175,59 +254,9 @@
                 <div id="otherChoiceButtons" style="display:flex;flex-direction:column;gap:10px;"></div>
               </div>
             </div>
+            <button id="restartForgeBtn" class="btn btn--secondary">Back to Mode Selection</button>
           </div>
-          
-          <div class="forge__options" style="display:none;">
-            <div class="field">
-              <label for="forgeClassSelect">Class</label>
-              <select id="forgeClassSelect" name="forgeClassSelect">
-                <option value="barbarian">Barbarian</option>
-                <option value="bard">Bard</option>
-                <option value="cleric">Cleric</option>
-                <option value="fighter" selected>Fighter</option>
-              </select>
-            </div>
-            
-            <div class="field">
-              <label for="forgeLevelSelect">Level</label>
-              <select id="forgeLevelSelect" name="forgeLevelSelect">
-                <option value="1" selected>1</option>
-                <option value="2">2</option>
-                <option value="3">3</option>
-                <option value="4">4</option>
-                <option value="5">5</option>
-              </select>
-            </div>
-            
-            <div class="field">
-              <label for="forgeRaceSelect">Race (Optional)</label>
-              <select id="forgeRaceSelect" name="forgeRaceSelect">
-                <option value="">Any</option>
-                <option value="human">Human</option>
-                <option value="elf">Elf</option>
-                <option value="dwarf">Dwarf</option>
-                <option value="halfling">Halfling</option>
-              </select>
-            </div>
-          </div>
-          
-          <div class="forge__name field">
-            <label for="forgeCharacterName">Character name (optional)</label>
-            <input
-              type="text"
-              id="forgeCharacterName"
-              name="forgeCharacterName"
-              placeholder="Elaria of the Moonlit Isles"
-            />
-          </div>
-          <p class="forge__hint text-muted">
-            Generate a legally valid D&D 5e character using the SRD rules. All choices are made automatically.
-          </p>
-          <div id="forgeStatus" class="forge__status"></div>
-          <div id="forgedCharacter" class="forge__result" hidden></div>
-          <button id="finishCharacterBtn" class="btn btn--primary forge__finish" disabled>
-            Finish character creation
-          </button>
+        </section>
           <p id="finishHint" class="forge__finish-hint text-muted">
             This preview is not saved yet. Choose a portrait and click “Finish character creation” to add it to My Characters.
           </p>

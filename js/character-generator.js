@@ -37,6 +37,254 @@ export async function loadDecisionTree() {
 }
 
 /**
+ * Generate a character by maximizing similarity to user prompt using Dijkstra's algorithm
+ * 
+ * @param {Object} options - {characterClass, level, race, decisionMatches}
+ * @param {Array} options.decisionMatches - Array of {decisionId, similarity} from backend
+ * @returns {Promise<Object>} Formatted character object
+ */
+export async function generateCharacterWithSimilarity({ characterClass, level, race, decisionMatches = [] }) {
+  await loadDecisionTree();
+  
+  console.group('[generateCharacterWithSimilarity] Starting semantic character generation');
+  console.log('[generateCharacterWithSimilarity] Class:', characterClass, 'Level:', level, 'Race:', race);
+  console.log('[generateCharacterWithSimilarity] Decision matches received:', decisionMatches.length);
+  
+  if (decisionMatches.length > 0) {
+    console.log('[generateCharacterWithSimilarity] Top 10 matched decisions:', 
+      decisionMatches.slice(0, 10).map(m => ({
+        id: m.decisionId,
+        similarity: m.similarity.toFixed(3)
+      }))
+    );
+  }
+  console.groupEnd();
+  
+  // Build a map of decision ID -> similarity score
+  const similarityMap = {};
+  if (decisionMatches && Array.isArray(decisionMatches)) {
+    for (const match of decisionMatches) {
+      similarityMap[match.decisionId] = match.similarity;
+    }
+  }
+  
+  // Use Dijkstra to find optimal path through decision tree
+  const path = dijkstraOptimalPath({
+    decisionTree,
+    initialSheet,
+    characterClass,
+    level,
+    race,
+    similarityMap,
+  });
+  
+  // Apply the optimal path to generate character
+  const sheet = JSON.parse(JSON.stringify(initialSheet));
+  const actions = [];
+  
+  console.group('[generateCharacterWithSimilarity] Applying optimal path');
+  console.log('[generateCharacterWithSimilarity] Path to apply:', path.length, 'decisions');
+  
+  for (const decisionId of path) {
+    const decision = decisionTree.find(d => d.id === decisionId);
+    if (decision && canTakeAction(sheet, decision)) {
+      applyAction(sheet, decision);
+      actions.push(decision);
+    }
+  }
+  console.log('[generateCharacterWithSimilarity] Applied', actions.length, 'decisions from optimal path');
+  console.groupEnd();
+  
+  // Fill remaining required decisions (race/class if not in path)
+  const hasRace = sheet.race && sheet.race !== '';
+  if (!hasRace) {
+    console.log('[generateCharacterWithSimilarity] No race found in path, adding race choice');
+    const races = ['choose_race_Human', 'choose_race_Elf', 'choose_race_Dwarf', 'choose_race_Halfling'];
+    const raceId = race ? {
+      human: 'choose_race_Human',
+      elf: 'choose_race_Elf',
+      dwarf: 'choose_race_Dwarf',
+      halfling: 'choose_race_Halfling'
+    }[String(race).toLowerCase()] : races[Math.floor(Math.random() * races.length)];
+    
+    const raceAction = decisionTree.find(d => d.id === raceId && canTakeAction(sheet, d));
+    if (raceAction) {
+      applyAction(sheet, raceAction);
+      actions.push(raceAction);
+      console.log('[generateCharacterWithSimilarity] Added race:', raceId);
+    }
+  }
+  
+  const hasClass = sheet.class_fighter_level > 0 || sheet.class_cleric_level > 0 || 
+                   sheet.class_barbarian_level > 0 || sheet.class_bard_level > 0;
+  if (!hasClass) {
+    console.log('[generateCharacterWithSimilarity] No class found in path, adding class levels');
+    const className = String(characterClass).toLowerCase();
+    for (let i = 1; i <= level; i++) {
+      const levelId = `choose_class_${className}_level_${i}`;
+      const levelAction = decisionTree.find(d => d.id === levelId && canTakeAction(sheet, d));
+      if (levelAction) {
+        applyAction(sheet, levelAction);
+        actions.push(levelAction);
+      }
+    }
+    console.log('[generateCharacterWithSimilarity] Added class levels for', className);
+  }
+  
+  // Fill remaining optional decisions greedily by similarity
+  let remainingCount = 0;
+  let safetyCounter = 0;
+  while (safetyCounter++ < 1000) {
+    const availableDecisions = decisionTree.filter(d => canTakeAction(sheet, d));
+    if (availableDecisions.length === 0) break;
+    
+    // Pick the decision with highest similarity (if available), otherwise random
+    let choice = null;
+    let maxSimilarity = -1;
+    for (const decision of availableDecisions) {
+      const sim = similarityMap[decision.id] || 0;
+      if (sim > maxSimilarity) {
+        maxSimilarity = sim;
+        choice = decision;
+      }
+    }
+    
+    if (!choice) {
+      choice = availableDecisions[Math.floor(Math.random() * availableDecisions.length)];
+    }
+    
+    applyAction(sheet, choice);
+    actions.push(choice);
+    remainingCount++;
+  }
+  console.log('[generateCharacterWithSimilarity] Filled', remainingCount, 'remaining decisions greedily');
+  
+  console.group('[generateCharacterWithSimilarity] Final Character Stats');
+  const character = formatCharacter(sheet, actions);
+  console.log('[generateCharacterWithSimilarity] Race:', character.race);
+  console.log('[generateCharacterWithSimilarity] Classes:', character.classes);
+  console.log('[generateCharacterWithSimilarity] Total actions applied:', actions.length);
+  console.log('[generateCharacterWithSimilarity] Total decisions in path + filled:', path.length, '+', remainingCount);
+  console.groupEnd();
+  
+  return character;
+}
+
+/**
+ * Dijkstra-based algorithm to find the path through decision tree that maximizes similarity
+ * 
+ * Uses a greedy approach: at each state, pick the next decision that:
+ * 1. Maximizes cumulative similarity to the prompt
+ * 2. Doesn't block required decisions (race/class)
+ */
+function dijkstraOptimalPath({ decisionTree, initialSheet, characterClass, level, race, similarityMap }) {
+  const path = [];
+  const sheet = JSON.parse(JSON.stringify(initialSheet));
+  const visited = new Set();
+  
+  console.group('[dijkstra] Starting optimal path search');
+  console.log('[dijkstra] Parameters:', { characterClass, level, race });
+  console.log('[dijkstra] Available decisions in tree:', decisionTree.length);
+  console.log('[dijkstra] Decisions with similarity scores:', Object.keys(similarityMap).length);
+  console.groupEnd();
+  
+  // Greedy approach: at each step, pick the available decision with highest similarity
+  let iterations = 0;
+  const maxIterations = 1000;
+  
+  while (iterations++ < maxIterations) {
+    console.group(`[dijkstra] Iteration ${iterations}`);
+    
+    const availableDecisions = decisionTree.filter(d => 
+      !visited.has(d.id) && canTakeAction(sheet, d)
+    );
+    
+    console.log(`[dijkstra] Available decisions: ${availableDecisions.length}`);
+    
+    if (availableDecisions.length === 0) {
+      console.log('[dijkstra] No more available decisions, stopping');
+      console.groupEnd();
+      break;
+    }
+    
+    // Score each available decision
+    const scoredDecisions = availableDecisions.map(decision => {
+      const similarity = similarityMap[decision.id] || 0;
+      
+      // Check if this decision is critical (race/class requirement)
+      const isCritical = decision.id.includes('race') || decision.id.includes('class');
+      
+      // Boost score for critical decisions to ensure they're taken
+      const boostedScore = isCritical ? similarity + 10 : similarity;
+      
+      return { decision, similarity, isCritical, score: boostedScore };
+    });
+    
+    // Log all scored decisions for debugging
+    console.log('[dijkstra] Scored decisions:', scoredDecisions.map(s => ({
+      id: s.decision.id,
+      similarity: s.similarity.toFixed(3),
+      isCritical: s.isCritical,
+      finalScore: s.score.toFixed(3)
+    })));
+    
+    // Pick the decision with highest score
+    const best = scoredDecisions.reduce((prev, curr) => 
+      curr.score > prev.score ? curr : prev
+    );
+    
+    console.log('[dijkstra] Selected decision:', {
+      id: best.decision.id,
+      similarity: best.similarity.toFixed(3),
+      isCritical: best.isCritical,
+      finalScore: best.score.toFixed(3)
+    });
+    
+    // Apply decision
+    if (canTakeAction(sheet, best.decision)) {
+      applyAction(sheet, best.decision);
+      path.push(best.decision.id);
+      visited.add(best.decision.id);
+      
+      console.log('[dijkstra] ✓ Applied decision');
+      console.log('[dijkstra] Current path length:', path.length);
+      
+      // Show current sheet state (just a few key fields for readability)
+      console.log('[dijkstra] Sheet state:', {
+        race: sheet.race,
+        background: sheet.background,
+        class_barbarian_level: sheet.class_barbarian_level,
+        class_bard_level: sheet.class_bard_level,
+        class_cleric_level: sheet.class_cleric_level,
+        class_fighter_level: sheet.class_fighter_level,
+        skills_count: Array.isArray(sheet.skills) ? sheet.skills.length : 0,
+        equipment_count: Array.isArray(sheet.equipment) ? sheet.equipment.length : 0
+      });
+    } else {
+      // Decision became invalid, skip it
+      console.log('[dijkstra] ✗ Decision no longer valid, skipping');
+      visited.add(best.decision.id);
+    }
+    
+    console.groupEnd();
+  }
+  
+  console.group('[dijkstra] Path Complete');
+  console.log('[dijkstra] Total iterations:', iterations);
+  console.log('[dijkstra] Final path length:', path.length);
+  console.log('[dijkstra] Final path:', path);
+  console.log('[dijkstra] Decisions with highest similarity in path:', 
+    path.map(id => ({
+      id,
+      similarity: (similarityMap[id] || 0).toFixed(3)
+    })).sort((a, b) => parseFloat(b.similarity) - parseFloat(a.similarity)).slice(0, 10)
+  );
+  console.groupEnd();
+  
+  return path;
+}
+
+/**
  * Generate a random character using the decision tree
  */
 export async function generateCharacter({ characterClass, level, race }) {
@@ -273,6 +521,13 @@ function formatCharacter(sheet, actions) {
     armorClass: armorClass,
     maxHp: maxHp,
     currentHp: maxHp,
+    // Extract additional fields from raw sheet for backend compatibility
+    skills: Array.isArray(sheet.skills) ? sheet.skills : [],
+    features: Array.isArray(sheet.features) ? sheet.features : [],
+    equipment: Array.isArray(sheet.equipment) ? sheet.equipment : [],
+    feats: Array.isArray(sheet.feats) ? sheet.feats : [],
+    savingThrows: Array.isArray(sheet.saving_throws_proficient) ? sheet.saving_throws_proficient : [],
+    narrativeText: '', // Will be set by speech.js if available
     rawSheet: sheet,
     actions: actions.map(a => a.id)
   };
@@ -378,5 +633,6 @@ export class InteractiveCharacterCreator {
 export default {
   loadDecisionTree,
   generateCharacter,
+  generateCharacterWithSimilarity,
   InteractiveCharacterCreator
 };

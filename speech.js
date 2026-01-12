@@ -1,7 +1,8 @@
 import { authHeaders, clearAuthToken, setAuthToken } from "./js/api.js";
 import { apiGetJson, apiPostJson } from "./js/api-client.js";
-import { generateCharacter } from "./js/character-generator.js";
+import { generateCharacter, generateCharacterWithSimilarity } from "./js/character-generator.js";
 import { renderCharacterSheetHTML } from "./js/character-sheet-renderer.js";
+import { searchDecisionsByPrompt } from "./js/decision-matcher.js";
 
 (function () {
   const TranscriptMode = {
@@ -1243,7 +1244,35 @@ import { renderCharacterSheetHTML } from "./js/character-sheet-renderer.js";
     if (extractionUpdateTimer) window.clearTimeout(extractionUpdateTimer);
     extractionUpdateTimer = window.setTimeout(() => {
       renderExtractionFeed(text);
+      scheduleDecisionSearch(text);
     }, 160);
+  }
+
+  let decisionSearchTimer = null;
+  let lastDecisionMatches = null;
+
+  function scheduleDecisionSearch(text) {
+    if (decisionSearchTimer) window.clearTimeout(decisionSearchTimer);
+    decisionSearchTimer = window.setTimeout(async () => {
+      // Only search if we have meaningful text
+      if (!text || text.trim().length < 20) {
+        lastDecisionMatches = null;
+        return;
+      }
+      
+      const result = await searchDecisionsByPrompt(BACKEND_BASE_URL, text, 15);
+      if (result.ok && result.results && result.results.length > 0) {
+        lastDecisionMatches = result.results;
+        console.log('[forge] Found decision matches:', {
+          count: result.results.length,
+          totalDecisions: result.totalDecisions,
+          topMatch: result.results[0],
+        });
+      } else {
+        console.warn('[forge] Decision search failed:', result.error);
+        lastDecisionMatches = null;
+      }
+    }, 500); // Slightly longer delay than extraction to not hammer backend
   }
 
   function updateTranscript(text, updateMode) {
@@ -4844,6 +4873,50 @@ import { renderCharacterSheetHTML } from "./js/character-sheet-renderer.js";
     });
   }
 
+  // Forge mode selection handlers
+  function showForgeMode(mode) {
+    const modeSelection = document.getElementById("forgeModeSelection");
+    const autoPanel = document.getElementById("autoForgePanel");
+    const manualPanel = document.getElementById("manualForgePanel");
+    const interactivePanel = document.getElementById("interactiveForgePanel");
+    
+    if (modeSelection) modeSelection.style.display = mode === null ? "block" : "none";
+    if (autoPanel) autoPanel.style.display = mode === "auto" ? "block" : "none";
+    if (manualPanel) manualPanel.style.display = mode === "manual" ? "block" : "none";
+    if (interactivePanel) interactivePanel.style.display = "none";
+  }
+
+  const autoForgeBtn = document.getElementById("autoForgeBtn");
+  const manualForgeBtn = document.getElementById("manualForgeBtn");
+  const backToModeBtn = document.getElementById("backToModeBtn");
+  const backToModeBtn2 = document.getElementById("backToModeBtn2");
+
+  if (autoForgeBtn) {
+    autoForgeBtn.addEventListener("click", () => {
+      showForgeMode("auto");
+      renderForgedCharacter(null);
+      setForgeStatus("");
+    });
+  }
+
+  if (manualForgeBtn) {
+    manualForgeBtn.addEventListener("click", () => {
+      showForgeMode("manual");
+    });
+  }
+
+  if (backToModeBtn) {
+    backToModeBtn.addEventListener("click", () => {
+      showForgeMode(null);
+    });
+  }
+
+  if (backToModeBtn2) {
+    backToModeBtn2.addEventListener("click", () => {
+      showForgeMode(null);
+    });
+  }
+
   if (forgeCharacterBtn) {
     forgeCharacterBtn.addEventListener("click", async () => {
       const currentUser = getCurrentUser();
@@ -4866,20 +4939,36 @@ import { renderCharacterSheetHTML } from "./js/character-sheet-renderer.js";
         ? forgeCharacterNameInput.value.trim()
         : "";
 
-      setForgeStatus(`Generating random ${selectedClass} (Level ${selectedLevel})...`);
+      // Check if we have decision matches to use for semantic generation
+      if (lastDecisionMatches && lastDecisionMatches.length > 0) {
+        setForgeStatus(`Forging ${selectedClass} (Level ${selectedLevel}) aligned with your narrative...`);
+      } else {
+        setForgeStatus(`Generating ${selectedClass} (Level ${selectedLevel})...`);
+      }
       renderForgedCharacter(null);
 
       try {
-        // Generate character using decision tree
-        const character = await generateCharacter({
-          characterClass: selectedClass,
-          level: selectedLevel,
-          race: selectedRace
-        });
+        // Generate character using decision tree with optional semantic alignment
+        const character = lastDecisionMatches && lastDecisionMatches.length > 0
+          ? await generateCharacterWithSimilarity({
+              characterClass: selectedClass,
+              level: selectedLevel,
+              race: selectedRace,
+              decisionMatches: lastDecisionMatches
+            })
+          : await generateCharacter({
+              characterClass: selectedClass,
+              level: selectedLevel,
+              race: selectedRace
+            });
         
         // Set username and name
         character.username = currentUser;
         character.name = rawName || `${character.race} ${character.classes[0].name}`;
+        
+        // Include the user's narrative transcript
+        const currentTranscript = transcriptEl ? (transcriptEl.value || "") : "";
+        character.narrativeText = currentTranscript;
         
         if (!character) {
           setForgeStatus("Generation failed. Please try again.");
@@ -4888,7 +4977,7 @@ import { renderCharacterSheetHTML } from "./js/character-sheet-renderer.js";
         }
 
         pendingForgedCharacter = character;
-        pendingNarrativeText = ""; // No narrative for random characters
+        pendingNarrativeText = currentTranscript;
         pendingCharacterName = rawName || "";
         setForgeStatus("Preview ready. Pick a portrait, then finish character creation to save.");
         renderForgedCharacter(character);

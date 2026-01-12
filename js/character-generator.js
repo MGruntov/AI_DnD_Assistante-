@@ -188,11 +188,34 @@ function dijkstraOptimalPath({ decisionTree, initialSheet, characterClass, level
   console.log('[dijkstra] Decisions with similarity scores:', Object.keys(similarityMap).length);
   console.groupEnd();
   
+  // Helper: Check if we've reached the end state
+  const isEndState = (currentSheet) => {
+    // Sum all class levels
+    const totalLevel = (
+      (currentSheet.class_barbarian_level || 0) +
+      (currentSheet.class_bard_level || 0) +
+      (currentSheet.class_cleric_level || 0) +
+      (currentSheet.class_fighter_level || 0)
+    );
+    
+    // End state: total level matches target AND sheet is valid
+    const reachedLevel = totalLevel >= level;
+    const isValid = currentSheet.is_valid_sheet === true;
+    
+    return reachedLevel && isValid;
+  };
+  
   // Greedy approach: at each step, pick the available decision with highest similarity
   let iterations = 0;
   const maxIterations = 1000;
   
   while (iterations++ < maxIterations) {
+    // Check if we've reached the end state
+    if (isEndState(sheet)) {
+      console.log('[dijkstra] ✓ Reached end state (target level + valid sheet)');
+      break;
+    }
+    
     console.group(`[dijkstra] Iteration ${iterations}`);
     
     const availableDecisions = decisionTree.filter(d => 

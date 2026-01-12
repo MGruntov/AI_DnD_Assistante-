@@ -927,7 +927,13 @@ import { searchDecisionsByPrompt } from "./js/decision-matcher.js";
   //   to hit the deployed Worker backend.
   // - Local Worker dev (http://localhost:8787) should be opt-in to avoid "Network error"
   //   when no dev server is running.
-  const PROD_BACKEND_BASE_URL = "https://backend.ada-assistante.workers.dev";
+  
+  // BACKEND OPTIONS - Choose one:
+  // Option 1: ev713's personal backend (fresh database, your own resources)
+  const PROD_BACKEND_BASE_URL = "https://backend.ev713-backend.workers.dev";
+  // Option 2: Original shared backend (has all user data, requires owner's account to deploy)
+  // const PROD_BACKEND_BASE_URL = "https://backend.ada-assistante.workers.dev";
+  
   const LOCAL_WORKER_BACKEND_BASE_URL = "http://localhost:8787";
 
   function resolveBackendBaseUrl() {
@@ -4908,9 +4914,13 @@ import { searchDecisionsByPrompt } from "./js/decision-matcher.js";
       const forgeClassSelect = document.getElementById("forgeClassSelect");
       const forgeLevelSelect = document.getElementById("forgeLevelSelect");
       const forgeRaceSelect = document.getElementById("forgeRaceSelect");
+      const forgeCharacterLevelInput = document.getElementById("forgeCharacterLevel");
       
       const selectedClass = forgeClassSelect ? forgeClassSelect.value : "fighter";
-      const selectedLevel = forgeLevelSelect ? parseInt(forgeLevelSelect.value) : 1;
+      // Use the new level input field if available, otherwise fall back to old select
+      const selectedLevel = forgeCharacterLevelInput 
+        ? parseInt(forgeCharacterLevelInput.value) || 5
+        : (forgeLevelSelect ? parseInt(forgeLevelSelect.value) : 1);
       const selectedRace = forgeRaceSelect && forgeRaceSelect.value ? forgeRaceSelect.value : undefined;
       
       const rawName = forgeCharacterNameInput && forgeCharacterNameInput.value

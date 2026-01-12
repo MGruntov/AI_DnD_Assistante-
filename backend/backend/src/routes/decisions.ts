@@ -81,8 +81,8 @@ async function embedText(text: string, env: any): Promise<number[]> {
 		throw new Error('Cloudflare AI binding not available');
 	}
 	
-	// Use Cloudflare's text embedding model
-	const response = await env.AI.run('@cf/baai/bge-base-en-v1.5', {
+	// Use Cloudflare's text embedding model (384 dims to match decision_embeddings.json)
+	const response = await env.AI.run('@cf/baai/bge-small-en-v1.5', {
 		text: text
 	});
 	

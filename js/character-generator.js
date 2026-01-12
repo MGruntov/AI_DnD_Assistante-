@@ -171,15 +171,18 @@ export async function generateCharacterWithSimilarity({ characterClass, level, r
     actions.push(choice);
     remainingCount++;
   }
-  console.log('[generateCharacterWithSimilarity] Filled', remainingCount, 'remaining decisions greedily');
   
-  console.group('[generateCharacterWithSimilarity] Final Character Stats');
+  const finalLevel = (
+    (sheet.class_barbarian_level || 0) +
+    (sheet.class_bard_level || 0) +
+    (sheet.class_cleric_level || 0) +
+    (sheet.class_fighter_level || 0)
+  );
+  console.log(`[generateCharacterWithSimilarity] Greedy fill complete: ${remainingCount} decisions, final level=${finalLevel}/${level}`);
+  
   const character = formatCharacter(sheet, actions);
-  console.log('[generateCharacterWithSimilarity] Race:', character.race);
-  console.log('[generateCharacterWithSimilarity] Classes:', character.classes);
-  console.log('[generateCharacterWithSimilarity] Total actions applied:', actions.length);
-  console.log('[generateCharacterWithSimilarity] Total decisions in path + filled:', path.length, '+', remainingCount);
-  console.groupEnd();
+  console.log(`[generateCharacterWithSimilarity] ✓ Character complete: ${character.race} ${character.classes.map(c => c.name + ' ' + c.level).join('/')}`);
+  console.log(`[generateCharacterWithSimilarity] Total actions: ${actions.length} (${path.length} from dijkstra + ${remainingCount} greedy fill)`);
   
   return character;
 }
@@ -225,22 +228,35 @@ function dijkstraOptimalPath({ decisionTree, initialSheet, characterClass, level
   
   while (iterations++ < maxIterations) {
     // Check if we've reached the end state
+    const totalLevel = (
+      (sheet.class_barbarian_level || 0) +
+      (sheet.class_bard_level || 0) +
+      (sheet.class_cleric_level || 0) +
+      (sheet.class_fighter_level || 0)
+    );
+    
     if (isEndState(sheet)) {
-      console.log('[dijkstra] ✓ Reached end state (target level + valid sheet)');
+      console.log(`[dijkstra] ✓ REACHED END STATE: level=${totalLevel}/${level}, valid=${sheet.is_valid_sheet}`);
       break;
     }
     
-    console.group(`[dijkstra] Iteration ${iterations}`);
+    // Only log every 50 iterations to avoid spam
+    const shouldLog = iterations % 50 === 1 || iterations <= 3;
+    
+    if (shouldLog) {
+      console.log(`[dijkstra] Iteration ${iterations}: level=${totalLevel}/${level}, valid=${sheet.is_valid_sheet}`);
+    }
     
     const availableDecisions = decisionTree.filter(d => 
       !visited.has(d.id) && canTakeAction(sheet, d)
     );
     
-    console.log(`[dijkstra] Available decisions: ${availableDecisions.length}`);
+    if (shouldLog) {
+      console.log(`  Available: ${availableDecisions.length} decisions`);
+    }
     
     if (availableDecisions.length === 0) {
       console.log('[dijkstra] No more available decisions, stopping');
-      console.groupEnd();
       break;
     }
     
@@ -257,66 +273,37 @@ function dijkstraOptimalPath({ decisionTree, initialSheet, characterClass, level
       return { decision, similarity, isCritical, score: boostedScore };
     });
     
-    // Log all scored decisions for debugging
-    console.log('[dijkstra] Scored decisions:', scoredDecisions.map(s => ({
-      id: s.decision.id,
-      similarity: s.similarity.toFixed(3),
-      isCritical: s.isCritical,
-      finalScore: s.score.toFixed(3)
-    })));
-    
     // Pick the decision with highest score
     const best = scoredDecisions.reduce((prev, curr) => 
       curr.score > prev.score ? curr : prev
     );
     
-    console.log('[dijkstra] Selected decision:', {
-      id: best.decision.id,
-      similarity: best.similarity.toFixed(3),
-      isCritical: best.isCritical,
-      finalScore: best.score.toFixed(3)
-    });
+    if (shouldLog) {
+      console.log(`  Best choice: ${best.decision.id} (score: ${best.score.toFixed(3)})`);
+    }
     
     // Apply decision
     if (canTakeAction(sheet, best.decision)) {
       applyAction(sheet, best.decision);
       path.push(best.decision.id);
       visited.add(best.decision.id);
-      
-      console.log('[dijkstra] ✓ Applied decision');
-      console.log('[dijkstra] Current path length:', path.length);
-      
-      // Show current sheet state (just a few key fields for readability)
-      console.log('[dijkstra] Sheet state:', {
-        race: sheet.race,
-        background: sheet.background,
-        class_barbarian_level: sheet.class_barbarian_level,
-        class_bard_level: sheet.class_bard_level,
-        class_cleric_level: sheet.class_cleric_level,
-        class_fighter_level: sheet.class_fighter_level,
-        skills_count: Array.isArray(sheet.skills) ? sheet.skills.length : 0,
-        equipment_count: Array.isArray(sheet.equipment) ? sheet.equipment.length : 0
-      });
     } else {
       // Decision became invalid, skip it
-      console.log('[dijkstra] ✗ Decision no longer valid, skipping');
+      if (shouldLog) {
+        console.log(`  ✗ Decision no longer valid, skipping`);
+      }
       visited.add(best.decision.id);
     }
-    
-    console.groupEnd();
   }
   
-  console.group('[dijkstra] Path Complete');
-  console.log('[dijkstra] Total iterations:', iterations);
-  console.log('[dijkstra] Final path length:', path.length);
-  console.log('[dijkstra] Final path:', path);
-  console.log('[dijkstra] Decisions with highest similarity in path:', 
-    path.map(id => ({
-      id,
-      similarity: (similarityMap[id] || 0).toFixed(3)
-    })).sort((a, b) => parseFloat(b.similarity) - parseFloat(a.similarity)).slice(0, 10)
+  console.log(`[dijkstra] ✓ Path complete: ${path.length} decisions, ${iterations} iterations`);
+  const finalLevel = (
+    (sheet.class_barbarian_level || 0) +
+    (sheet.class_bard_level || 0) +
+    (sheet.class_cleric_level || 0) +
+    (sheet.class_fighter_level || 0)
   );
-  console.groupEnd();
+  console.log(`[dijkstra] Final: level=${finalLevel}/${level}, valid=${sheet.is_valid_sheet}, race=${sheet.race}, bg=${sheet.background}`);
   
   return path;
 }
@@ -408,10 +395,7 @@ function canTakeAction(sheet, decision) {
     if (Array.isArray(pre)) {
       const [param, op, expected] = pre;
       const cur = readCurrent(param, expected);
-      // DEBUG: Log checks for is_valid_sheet
-      if (param === 'is_valid_sheet' && decision.id && decision.id.startsWith('choose_class')) {
-        console.log(`[${decision.id}] Checking is_valid_sheet: cur=${cur}, expected=${expected}, op=${op}`);
-      }
+      
       if (op === '==') {
         if (cur !== expected) return false;
       } else if (op === '!=') {

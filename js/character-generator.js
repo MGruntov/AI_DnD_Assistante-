@@ -562,6 +562,7 @@ export class InteractiveCharacterCreator {
     this.sheet = null;
     this.actions = [];
     this.similarityScores = {}; // Map of decisionId -> similarity score
+    this.targetLevel = 5; // Default target level
   }
 
   async initialize() {
@@ -578,6 +579,20 @@ export class InteractiveCharacterCreator {
         this.similarityScores[match.decisionId] = match.similarity;
       });
     }
+  }
+
+  setTargetLevel(level) {
+    this.targetLevel = Math.max(1, Math.min(20, parseInt(level, 10) || 5));
+  }
+
+  getCurrentLevel() {
+    if (!this.sheet) return 0;
+    return (
+      (this.sheet.class_barbarian_level || 0) +
+      (this.sheet.class_bard_level || 0) +
+      (this.sheet.class_cleric_level || 0) +
+      (this.sheet.class_fighter_level || 0)
+    );
   }
 
   getAvailableChoices() {
@@ -607,8 +622,10 @@ export class InteractiveCharacterCreator {
       this.sheet.class_barbarian_level > 0 ||
       this.sheet.class_bard_level > 0
     );
+    const currentLevel = this.getCurrentLevel();
+    const reachedTargetLevel = currentLevel >= this.targetLevel;
     
-    return hasRace && hasClass && availableChoices.length === 0;
+    return hasRace && hasClass && reachedTargetLevel && availableChoices.length === 0;
   }
 
   getCharacterState() {

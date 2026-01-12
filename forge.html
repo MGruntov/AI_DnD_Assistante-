@@ -191,6 +191,18 @@
           <!-- Manual Build Mode -->
           <div id="manualForgePanel" style="display:none;">
             <p class="text-muted" style="margin-bottom:20px;">Build your character step-by-step, making each choice manually.</p>
+            <div class="field" style="margin-bottom:15px;">
+              <label for="manualForgeCharacterLevel">Target character level (default: 5)</label>
+              <input
+                type="number"
+                id="manualForgeCharacterLevel"
+                name="manualForgeCharacterLevel"
+                placeholder="5"
+                value="5"
+                min="1"
+                max="20"
+              />
+            </div>
             <button id="startInteractiveForgeBtn" class="btn btn--primary">Begin Step-by-Step Creation</button>
             <button id="backToModeBtn2" class="btn btn--secondary" style="margin-left:10px;">Back</button>
           </div>
@@ -336,7 +348,12 @@
         creator = new InteractiveCharacterCreator();
         console.log('Creator instantiated');
         await creator.initialize();
-        console.log('Creator initialized');
+        
+        // Read target level from manual forge input
+        const levelInput = document.getElementById('manualForgeCharacterLevel');
+        const targetLevel = levelInput ? parseInt(levelInput.value, 10) : 5;
+        creator.setTargetLevel(targetLevel);
+        console.log('Creator initialized with target level:', targetLevel);
         
         // Fetch similarity scores from transcript if available
         const transcriptEl = document.getElementById('transcript');

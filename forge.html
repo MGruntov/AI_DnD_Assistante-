@@ -238,6 +238,7 @@
 
   <script type="module">
     import { authHeaders } from './js/api.js';
+    import { renderCharacterSheetHTML } from './js/character-sheet-renderer.js';
 
     let InteractiveCharacterCreator = null;
     let creator = null;
@@ -247,6 +248,7 @@
     let isSaving = false;
     let needsSave = false;
     let savedCharacterId = null;
+    let autosaveTimer = null;
 
     function initializeElements() {
       startBtn = document.getElementById('startInteractiveForgeBtn');
@@ -361,14 +363,7 @@
       
       if (state) {
         const sheet = state.rawSheet;
-        const raceText = state.race !== 'Unknown' ? state.race : 'Not chosen';
-        const classText = state.classes.length > 0 
-          ? state.classes.map(c => `${c.name} ${c.level}`).join(', ')
-          : 'Not chosen';
-        const backgroundText = state.background !== 'Unknown' ? state.background : 'Not chosen';
-        
-        const formatList = (arr) => Array.isArray(arr) && arr.length > 0 ? arr.join(', ') : 'None';
-        
+
         // Get counter info
         const counters = [
           { key: 'skills_to_choose', label: 'Skills' },
@@ -391,81 +386,9 @@
          .map(c => `${c.label}: ${sheet[c.key]}`)
          .join(' | ');
         countersText = counters || 'All choices made';
-        
-        progressDiv.innerHTML = `
-          <div style="display:grid;gap:1em;">
-            <div>
-              <p><strong>Race:</strong> ${raceText}</p>
-              <p><strong>Class:</strong> ${classText}</p>
-              <p><strong>Background:</strong> ${backgroundText}</p>
-              <p><strong>Level:</strong> ${state.level} | <strong>HP:</strong> ${state.maxHp} | <strong>AC:</strong> ${state.armorClass}</p>
-            </div>
-            
-            <div>
-              <p><strong>Ability Scores:</strong><br>
-                STR ${state.abilityScores.strength} (${state.abilityScores.strength >= 10 ? '+' : ''}${Math.floor((state.abilityScores.strength - 10) / 2)}), 
-                DEX ${state.abilityScores.dexterity} (${state.abilityScores.dexterity >= 10 ? '+' : ''}${Math.floor((state.abilityScores.dexterity - 10) / 2)}), 
-                CON ${state.abilityScores.constitution} (${state.abilityScores.constitution >= 10 ? '+' : ''}${Math.floor((state.abilityScores.constitution - 10) / 2)}),<br>
-                INT ${state.abilityScores.intelligence} (${state.abilityScores.intelligence >= 10 ? '+' : ''}${Math.floor((state.abilityScores.intelligence - 10) / 2)}), 
-                WIS ${state.abilityScores.wisdom} (${state.abilityScores.wisdom >= 10 ? '+' : ''}${Math.floor((state.abilityScores.wisdom - 10) / 2)}), 
-                CHA ${state.abilityScores.charisma} (${state.abilityScores.charisma >= 10 ? '+' : ''}${Math.floor((state.abilityScores.charisma - 10) / 2)})
-              </p>
-            </div>
-            
-            ${sheet.feature_entries && sheet.feature_entries.length > 0 ? `
-            <div>
-              <p><strong>Features:</strong> ${formatList(sheet.feature_entries)}</p>
-            </div>` : ''}
-            
-            ${sheet.proficiencies && sheet.proficiencies.length > 0 ? `
-            <div>
-              <p><strong>Proficiencies:</strong> ${formatList(sheet.proficiencies)}</p>
-            </div>` : ''}
-            
-            ${sheet.languages && sheet.languages.length > 0 ? `
-            <div>
-              <p><strong>Languages:</strong> ${formatList(sheet.languages)}</p>
-            </div>` : ''}
-            
-            ${sheet.equipment && sheet.equipment.length > 0 ? `
-            <div>
-              <p><strong>Equipment:</strong> ${formatList(sheet.equipment)}</p>
-            </div>` : ''}
-            
-            ${sheet.cantrips_known && sheet.cantrips_known.length > 0 ? `
-            <div>
-              <p><strong>Cantrips:</strong> ${formatList(sheet.cantrips_known)}</p>
-            </div>` : ''}
-            
-            ${sheet.spells_known && sheet.spells_known.length > 0 ? `
-            <div>
-              <p><strong>Spells:</strong> ${sheet.spells_known.map(s => {
-                const parts = s.split(':');
-                return parts[1] || s;
-              }).join(', ')}</p>
-            </div>` : ''}
-            
-            ${sheet.rages_per_long_rest > 0 ? `
-            <div>
-              <p><strong>Barbarian:</strong> ${sheet.rages_per_long_rest} rages/long rest, +${sheet.rage_damage_bonus} rage damage</p>
-            </div>` : ''}
-            
-            ${sheet.bardic_inspiration_die > 0 ? `
-            <div>
-              <p><strong>Bard:</strong> d${sheet.bardic_inspiration_die} Bardic Inspiration${sheet.song_of_rest_die ? `, d${sheet.song_of_rest_die} Song of Rest` : ''}</p>
-            </div>` : ''}
-            
-            ${sheet.channel_divinity_uses > 0 ? `
-            <div>
-              <p><strong>Cleric:</strong> ${sheet.channel_divinity_uses} Channel Divinity uses</p>
-            </div>` : ''}
-            
-            ${sheet.action_surge_uses > 0 ? `
-            <div>
-              <p><strong>Fighter:</strong> ${sheet.action_surge_uses} Action Surge${sheet.extra_attacks > 1 ? `, ${sheet.extra_attacks} attacks` : ''}</p>
-            </div>` : ''}
-          </div>
-        `;
+
+        // Use shared renderer so Forge + Vault show the same sheet format.
+        progressDiv.innerHTML = renderCharacterSheetHTML(state, { compact: false });
       }
 
       // Display counters before choices
@@ -552,10 +475,53 @@
         forgeStatus.className = 'forge__status forge__status--success';
         markUnsavedChanges();
         updateChoices();
+        scheduleAutosave();
       } else {
         forgeStatus.textContent = `Failed to apply: ${decision.title || decision.id}`;
         forgeStatus.className = 'forge__status forge__status--error';
       }
+    }
+
+    function buildSavableCharacterState() {
+      if (!creator) return null;
+      const character = creator.getCharacterState();
+      if (!character) return null;
+
+      // Bring over any chosen portrait or name (same as finish).
+      try {
+        const portraitUrl = localStorage.getItem('adaCurrentCharacterPortraitUrl');
+        if (portraitUrl) character.portraitUrl = portraitUrl;
+      } catch {}
+
+      const nameInput = document.getElementById('forgeCharacterName');
+      if (nameInput && nameInput.value && nameInput.value.trim()) {
+        character.name = nameInput.value.trim();
+      }
+      return character;
+    }
+
+    function scheduleAutosave() {
+      // Only autosave updates after the first explicit save has created the character.
+      // This avoids consuming a roster slot for half-built drafts.
+      if (!savedCharacterId) return;
+      const currentUser = getCurrentUser();
+      if (!currentUser) return;
+      if (autosaveTimer) clearTimeout(autosaveTimer);
+      autosaveTimer = setTimeout(async () => {
+        const character = buildSavableCharacterState();
+        if (!character) return;
+        try {
+          const saved = await saveCharacter(character, currentUser);
+          if (saved) {
+            needsSave = false;
+            // Keep feedback subtle (don't spam status on every click).
+            if (forgeStatus && forgeStatus.className.includes('error') === false) {
+              forgeStatus.textContent = 'Saved.';
+              forgeStatus.className = 'forge__status forge__status--success';
+            }
+          }
+        } catch {}
+      }, 900);
     }
 
     function markUnsavedChanges() {

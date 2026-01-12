@@ -3,7 +3,9 @@
 ADA is a browser-based D\&D helper with a Cloudflare Worker backend. It supports:
 
 - **Voice capture** and session transcripts
-- **Character forging** (narrative \→ mechanics)
+- **Character forging** (two modes)
+	- **AI forge** (narrative \→ mechanics)
+	- **Interactive forge** (step-by-step SRD-style decision tree)
 - **Campaigns** (standard multiplayer + AI-solo campaigns)
 - **AI-DM** gameplay with **checks/roll resolution** driven by character stats
 - **Per-character journals** generated from the campaign transcript
@@ -21,8 +23,14 @@ Frontend is a simple static app at the repo root, and the backend is a Cloudflar
 ```text
 AI_DnD_Assistante-/
 	index.html              # Frontend SPA shell
+	forge.html              # Character Forge (AI + interactive decision-tree mode)
 	speech.js               # Frontend logic (auth, campaigns, AI-DM chat, speech capture)
 	style.css               # Frontend styling
+	js/character-generator.js # Client-side decision-tree generator (interactive + random)
+	character_decision_tree.json # Decision tree (generated) powering interactive creation
+	character_sheet_initial.json  # Initial sheet state for decision-tree engine
+	character_domain_creator.py   # Python domain+actions generator for the decision tree
+	compile_actions.py            # Python compiler that writes decision tree JSON
 	dnd_chars_all.csv       # Data file (used by backend features)
 	backend/
 		backend/
@@ -46,6 +54,25 @@ AI_DnD_Assistante-/
 - Key UI modules:
 	- Campaign dashboard tabs (Characters / Journals / Script / Dialogue)
 	- Dialogue tab uses a **non-editable message thread** + a bottom composer.
+	- Character Forge has:
+		- **AI forge** (backend-driven narrative \→ mechanics)
+		- **Interactive forge** (client-side decision tree; user picks options)
+
+#### Interactive Forge (decision tree)
+
+The interactive character creator runs entirely in the browser using:
+
+- `js/character-generator.js`
+- `character_decision_tree.json` (a `decisions` array)
+- `character_sheet_initial.json`
+
+Each decision is a record with an `id` and optional `title`, plus:
+
+- `preconditions`: array of tuples `[param, op, expected]`
+- `effects`: array of tuples `[param, op, value]`
+
+Supported effect ops include `set`, `add`, `inc`, `dec`.
+The sheet becomes valid when `validate_character_sheet` can be applied (all required choices/counters are satisfied).
 
 #### Portrait image generation provider
 
@@ -84,6 +111,13 @@ When `adaPortraitImageProvider` is set to `nanobanana` (or `custom`), the client
 	- journal generation
 - Includes health/debug endpoints for AI observability.
 
+#### Character endpoints used by the Forge
+
+- `POST /api/characters/forge` — AI forge (server builds a character from narrative inputs)
+- `POST /api/characters/save-sheet` — interactive forge save/update (server stores the full decision-tree sheet)
+
+`/api/characters/save-sheet` is required for saving interactive characters. The UI will show a clear error if the backend is missing this endpoint.
+
 ---
 
 ## Running locally
@@ -118,6 +152,11 @@ You can open `index.html` directly, but speech + fetch behave more reliably when
 - from repo root: run any static server (example: `python3 -m http.server`)
 - open the shown URL in Chrome/Edge
 
+Notes:
+
+- The **interactive forge** can run client-side without the backend.
+- Saving an interactive character to **My Characters** requires the backend endpoint `POST /api/characters/save-sheet`.
+
 ---
 
 ## Deploying
@@ -134,6 +173,21 @@ The frontend can be hosted anywhere static (GitHub Pages, Cloudflare Pages, Ngin
 ---
 
 ## Key features (what changed recently)
+
+### Interactive Character Forge (decision-tree)
+
+Recent work focused on making the interactive forge robust and “finishable”:
+
+- Dynamic import hardening for `js/character-generator.js` (handles default-vs-named export differences).
+- Loader compatibility for decision tree shapes (legacy object vs `decisions` array) + cache-busting fetch.
+- Expanded progress panel (race/class/background, ability scores, resources) and visible “choices remaining” counters.
+- Decision/effect support improvements:
+	- new `dec` operation in the client decision-tree engine
+	- friendlier button titles via `decision.title`
+- Save flow:
+	- new backend endpoint `POST /api/characters/save-sheet` to persist full interactive sheets
+	- finish action navigates to **My Characters (Vault)** after successful save
+	- clearer guidance when the backend is missing the save endpoint (no silent fallback)
 
 ### Dialogue UI (Campaign → Dialogue)
 

@@ -2674,6 +2674,32 @@ h1, h2, h3, h4,
   margin: 0.1rem 0;
 }
 
+.vault-detail__sheet {
+  margin-top: 0.5rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid rgba(148, 163, 184, 0.25);
+}
+
+.vault-sheet {
+  border: 1px solid rgba(30, 23, 18, 0.18);
+  border-radius: var(--radius-lg);
+  padding: 12px 14px;
+  background:
+    radial-gradient(550px 220px at 20% 0%, rgba(176, 137, 47, 0.10), transparent 65%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.86), rgba(251, 246, 236, 0.98));
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.55);
+  font-size: 0.9rem;
+  color: var(--ink-text);
+}
+
+.vault-sheet p {
+  margin: 0.25rem 0;
+}
+
+.vault-sheet strong {
+  color: var(--leather-accent-2);
+}
+
 .vault-resources {
   margin-top: 0.6rem;
   padding-top: 0.6rem;

@@ -1,6 +1,7 @@
 import { authHeaders, clearAuthToken, setAuthToken } from "./js/api.js";
 import { apiGetJson, apiPostJson } from "./js/api-client.js";
 import { generateCharacter } from "./js/character-generator.js";
+import { renderCharacterSheetHTML } from "./js/character-sheet-renderer.js";
 
 (function () {
   const TranscriptMode = {
@@ -483,6 +484,7 @@ import { generateCharacter } from "./js/character-generator.js";
   const vaultDetailAbilities = document.getElementById("vaultDetailAbilities");
   const vaultDetailMechanics = document.getElementById("vaultDetailMechanics");
   const vaultDetailResources = document.getElementById("vaultDetailResources");
+  const vaultDetailSheet = document.getElementById("vaultDetailSheet");
   const vaultLevelUpBtn = document.getElementById("vaultLevelUpBtn");
   const vaultLevelUpStatus = document.getElementById("vaultLevelUpStatus");
   const vaultCampaignSelect = document.getElementById("vaultCampaignSelect");
@@ -4544,6 +4546,11 @@ import { generateCharacter } from "./js/character-generator.js";
     const savesArr = Array.isArray(m.savingThrows) ? m.savingThrows : [];
     if (savesArr.length) lines.push(`Saves: ${savesArr.map((s) => s.toUpperCase()).join(", ")}`);
     vaultDetailMechanics.innerHTML = lines.map((l) => `<div>${l}</div>`).join("");
+
+    // Unified sheet display (matches the Forge formatting).
+    if (vaultDetailSheet) {
+      vaultDetailSheet.innerHTML = renderCharacterSheetHTML(character, { compact: false });
+    }
 
     // Progression + resources (system-managed; not directly editable)
     const XP_THRESHOLD_BY_LEVEL = {

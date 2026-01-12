@@ -360,8 +360,8 @@
         if (transcriptText) {
           try {
             const { searchDecisionsByPrompt } = await import('./js/decision-matcher.js');
-            // Get backend URL from ada.config (set by speech.js) or fall back to current origin
-            let backendUrl = (window.ada && window.ada.config && window.ada.config.BACKEND_BASE_URL) || new URL(window.location).origin;
+            // Use the production backend URL directly
+            const backendUrl = 'https://backend.ev713-backend.workers.dev';
             console.log('[forge] Using backend URL:', backendUrl);
             // Request all 433 decisions, not just top 15
             const response = await searchDecisionsByPrompt(backendUrl, transcriptText, 433);

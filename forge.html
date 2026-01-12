@@ -329,8 +329,8 @@
       console.log('Starting interactive forge...');
       try {
         // Dynamic import to avoid named export errors (with cache busting)
-        // Always reimport to get latest version
-        const mod = await import(`./js/character-generator.js?t=${Date.now()}`);
+        // Force fresh import with version parameter
+        const mod = await import(`./js/character-generator.js?v=${Math.random()}`);
         console.log('character-generator module keys:', Object.keys(mod));
         if (mod.default) {
           console.log('character-generator default keys:', Object.keys(mod.default));

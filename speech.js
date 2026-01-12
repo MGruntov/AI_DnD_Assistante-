@@ -1266,16 +1266,19 @@ import { searchDecisionsByPrompt } from "./js/decision-matcher.js";
         return;
       }
       
+      console.log('[forge] Searching for decisions matching narrative...');
       const result = await searchDecisionsByPrompt(BACKEND_BASE_URL, text, 15);
+      console.log('[forge] Search result:', result);
+      
       if (result.ok && result.results && result.results.length > 0) {
         lastDecisionMatches = result.results;
-        console.log('[forge] Found decision matches:', {
+        console.log('[forge] ✓ Found decision matches:', {
           count: result.results.length,
           totalDecisions: result.totalDecisions,
           topMatch: result.results[0],
         });
       } else {
-        console.warn('[forge] Decision search failed:', result.error);
+        console.warn('[forge] Decision search failed:', result.error || result);
         lastDecisionMatches = null;
       }
     }, 500); // Slightly longer delay than extraction to not hammer backend

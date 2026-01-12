@@ -17,18 +17,29 @@ let embeddingsLoaded = false;
 /**
  * Load pre-computed decision embeddings
  */
-async function loadDecisionEmbeddings(env: any) {
+async function loadDecisionEmbeddings(requestUrl: string) {
 	if (embeddingsLoaded) return decisionEmbeddings;
 	
 	try {
-		// Try to fetch from public directory using absolute path
-		const response = await fetch('/decision_embeddings.json');
+		// Get the origin from the current request to work with any backend
+		const origin = new URL(requestUrl).origin;
+		
+		// In Cloudflare Workers, assets are served at the root
+		let response = await fetch(new URL('/decision_embeddings.json', origin));
+		
+		if (!response.ok) {
+			// Fallback: try relative
+			response = await fetch('./decision_embeddings.json');
+		}
+		
 		if (response.ok) {
 			const data = await response.json();
 			decisionEmbeddings = data;
 			embeddingsLoaded = true;
-			console.log(`[decisions] Loaded ${Object.keys(data).length} decision embeddings`);
+			console.log(`[decisions] ✓ Loaded ${Object.keys(data).length} decision embeddings from ${origin}`);
 			return data;
+		} else {
+			console.warn(`[decisions] Could not load embeddings, status: ${response.status}`);
 		}
 	} catch (e) {
 		console.warn('[decisions] Could not load embeddings from public:', e);
@@ -101,8 +112,8 @@ export function registerDecisionRoutes(app: App) {
 				);
 			}
 			
-			// Load embeddings
-			await loadDecisionEmbeddings(c.env);
+			// Load embeddings using the current request's URL
+			await loadDecisionEmbeddings(c.req.url);
 			
 			// Embed the user prompt using Cloudflare Workers AI
 			console.log('[decisions/search] Embedding prompt with Cloudflare AI...');

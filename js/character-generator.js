@@ -561,6 +561,7 @@ export class InteractiveCharacterCreator {
   constructor() {
     this.sheet = null;
     this.actions = [];
+    this.similarityScores = {}; // Map of decisionId -> similarity score
   }
 
   async initialize() {
@@ -569,10 +570,23 @@ export class InteractiveCharacterCreator {
     this.actions = [];
   }
 
+  setSimilarityScores(decisionMatches) {
+    // decisionMatches is array of {decisionId, similarity}
+    this.similarityScores = {};
+    if (Array.isArray(decisionMatches)) {
+      decisionMatches.forEach(match => {
+        this.similarityScores[match.decisionId] = match.similarity;
+      });
+    }
+  }
+
   getAvailableChoices() {
     if (!this.sheet || !decisionTree) return [];
     const tree = Array.isArray(decisionTree) ? decisionTree : (decisionTree.decisions || []);
-    return tree.filter(d => canTakeAction(this.sheet, d));
+    return tree.filter(d => canTakeAction(this.sheet, d)).map(d => ({
+      ...d,
+      similarity: this.similarityScores[d.id] || 0
+    }));
   }
 
   applyChoice(decision) {

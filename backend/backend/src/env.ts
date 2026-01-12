@@ -2,6 +2,8 @@ export type Env = {
 	ADA_DATA: KVNamespace;
 	// D1 is being introduced incrementally; keep optional during migration.
 	ADA_DB?: D1Database;
+	// Cloudflare Workers AI for text embeddings
+	AI: any;
 	GEMINI_API_KEY: string;
 	// Set via `wrangler secret put ARCHITECT_SECRET`.
 	ARCHITECT_SECRET?: string;

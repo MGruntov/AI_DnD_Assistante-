@@ -2,7 +2,7 @@
  * Decision search endpoint for semantic matching
  * 
  * Accepts user narrative prompt and:
- * 1. Embeds it using sentence-transformers
+ * 1. Embeds it using Cloudflare Workers AI (text-embeddings)
  * 2. Computes cosine similarity against pre-computed decision embeddings
  * 3. Returns top-k similar decisions with metadata
  */
@@ -10,27 +10,12 @@
 import { Hono } from 'hono';
 import type { App } from '../appRoutes';
 
-// Lazy-load embedding model on first use
-let embeddingModel: any = null;
+// Pre-loaded decision embeddings
 let decisionEmbeddings: Record<string, number[]> = {};
 let embeddingsLoaded = false;
 
 /**
- * Load the embedding model from transformers
- */
-async function loadEmbeddingModel() {
-	if (embeddingModel) return embeddingModel;
-	
-	const { pipeline } = await import('@xenova/transformers');
-	console.log('[decisions] Loading embedding model (all-MiniLM-L6-v2)...');
-	embeddingModel = await pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2');
-	console.log('[decisions] Model loaded');
-	return embeddingModel;
-}
-
-/**
  * Load pre-computed decision embeddings
- * In production, these would come from KV storage or a bundled asset
  */
 async function loadDecisionEmbeddings(env: any) {
 	if (embeddingsLoaded) return decisionEmbeddings;
@@ -78,20 +63,24 @@ function cosineSimilarity(a: number[], b: number[]): number {
 }
 
 /**
- * Embed text using the transformer model
+ * Embed text using Cloudflare Workers AI
  */
-async function embedText(text: string): Promise<number[]> {
-	const model = await loadEmbeddingModel();
+async function embedText(text: string, env: any): Promise<number[]> {
+	if (!env.AI) {
+		throw new Error('Cloudflare AI binding not available');
+	}
 	
-	// Get embeddings from model
-	const output = await model(text, {
-		pooling: 'mean',
-		normalize: true,
+	// Use Cloudflare's text embedding model
+	const response = await env.AI.run('@cf/baai/bge-base-en-v1.5', {
+		text: text
 	});
 	
-	// Convert tensor to array
-	const embedding = Array.from(output.data);
-	return embedding;
+	// Response format: { shape: [1, 768], data: [[...]] }
+	if (response && response.data && Array.isArray(response.data) && response.data.length > 0) {
+		return response.data[0];
+	}
+	
+	throw new Error('Failed to generate embedding');
 }
 
 export function registerDecisionRoutes(app: App) {
@@ -115,9 +104,9 @@ export function registerDecisionRoutes(app: App) {
 			// Load embeddings
 			await loadDecisionEmbeddings(c.env);
 			
-			// Embed the user prompt
-			console.log('[decisions/search] Embedding prompt...');
-			const promptEmbedding = await embedText(prompt);
+			// Embed the user prompt using Cloudflare Workers AI
+			console.log('[decisions/search] Embedding prompt with Cloudflare AI...');
+			const promptEmbedding = await embedText(prompt, c.env);
 			
 			// Compute cosine similarity with all decision embeddings
 			console.log('[decisions/search] Computing similarities...');
@@ -127,7 +116,7 @@ export function registerDecisionRoutes(app: App) {
 			}> = [];
 			
 			for (const [decisionId, embedding] of Object.entries(decisionEmbeddings)) {
-				const emb = Array.isArray(embedding) ? embedding : embedding.embedding;
+				const emb = Array.isArray(embedding) ? embedding : (embedding as any).embedding;
 				if (!Array.isArray(emb)) continue;
 				
 				const score = cosineSimilarity(promptEmbedding, emb);

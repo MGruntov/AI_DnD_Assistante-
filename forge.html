@@ -367,7 +367,8 @@
             // Response has { ok, prompt, results: Array, totalDecisions, topK }
             if (response && response.results && Array.isArray(response.results)) {
               creator.setSimilarityScores(response.results);
-              console.log(`[forge] Loaded ${response.results.length} similarity scores from search (out of ${response.totalDecisions} total)`);\n            }
+              console.log(`[forge] Loaded ${response.results.length} similarity scores from search (out of ${response.totalDecisions} total)`);
+            }
           } catch (err) {
             console.warn('[forge] Could not fetch similarity scores:', err);
           }

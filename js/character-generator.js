@@ -132,9 +132,23 @@ export async function generateCharacterWithSimilarity({ characterClass, level, r
   }
   
   // Fill remaining optional decisions greedily by similarity
+  // BUT stop if we've reached the target level
   let remainingCount = 0;
   let safetyCounter = 0;
   while (safetyCounter++ < 1000) {
+    // Check if we've reached target level - stop adding more decisions
+    const totalLevel = (
+      (sheet.class_barbarian_level || 0) +
+      (sheet.class_bard_level || 0) +
+      (sheet.class_cleric_level || 0) +
+      (sheet.class_fighter_level || 0)
+    );
+    
+    if (totalLevel >= level) {
+      console.log('[generateCharacterWithSimilarity] Reached target level, stopping greedy fill');
+      break;
+    }
+    
     const availableDecisions = decisionTree.filter(d => canTakeAction(sheet, d));
     if (availableDecisions.length === 0) break;
     

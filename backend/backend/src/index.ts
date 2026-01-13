@@ -182,9 +182,9 @@ async function resolveGeminiModelName(apiKey: string): Promise<{
 		// (Many users report more consistent availability/free-tier behavior on Gemma than newest Gemini Flash.)
 		const preferenceOrder = [
 			// Gemma 3 family (instruction-tuned variants typically include "-it" suffixes)
-			'gemma-3-12b',
 			'gemma-3-2b',
 			'gemma-3-1b',
+			'gemma-3-12b',
 			// Gemini family
 			'gemini-1.5-flash',
 			'gemini-2.5-flash',
@@ -2565,7 +2565,7 @@ function buildCharacterSummary(character: Character): string {
 function buildSessionHistory(log: TurnEntry[]): string {
 	if (!Array.isArray(log) || !log.length) return '';
 	return log
-		.slice(-10)
+		.slice(-8)
 		.map((entry) => {
 			const who = entry.role === 'player' ? 'Player' : 'DM';
 			return `${who}: ${entry.text}`;
@@ -2688,8 +2688,29 @@ function buildAIDMUserPrompt(
 	const currentCanon = canon ? canon[clampedIdx] : null;
 	const history = buildSessionHistory(session.log);
 	const characterSummary = buildCharacterSummary(character);
-	const victory = adventure.victoryConditions.join('\n- ');
-	const defeat = adventure.defeatConditions.join('\n- ');
+	const victory = adventure.victoryConditions.map((c) => truncateForPrompt(String(c || ''), 220)).join('\n- ');
+	const defeat = adventure.defeatConditions.map((c) => truncateForPrompt(String(c || ''), 220)).join('\n- ');
+
+	const summaryForPrompt = session.summary
+		? truncateForPrompt(session.summary, 1600)
+		: '(no prior summary; rely on recent log above)';
+
+	let canonListForPrompt = '';
+	if (canon && canon.length) {
+		// Avoid sending a huge canon timeline on every turn. Keep a window around the current event.
+		const windowBefore = 2;
+		const windowAfter = 3;
+		const start = Math.max(0, clampedIdx - windowBefore);
+		const end = Math.min(canon.length, clampedIdx + windowAfter + 1);
+		const lines: string[] = [];
+		if (start > 0) lines.push('  ...');
+		for (let i = start; i < end; i++) {
+			const ev = canon[i];
+			lines.push(`${i === clampedIdx ? '>>' : '  '} ${i + 1}. ${ev.title} (${ev.id})`);
+		}
+		if (end < canon.length) lines.push('  ...');
+		canonListForPrompt = lines.join('\n');
+	}
 	return [
 		`Adventure: ${adventure.title} [${adventure.id}]`,
 		'',
@@ -2703,9 +2724,10 @@ function buildAIDMUserPrompt(
 				(currentCanon.successCondition || currentCanon.description),
 				'',
 				'Canon events (in narrative gravity order; do not jump ahead unless the current event is resolved or the player explicitly chooses to drift):',
-				(canon || [])
-					.map((ev, idx) => `${idx === clampedIdx ? '>>' : '  '} ${idx + 1}. ${ev.title} (${ev.id})`)
-					.join('\n'),
+				canonListForPrompt ||
+					(canon || [])
+						.map((ev, idx) => `${idx === clampedIdx ? '>>' : '  '} ${idx + 1}. ${ev.title} (${ev.id})`)
+						.join('\n'),
 			].join('\n')
 			: [
 				'Checkpoints (in narrative order):',
@@ -2722,10 +2744,10 @@ function buildAIDMUserPrompt(
 		characterSummary,
 		'',
 		'Longer-term session summary (may be truncated):',
-		session.summary || '(no prior summary; rely on recent log above)',
+		summaryForPrompt,
 		'',
 		'Recent conversation log (most recent last):',
-		history || '(no previous turns – this is the opening scene)',
+		history ? truncateForPrompt(history, 1400) : '(no previous turns – this is the opening scene)',
 		'',
 		`New player input: ${playerInput}`,
 		'',
@@ -2930,11 +2952,13 @@ async function callAIDungeonMaster(
 		],
 		generationConfig: {
 			temperature: 0.7,
-			maxOutputTokens: 1200,
+			maxOutputTokens: 650,
 		},
 	};
 	if (!isGemma) {
 		bodyObj.systemInstruction = { parts: [{ text: systemPrompt }] };
+		// Reduce latency and token usage on Gemini-family models.
+		bodyObj.generationConfig.thinkingConfig = { thinkingBudget: 0 };
 	}
 	const body = JSON.stringify(bodyObj);
 
@@ -5762,27 +5786,40 @@ async function callGeminiText(
 	}
 
 	const resolved = await resolveGeminiModelName(apiKey);
+	const modelName = resolved.modelName;
+	const isGemma = isGemmaFamilyModel(modelName);
 	const url =
-		`https://generativelanguage.googleapis.com/${encodeURIComponent(GEMINI_API_VERSION)}/${resolved.modelName}:generateContent` +
+		`https://generativelanguage.googleapis.com/${encodeURIComponent(GEMINI_API_VERSION)}/${modelName}:generateContent` +
 		`?key=${encodeURIComponent(apiKey)}`;
 
-	const body = JSON.stringify({
-		systemInstruction: {
-			parts: [{ text: params.systemPrompt }],
-		},
+	// Some Gemma endpoints can be picky about systemInstruction and generationConfig fields.
+	// Keep compatibility by inlining system prompts for Gemma family models.
+	const bodyObj: any = {
 		contents: [
 			{
 				role: 'user',
-				parts: [{ text: params.userPrompt }],
+				parts: [
+					{
+						text: isGemma
+							? `${params.systemPrompt}\n\n---\n\n${params.userPrompt}`
+							: params.userPrompt,
+					},
+				],
 			},
 		],
 		generationConfig: {
 			temperature: Math.max(0, Math.min(1.2, params.temperature)),
 			maxOutputTokens: Math.max(64, Math.min(2000, Math.floor(params.maxOutputTokens))),
-			// GM tools should not spend tokens on chain-of-thought.
-			thinkingConfig: { thinkingBudget: 0 },
 		},
-	});
+	};
+	if (!isGemma) {
+		bodyObj.systemInstruction = {
+			parts: [{ text: params.systemPrompt }],
+		};
+		// GM tools should not spend tokens on chain-of-thought.
+		bodyObj.generationConfig.thinkingConfig = { thinkingBudget: 0 };
+	}
+	const body = JSON.stringify(bodyObj);
 
 	let rawText = '';
 	try {
@@ -7432,11 +7469,11 @@ function forgeCharacterFromSheet(owner: string, payload: any): Character {
 	const background = String(payload?.background || '').trim();
 	const classesRaw = Array.isArray(payload?.classes) ? payload.classes : [];
 	const classes: CharacterClass[] = classesRaw
-		.map((c: any) => ({
+		.map((c: any): CharacterClass => ({
 			name: String(c?.name || 'Adventurer'),
 			level: clampLevel(Number(c?.level ?? 1)),
 		}))
-		.filter((c) => Boolean(c.name));
+		.filter((c: CharacterClass) => Boolean(c.name));
 
 	const classSummary = classes.map((c) => c.name).join('/') || 'Adventurer';
 	const levelSummary = classes.map((c) => String(c.level)).join('/') || '1';

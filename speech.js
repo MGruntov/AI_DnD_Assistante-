@@ -937,31 +937,62 @@ import { searchDecisionsByPrompt } from "./js/decision-matcher.js";
   const LOCAL_WORKER_BACKEND_BASE_URL = "http://localhost:8787";
 
   function resolveBackendBaseUrl() {
-    // Optional override: localStorage key or ?backend=... query param.
+    // Optional override via query param.
     // Examples:
     // - ?backend=local  -> http://localhost:8787
     // - ?backend=https://your-worker.example.com
+    // NOTE: To avoid accidentally "sticking" an old backend forever, we only persist
+    // the override if `persistBackend=1` is present.
+    const host = String(window.location.hostname || "").toLowerCase();
+    const port = String(window.location.port || "");
+    const isLocalSite = host === "localhost" || host === "127.0.0.1" || host === "0.0.0.0";
+    const isWorkerDev = (host === "localhost" || host === "127.0.0.1") && port === "8787";
+
     try {
       const params = new URLSearchParams(window.location.search || "");
       const q = String(params.get("backend") || "").trim();
-      if (q) {
+      const persist = String(params.get("persistBackend") || "").trim() === "1";
+
+      // Special: ?backend=reset clears any stored override.
+      if (q && q.toLowerCase() === "reset") {
+        try {
+          localStorage.removeItem("adaBackendBaseUrl");
+        } catch {
+          // ignore
+        }
+      } else if (q) {
         const v = q.toLowerCase() === "local" ? LOCAL_WORKER_BACKEND_BASE_URL : q;
-        localStorage.setItem("adaBackendBaseUrl", v);
+        if (persist) {
+          try {
+            localStorage.setItem("adaBackendBaseUrl", v);
+          } catch {
+            // ignore
+          }
+        }
+        return v;
       }
     } catch {
       // ignore
     }
 
+    // If we have a stored override, only honor it when:
+    // - We're running the site locally (dev convenience), or
+    // - It matches the configured production backend host.
     try {
       const stored = String(localStorage.getItem("adaBackendBaseUrl") || "").trim();
-      if (stored) return stored;
+      if (stored) {
+        if (isLocalSite) return stored;
+        try {
+          const storedHost = new URL(stored).hostname;
+          const prodHost = new URL(PROD_BACKEND_BASE_URL).hostname;
+          if (storedHost === prodHost) return stored;
+        } catch {
+          // If stored isn't a valid URL, ignore it.
+        }
+      }
     } catch {
       // ignore
     }
-
-    const host = String(window.location.hostname || "").toLowerCase();
-    const port = String(window.location.port || "");
-    const isWorkerDev = (host === "localhost" || host === "127.0.0.1") && port === "8787";
 
     // If you're literally viewing the site from the Worker dev server, use same-origin.
     if (isWorkerDev) return "";

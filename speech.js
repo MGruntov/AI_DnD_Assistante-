@@ -930,9 +930,9 @@ import { searchDecisionsByPrompt } from "./js/decision-matcher.js";
   
   // BACKEND OPTIONS - Choose one:
   // Option 1: ev713's personal backend (fresh database, your own resources)
-  const PROD_BACKEND_BASE_URL = "https://backend.ev713-backend.workers.dev";
+  //const PROD_BACKEND_BASE_URL = "https://backend.ev713-backend.workers.dev";
   // Option 2: Original shared backend (has all user data, requires owner's account to deploy)
-  // const PROD_BACKEND_BASE_URL = "https://backend.ada-assistante.workers.dev";
+  const PROD_BACKEND_BASE_URL = "https://backend.ada-assistante.workers.dev";
   
   const LOCAL_WORKER_BACKEND_BASE_URL = "http://localhost:8787";
 
@@ -3355,8 +3355,28 @@ import { searchDecisionsByPrompt } from "./js/decision-matcher.js";
       });
 
       if (!result.ok) {
+        const data = result && result.data ? result.data : {};
+        // The UI shows a friendly message, but keep the technical detail available in the console
+        // so we can tell whether the upstream Gemini/Gemma request was hit (and what it returned).
+        const detail = data && (data.detail || data.debugDetail || data.upstreamDetail);
+        const aiModel = data && data.aiModel ? data.aiModel : null;
+        if (detail) {
+          console.warn("[ADA] AI call failed", {
+            status: result.status,
+            error: data.error || data.message || null,
+            detail,
+            aiModel,
+          });
+        } else {
+          console.warn("[ADA] AI call failed", {
+            status: result.status,
+            error: data && (data.error || data.message) ? (data.error || data.message) : null,
+            aiModel,
+          });
+        }
+
         const msg =
-          (result.data && (result.data.error || result.data.message)) ||
+          (data && (data.error || data.message)) ||
           "ADA could not respond right now.";
         if (aiDmMechanicsEl) aiDmMechanicsEl.textContent = msg;
         return;

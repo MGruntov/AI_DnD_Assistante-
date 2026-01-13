@@ -1559,6 +1559,26 @@ h1, h2, h3, h4,
   background: rgba(176, 137, 47, 0.12);
 }
 
+.campaign-card__badges {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.campaign-card__badge--active {
+  border-color: rgba(47, 125, 89, 0.45);
+  color: rgba(18, 92, 56, 0.95);
+  background: rgba(47, 125, 89, 0.12);
+}
+
+.campaign-card__badge--completed {
+  border-color: rgba(120, 120, 120, 0.45);
+  color: rgba(70, 70, 70, 0.95);
+  background: rgba(120, 120, 120, 0.12);
+}
+
 .campaign-card__meta {
   font-size: 0.8rem;
   color: var(--ink-muted);

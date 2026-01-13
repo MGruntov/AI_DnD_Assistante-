@@ -56,6 +56,9 @@ import { searchDecisionsByPrompt } from "./js/decision-matcher.js";
   const campaignFilterAllBtn = document.getElementById("campaignFilterAll");
   const campaignFilterDmBtn = document.getElementById("campaignFilterDm");
   const campaignFilterPlayerBtn = document.getElementById("campaignFilterPlayer");
+  const campaignStatusAllBtn = document.getElementById("campaignStatusAll");
+  const campaignStatusActiveBtn = document.getElementById("campaignStatusActive");
+  const campaignStatusCompletedBtn = document.getElementById("campaignStatusCompleted");
   const campaignsListView = document.getElementById("campaignsListView");
   const campaignDetailView = document.getElementById("campaignDetailView");
   const campaignBackBtn = document.getElementById("campaignBackBtn");
@@ -557,6 +560,8 @@ import { searchDecisionsByPrompt } from "./js/decision-matcher.js";
   const ACTIVE_CAMPAIGN_STORAGE_KEY = "adaActiveCampaignId";
   const ACTIVE_CHARACTER_STORAGE_KEY = "adaActiveCharacterId";
   const POST_SELECT_TARGET_STORAGE_KEY = "adaPostSelectTarget";
+  const CAMPAIGNS_ROLE_FILTER_STORAGE_KEY = "adaCampaignsRoleFilter";
+  const CAMPAIGNS_STATUS_FILTER_STORAGE_KEY = "adaCampaignsStatusFilter";
 
   function getPortraitImageProvider() {
     try {
@@ -914,6 +919,104 @@ import { searchDecisionsByPrompt } from "./js/decision-matcher.js";
   let activeCampaignEncounters = [];
   let activeCampaignCanUseGmTools = false;
   let cachedPlayerSpeakerLabel = "You";
+
+  // My Campaigns filters
+  let selectedCampaignsRoleFilter = "all"; // all | dm | player
+  let selectedCampaignsStatusFilter = "all"; // all | active | completed
+  let cachedCampaignsForList = [];
+
+  function normalizeCampaignsRoleFilter(raw) {
+    const v = String(raw || "").trim().toLowerCase();
+    return v === "dm" || v === "player" ? v : "all";
+  }
+
+  function normalizeCampaignsStatusFilter(raw) {
+    const v = String(raw || "").trim().toLowerCase();
+    return v === "active" || v === "completed" ? v : "all";
+  }
+
+  function isCampaignCompleted(c) {
+    if (!c) return false;
+    return c.status === "completed" || Boolean(c.completedAt);
+  }
+
+  function restoreCampaignFiltersFromStorage() {
+    try {
+      selectedCampaignsRoleFilter = normalizeCampaignsRoleFilter(
+        localStorage.getItem(CAMPAIGNS_ROLE_FILTER_STORAGE_KEY)
+      );
+      selectedCampaignsStatusFilter = normalizeCampaignsStatusFilter(
+        localStorage.getItem(CAMPAIGNS_STATUS_FILTER_STORAGE_KEY)
+      );
+    } catch {
+      selectedCampaignsRoleFilter = "all";
+      selectedCampaignsStatusFilter = "all";
+    }
+  }
+
+  function persistCampaignFiltersToStorage() {
+    try {
+      localStorage.setItem(
+        CAMPAIGNS_ROLE_FILTER_STORAGE_KEY,
+        String(selectedCampaignsRoleFilter)
+      );
+      localStorage.setItem(
+        CAMPAIGNS_STATUS_FILTER_STORAGE_KEY,
+        String(selectedCampaignsStatusFilter)
+      );
+    } catch {
+      // ignore
+    }
+  }
+
+  function setCampaignFilterButtonState(btn, isSelected) {
+    if (!btn) return;
+    btn.classList.remove("btn--primary");
+    btn.classList.remove("btn--secondary");
+    btn.classList.add(isSelected ? "btn--primary" : "btn--secondary");
+  }
+
+  function renderCampaignFilterButtons() {
+    setCampaignFilterButtonState(
+      campaignFilterAllBtn,
+      selectedCampaignsRoleFilter === "all"
+    );
+    setCampaignFilterButtonState(
+      campaignFilterDmBtn,
+      selectedCampaignsRoleFilter === "dm"
+    );
+    setCampaignFilterButtonState(
+      campaignFilterPlayerBtn,
+      selectedCampaignsRoleFilter === "player"
+    );
+
+    setCampaignFilterButtonState(
+      campaignStatusAllBtn,
+      selectedCampaignsStatusFilter === "all"
+    );
+    setCampaignFilterButtonState(
+      campaignStatusActiveBtn,
+      selectedCampaignsStatusFilter === "active"
+    );
+    setCampaignFilterButtonState(
+      campaignStatusCompletedBtn,
+      selectedCampaignsStatusFilter === "completed"
+    );
+  }
+
+  function applyCampaignFiltersAndRender() {
+    const currentUser = getCurrentUser();
+    if (!currentUser) return;
+
+    const statusFilter =
+      CURRENT_PAGE === "campaigns" ? selectedCampaignsStatusFilter : "all";
+    renderCampaigns(
+      cachedCampaignsForList,
+      selectedCampaignsRoleFilter,
+      currentUser,
+      statusFilter
+    );
+  }
 
   let currentWorkspaceView = "forge"; // "forge" | "hud"
   let awaitingHudCharacterSelect = false;
@@ -4225,13 +4328,15 @@ import { searchDecisionsByPrompt } from "./js/decision-matcher.js";
 
         const canSeeComplete = isParticipant && (isAi || isDm);
         const canClickComplete = isAi
-          ? reachedFinishLine
+          ? (!alreadyCompleted && reachedFinishLine)
           : (!alreadyCompleted && isDm && isParticipant);
 
         campaignCompleteBtn.hidden = !canSeeComplete;
         campaignCompleteBtn.disabled = !canClickComplete;
-        // Keep the label stable, but hint the reason when disabled for AI.
-        if (isAi) {
+        // Keep the label stable, but prevent repeat clicks once completed.
+        if (alreadyCompleted) {
+          campaignCompleteBtn.textContent = "Campaign completed";
+        } else if (isAi) {
           campaignCompleteBtn.textContent = canClickComplete ? "Complete campaign" : "Complete campaign (finish journey to unlock)";
         } else {
           campaignCompleteBtn.textContent = "Complete campaign";
@@ -4308,7 +4413,7 @@ import { searchDecisionsByPrompt } from "./js/decision-matcher.js";
     loadCampaignDetail(campaign.id);
   }
 
-  function renderCampaigns(campaigns, filter, currentUser) {
+  function renderCampaigns(campaigns, filter, currentUser, statusFilter) {
     if (!campaignsList) return;
 
     const statusEl = getCampaignsStatusEl();
@@ -4321,25 +4426,41 @@ import { searchDecisionsByPrompt } from "./js/decision-matcher.js";
       return;
     }
 
+    const roleFilter = normalizeCampaignsRoleFilter(filter);
+    const statusF = normalizeCampaignsStatusFilter(statusFilter);
+
     const filtered = campaigns.filter((c) => {
       const isDm = c.dm === currentUser;
       const isParticipant =
         isDm ||
         (Array.isArray(c.participants) && c.participants.includes(currentUser));
       if (!isParticipant) return false;
-      if (filter === "dm") return isDm;
-      if (filter === "player") return !isDm;
+
+      if (roleFilter === "dm" && !isDm) return false;
+      if (roleFilter === "player" && isDm) return false;
+
+      if (statusF === "completed" && !isCampaignCompleted(c)) return false;
+      if (statusF === "active" && isCampaignCompleted(c)) return false;
+
       return true;
     });
 
     if (filtered.length === 0) {
       if (statusEl) {
-        if (filter === "dm") {
-          statusEl.textContent =
-            "You're not a DM in any campaigns yet.";
-        } else if (filter === "player") {
-          statusEl.textContent =
-            "You're not listed as a player in any campaigns yet.";
+        const roleHint =
+          roleFilter === "dm"
+            ? " as a DM"
+            : roleFilter === "player"
+              ? " as a player"
+              : "";
+        if (statusF === "completed") {
+          statusEl.textContent = `No completed campaigns${roleHint} yet.`;
+        } else if (statusF === "active") {
+          statusEl.textContent = `No active campaigns${roleHint} yet.`;
+        } else if (roleFilter === "dm") {
+          statusEl.textContent = "You're not a DM in any campaigns yet.";
+        } else if (roleFilter === "player") {
+          statusEl.textContent = "You're not listed as a player in any campaigns yet.";
         } else {
           statusEl.textContent = "No campaigns yet.";
         }
@@ -4360,19 +4481,31 @@ import { searchDecisionsByPrompt } from "./js/decision-matcher.js";
       title.className = "campaign-card__title";
       title.textContent = c.name || "Untitled campaign";
 
-      const badge = document.createElement("span");
-      badge.className = "campaign-card__badge";
-      badge.textContent =
-        c.dm === currentUser ? "Dungeon Master" : "Player";
+      const badges = document.createElement("div");
+      badges.className = "campaign-card__badges";
+
+      const roleBadge = document.createElement("span");
+      roleBadge.className = "campaign-card__badge";
+      roleBadge.textContent = c.dm === currentUser ? "Dungeon Master" : "Player";
+
+      const isCompleted = c && (c.status === "completed" || c.completedAt);
+      const statusBadge = document.createElement("span");
+      statusBadge.className = `campaign-card__badge ${isCompleted ? "campaign-card__badge--completed" : "campaign-card__badge--active"}`;
+      statusBadge.textContent = isCompleted ? "Completed" : "Active";
+
+      badges.appendChild(roleBadge);
+      badges.appendChild(statusBadge);
 
       header.appendChild(title);
-      header.appendChild(badge);
+      header.appendChild(badges);
 
       const meta = document.createElement("p");
       meta.className = "campaign-card__meta";
-      meta.textContent = `Created ${new Date(
-        c.createdAt || Date.now()
-      ).toLocaleString()}`;
+		const createdLabel = new Date(c.createdAt || Date.now()).toLocaleString();
+		const completedLabel = c && c.completedAt ? new Date(c.completedAt).toLocaleString() : "";
+		meta.textContent = isCompleted && completedLabel
+			? `Created ${createdLabel} · Completed ${completedLabel}`
+			: `Created ${createdLabel}`;
 
       const participants = document.createElement("p");
       participants.className = "campaign-card__participants";
@@ -4397,6 +4530,10 @@ import { searchDecisionsByPrompt } from "./js/decision-matcher.js";
   }
 
   async function loadCampaigns(filter) {
+    selectedCampaignsRoleFilter = normalizeCampaignsRoleFilter(filter);
+    persistCampaignFiltersToStorage();
+    renderCampaignFilterButtons();
+
     const currentUser = getCurrentUser();
     const statusEl = getCampaignsStatusEl();
     if (!currentUser) {
@@ -4422,7 +4559,14 @@ import { searchDecisionsByPrompt } from "./js/decision-matcher.js";
       result.data && Array.isArray(result.data.campaigns)
         ? result.data.campaigns
         : [];
-    renderCampaigns(campaigns, filter, currentUser);
+
+    cachedCampaignsForList = campaigns;
+    // Also refresh the vault's campaign cache as a nice side-effect.
+    cachedUserCampaigns = campaigns;
+
+    const statusFilter =
+      CURRENT_PAGE === "campaigns" ? selectedCampaignsStatusFilter : "all";
+    renderCampaigns(campaigns, selectedCampaignsRoleFilter, currentUser, statusFilter);
 
     // Also populate the publish campaign dropdown if on studio page
     if (publishCampaignSelect && CURRENT_PAGE === "studio") {
@@ -4786,6 +4930,9 @@ import { searchDecisionsByPrompt } from "./js/decision-matcher.js";
       updateNav(initialUser);
       if (profileUsernameEl) profileUsernameEl.textContent = initialUser;
 
+      restoreCampaignFiltersFromStorage();
+      renderCampaignFilterButtons();
+
       // If already logged in and they hit the auth page, send them to the Portal.
       if (CURRENT_PAGE === "auth") {
         navigateTo("portal");
@@ -4853,7 +5000,7 @@ import { searchDecisionsByPrompt } from "./js/decision-matcher.js";
           createCanonEventRow();
         }
       } else if (CURRENT_PAGE === "campaigns") {
-        loadCampaigns("all");
+        loadCampaigns(selectedCampaignsRoleFilter);
         if (activeCampaignId) {
           // Load the last active campaign (if any) when landing on the campaigns page.
           loadCampaignDetail(activeCampaignId);
@@ -5365,13 +5512,27 @@ import { searchDecisionsByPrompt } from "./js/decision-matcher.js";
       const currentUser = getCurrentUser();
       if (!currentUser) return;
 
+    if (activeCampaign && activeCampaign.status === "completed") {
+      if (campaignActionStatusEl) campaignActionStatusEl.textContent = "Campaign is already completed.";
+      campaignCompleteBtn.disabled = true;
+      campaignCompleteBtn.textContent = "Campaign completed";
+      return;
+    }
+
+    // Prevent double-submits.
+    campaignCompleteBtn.disabled = true;
+
       const isAi = isAIDmCampaign(activeCampaign);
       const confirmed = window.confirm(
         isAi
           ? "Finalize this AI saga as completed? This will unlock your character so you can start a new saga."
           : "Mark this campaign as completed? This will award XP to all linked characters.",
       );
-      if (!confirmed) return;
+    if (!confirmed) {
+      // Restore clickability if the user cancels.
+      campaignCompleteBtn.disabled = false;
+      return;
+    }
 
       if (campaignActionStatusEl)
         campaignActionStatusEl.textContent = isAi
@@ -5388,6 +5549,8 @@ import { searchDecisionsByPrompt } from "./js/decision-matcher.js";
             (result.data && (result.data.error || result.data.message)) ||
             "Could not complete campaign.";
           if (campaignActionStatusEl) campaignActionStatusEl.textContent = msg;
+		   // Allow retry.
+		   campaignCompleteBtn.disabled = false;
           return;
         }
 
@@ -5662,125 +5825,127 @@ import { searchDecisionsByPrompt } from "./js/decision-matcher.js";
     });
   }
 
-  if (aiDmRollBtn) {
+  // NOTE: This function must live at module scope because `speech.js` is imported as an ES module.
+  // Inline "Quick Roll" buttons in the dialogue thread call it, and block-scoped function
+  // declarations are not visible outside their enclosing block in modules.
+  function resolveAiDmPendingCheck() {
+    if (!activeCampaign || !isAIDmCampaign(activeCampaign)) return;
 
-    function resolveAiDmPendingCheck() {
-      if (!activeCampaign || !isAIDmCampaign(activeCampaign)) return;
+    const username = getCurrentUser();
+    if (!username) {
+      if (aiDmMechanicsEl) aiDmMechanicsEl.textContent = "Log in to roll.";
+      return;
+    }
 
-      const username = getCurrentUser();
-      if (!username) {
-        if (aiDmMechanicsEl) aiDmMechanicsEl.textContent = "Log in to roll.";
+    // Only resolve a roll if ADA actually requested a check.
+    const checkDescription = lastAiMechanics && lastAiMechanics.checkDescription
+      ? String(lastAiMechanics.checkDescription).trim()
+      : "";
+    const dc = lastAiMechanics ? lastAiMechanics.dc : null;
+    if (!checkDescription || checkDescription.toLowerCase() === "none" || !dc) {
+      if (aiDmMechanicsEl)
+        aiDmMechanicsEl.textContent = "No check to roll right now. Ask ADA what you do next.";
+      return;
+    }
+
+    // Roll locally for transparency; send both dice so backend can pick based on adv/disadv.
+    const r1 = Math.floor(Math.random() * 20) + 1;
+    const r2 = Math.floor(Math.random() * 20) + 1;
+
+    if (aiDmMechanicsEl) aiDmMechanicsEl.textContent = "Resolving roll...";
+
+    apiPost("/api/ai-dm/resolve-check", {
+      username,
+      campaignId: activeCampaignId,
+      roll1: r1,
+      roll2: r2,
+    }).then((result) => {
+      if (!result.ok) {
+        const msg = (result.data && result.data.error) || "Could not resolve check.";
+        if (aiDmMechanicsEl) aiDmMechanicsEl.textContent = msg;
         return;
       }
 
-      // Only resolve a roll if ADA actually requested a check.
-      const checkDescription = lastAiMechanics && lastAiMechanics.checkDescription
-        ? String(lastAiMechanics.checkDescription).trim()
-        : "";
-      const dc = lastAiMechanics ? lastAiMechanics.dc : null;
-      if (!checkDescription || checkDescription.toLowerCase() === "none" || !dc) {
-        if (aiDmMechanicsEl)
-          aiDmMechanicsEl.textContent = "No check to roll right now. Ask ADA what you do next.";
-        return;
-      }
-
-      // Roll locally for transparency; send both dice so backend can pick based on adv/disadv.
-      const r1 = Math.floor(Math.random() * 20) + 1;
-      const r2 = Math.floor(Math.random() * 20) + 1;
-
-      if (aiDmMechanicsEl) aiDmMechanicsEl.textContent = "Resolving roll...";
-
-      apiPost("/api/ai-dm/resolve-check", {
-        username,
-        campaignId: activeCampaignId,
-        roll1: r1,
-        roll2: r2,
-      }).then((result) => {
-        if (!result.ok) {
-          const msg = (result.data && result.data.error) || "Could not resolve check.";
-          if (aiDmMechanicsEl) aiDmMechanicsEl.textContent = msg;
-          return;
-        }
-
-        const payload = result.data || {};
-        const resolved = payload.result || {};
-        const narrative = payload.narrative || "";
-        const mechanics = payload.mechanics || null;
-        const debug = payload.debug || null;
-        const aiError = payload.aiError ? String(payload.aiError) : "";
+      const payload = result.data || {};
+      const resolved = payload.result || {};
+      const narrative = payload.narrative || "";
+      const mechanics = payload.mechanics || null;
+      const debug = payload.debug || null;
+      const aiError = payload.aiError ? String(payload.aiError) : "";
 
 		// Quota hint: show exact remaining messages from backend quota.
 		setGeminiQuotaHint(formatAiQuotaHint(payload.quota || null, payload.quotaHint || ""));
 
-        // If the backend returns updated campaign metadata (xp/checkpoints/status), merge it into the active campaign.
-        const campaignPatch = payload.campaignPatch && typeof payload.campaignPatch === "object" ? payload.campaignPatch : null;
-        if (campaignPatch && activeCampaign && typeof activeCampaign === "object") {
-          Object.assign(activeCampaign, campaignPatch);
-          renderAiDmCampaignProgress({ campaign: activeCampaign, ai: payload.ai || null });
-        }
+      // If the backend returns updated campaign metadata (xp/checkpoints/status), merge it into the active campaign.
+      const campaignPatch = payload.campaignPatch && typeof payload.campaignPatch === "object" ? payload.campaignPatch : null;
+      if (campaignPatch && activeCampaign && typeof activeCampaign === "object") {
+        Object.assign(activeCampaign, campaignPatch);
+        renderAiDmCampaignProgress({ campaign: activeCampaign, ai: payload.ai || null });
+      }
 
-        const chosen = resolved.rolls && resolved.rolls.chosen ? resolved.rolls.chosen : r1;
-        const total = typeof resolved.total === "number" ? resolved.total : null;
-        const mode = resolved.rolls && resolved.rolls.mode ? resolved.rolls.mode : "none";
-        const outcome = resolved.success ? "SUCCESS" : "FAILURE";
-        const rollModeText = mode !== "none" ? ` (${mode})` : "";
-        const rollLine =
-          total != null
-            ? `I attempt ${checkDescription} — roll${rollModeText}: ${chosen} (total ${total} vs DC ${dc}) → ${outcome}.`
-            : `I attempt ${checkDescription} — roll${rollModeText}: ${chosen} → ${outcome}.`;
+      const chosen = resolved.rolls && resolved.rolls.chosen ? resolved.rolls.chosen : r1;
+      const total = typeof resolved.total === "number" ? resolved.total : null;
+      const mode = resolved.rolls && resolved.rolls.mode ? resolved.rolls.mode : "none";
+      const outcome = resolved.success ? "SUCCESS" : "FAILURE";
+      const rollModeText = mode !== "none" ? ` (${mode})` : "";
+      const rollLine =
+        total != null
+          ? `I attempt ${checkDescription} — roll${rollModeText}: ${chosen} (total ${total} vs DC ${dc}) → ${outcome}.`
+          : `I attempt ${checkDescription} — roll${rollModeText}: ${chosen} → ${outcome}.`;
 
-        appendAiDmLog("player", rollLine);
+      appendAiDmLog("player", rollLine);
 
-        // Points of interest: persisted with ADA's response so they can be rendered as buttons in the chat.
-        const poi = mechanics && Array.isArray(mechanics.pointsOfInterest) ? mechanics.pointsOfInterest : null;
-        renderAiDmPointsOfInterest(poi, { isStuck: payload.isStuck === true });
+      // Points of interest: persisted with ADA's response so they can be rendered as buttons in the chat.
+      const poi = mechanics && Array.isArray(mechanics.pointsOfInterest) ? mechanics.pointsOfInterest : null;
+      renderAiDmPointsOfInterest(poi, { isStuck: payload.isStuck === true });
 
-        if (narrative) appendAiDmLog("dm", narrative, { pointsOfInterest: poi });
+      if (narrative) appendAiDmLog("dm", narrative, { pointsOfInterest: poi });
 
-        lastAiMechanics = mechanics;
+      lastAiMechanics = mechanics;
 
-        if (aiError && aiDmMechanicsEl) {
-          aiDmMechanicsEl.textContent = aiError;
-        } else if (mechanics && aiDmMechanicsEl) {
-          const mDc = mechanics.dc;
-          const mAbility = mechanics.ability;
-          const mSkill = mechanics.skill;
-          const mAdv = mechanics.advantage;
-          const mDesc = mechanics.checkDescription;
-          const mProgress = mechanics.progress;
-          const pieces = [];
-          if (mDesc && String(mDesc).trim()) pieces.push(String(mDesc).trim());
-          if (mDc != null) pieces.push(`DC ${mDc}`);
-          if (mAbility) pieces.push(String(mAbility).toUpperCase());
-          if (mSkill) pieces.push(String(mSkill));
-          if (mAdv === "advantage") pieces.push("(advantage)");
-          if (mAdv === "disadvantage") pieces.push("(disadvantage)");
-          if (mProgress && mProgress !== "stay") pieces.push(`(progress: ${mProgress})`);
-          aiDmMechanicsEl.textContent =
-            pieces.length ? `Check requested: ${pieces.join(" ")}` : "";
-        } else if (aiDmMechanicsEl) {
-          aiDmMechanicsEl.textContent = "";
-        }
+      if (aiError && aiDmMechanicsEl) {
+        aiDmMechanicsEl.textContent = aiError;
+      } else if (mechanics && aiDmMechanicsEl) {
+        const mDc = mechanics.dc;
+        const mAbility = mechanics.ability;
+        const mSkill = mechanics.skill;
+        const mAdv = mechanics.advantage;
+        const mDesc = mechanics.checkDescription;
+        const mProgress = mechanics.progress;
+        const pieces = [];
+        if (mDesc && String(mDesc).trim()) pieces.push(String(mDesc).trim());
+        if (mDc != null) pieces.push(`DC ${mDc}`);
+        if (mAbility) pieces.push(String(mAbility).toUpperCase());
+        if (mSkill) pieces.push(String(mSkill));
+        if (mAdv === "advantage") pieces.push("(advantage)");
+        if (mAdv === "disadvantage") pieces.push("(disadvantage)");
+        if (mProgress && mProgress !== "stay") pieces.push(`(progress: ${mProgress})`);
+        aiDmMechanicsEl.textContent =
+          pieces.length ? `Check requested: ${pieces.join(" ")}` : "";
+      } else if (aiDmMechanicsEl) {
+        aiDmMechanicsEl.textContent = "";
+      }
 
-        const modelName =
-          payload && payload.aiModel && payload.aiModel.model
-            ? String(payload.aiModel.model)
-            : debug && debug.gemini && debug.gemini.model
-            ? String(debug.gemini.model)
-            : "";
-        if (modelName && aiDmNoticeEl) {
-          aiDmNoticeEl.hidden = false;
-          aiDmNoticeEl.textContent =
-            `ADA is acting as the Dungeon Master for this campaign. ` +
-            `Type what your character does next and send it to continue the story. ` +
-            `AI model: ${modelName}`;
-        }
-      }).catch((e) => {
-        console.error("[ADA] resolve-check failed", e);
-        if (aiDmMechanicsEl) aiDmMechanicsEl.textContent = "Error resolving check.";
-      });
-    }
+      const modelName =
+        payload && payload.aiModel && payload.aiModel.model
+          ? String(payload.aiModel.model)
+          : debug && debug.gemini && debug.gemini.model
+          ? String(debug.gemini.model)
+          : "";
+      if (modelName && aiDmNoticeEl) {
+        aiDmNoticeEl.hidden = false;
+        aiDmNoticeEl.textContent =
+          `ADA is acting as the Dungeon Master for this campaign. ` +
+          `Type what your character does next and send it to continue the story. ` +
+          `AI model: ${modelName}`;
+      }
+    }).catch((e) => {
+      console.error("[ADA] resolve-check failed", e);
+      if (aiDmMechanicsEl) aiDmMechanicsEl.textContent = "Error resolving check.";
+    });
+  }
 
+  if (aiDmRollBtn) {
     aiDmRollBtn.addEventListener("click", () => resolveAiDmPendingCheck());
   }
 
@@ -6023,6 +6188,31 @@ import { searchDecisionsByPrompt } from "./js/decision-matcher.js";
   if (campaignFilterPlayerBtn) {
     campaignFilterPlayerBtn.addEventListener("click", () => {
       loadCampaigns("player");
+    });
+  }
+
+  if (campaignStatusAllBtn) {
+    campaignStatusAllBtn.addEventListener("click", () => {
+      selectedCampaignsStatusFilter = "all";
+      persistCampaignFiltersToStorage();
+      renderCampaignFilterButtons();
+      applyCampaignFiltersAndRender();
+    });
+  }
+  if (campaignStatusActiveBtn) {
+    campaignStatusActiveBtn.addEventListener("click", () => {
+      selectedCampaignsStatusFilter = "active";
+      persistCampaignFiltersToStorage();
+      renderCampaignFilterButtons();
+      applyCampaignFiltersAndRender();
+    });
+  }
+  if (campaignStatusCompletedBtn) {
+    campaignStatusCompletedBtn.addEventListener("click", () => {
+      selectedCampaignsStatusFilter = "completed";
+      persistCampaignFiltersToStorage();
+      renderCampaignFilterButtons();
+      applyCampaignFiltersAndRender();
     });
   }
 

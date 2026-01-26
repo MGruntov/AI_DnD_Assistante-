@@ -4865,20 +4865,49 @@ async function handleStartAICampaign(request: Request, env: Env, origin: string 
 		return errorResponse('Unknown adventureId', 404, origin);
 	}
 
-	const storedCharacter = await env.ADA_DATA.get(`character:${characterId}`);
-	if (!storedCharacter) {
-		return errorResponse('Character not found', 404, origin);
-	}
-
-	let character: Character;
+	// Character storage may be in D1 (modern) or legacy KV. Prefer D1 when available.
+	let character: Character | null = null;
 	try {
-		character = JSON.parse(storedCharacter) as Character;
-	} catch {
-		return errorResponse('Corrupted character record', 500, origin);
+		const db = (env as any).ADA_DB as D1Database | undefined | null;
+		if (db) {
+			try {
+				const charRes = await db.prepare('SELECT id, owner_user_id, data_json FROM characters WHERE id = ?1 LIMIT 1').bind(characterId).all();
+				const row = charRes?.results?.[0] ?? null;
+				if (row) {
+					try {
+						character = JSON.parse(row.data_json) as Character;
+					} catch {
+						return errorResponse('Corrupted character record', 500, origin);
+					}
+					// Resolve username -> owner id to verify ownership
+					const userRes = await db.prepare('SELECT id, username FROM users WHERE username = ?1 LIMIT 1').bind(username).all();
+					const ownerUserId = userRes?.results?.[0]?.id ?? null;
+					if (!ownerUserId || String(row.owner_user_id) !== String(ownerUserId)) {
+						return errorResponse('You do not own this character', 403, origin);
+					}
+				}
+			} catch (e) {
+				// If D1 access fails, fall back to KV below
+				console.warn('[handleStartAICampaign] D1 lookup failed, falling back to KV', e);
+			}
+		}
+	} catch (e) {
+		// ignore and fall back to KV
 	}
 
-	if (character.owner !== username) {
-		return errorResponse('You do not own this character', 403, origin);
+	if (!character) {
+		const storedCharacter = await env.ADA_DATA.get(`character:${characterId}`);
+		if (!storedCharacter) {
+			return errorResponse('Character not found', 404, origin);
+		}
+		try {
+			character = JSON.parse(storedCharacter) as Character;
+		} catch {
+			return errorResponse('Corrupted character record', 500, origin);
+		}
+		if (character.owner !== username) {
+			return errorResponse('You do not own this character', 403, origin);
+		}
 	}
 
 	// Rule: a character can be linked to no more than 1 campaign at a time.

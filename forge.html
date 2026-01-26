@@ -268,6 +268,7 @@
     let needsSave = false;
     let savedCharacterId = null;
     let autosaveTimer = null;
+    let isSheetValidated = false;
 
     function initializeElements() {
       startBtn = document.getElementById('startInteractiveForgeBtn');
@@ -550,24 +551,36 @@
 
       // Check if validate action is available (all counters zero and base choices made)
       const availableChoices = creator.getAvailableChoices();
-      const validateAvailable = availableChoices.some(c => c.id === 'validate_character_sheet');
+      const validateAction = availableChoices.find(c => c.id === 'validate_character_sheet');
+      const nonValidateChoices = availableChoices.filter(c => c.id !== 'validate_character_sheet');
+      
+      // Auto-validate if validate is the only choice available
+      if (validateAction && nonValidateChoices.length === 0 && !isSheetValidated) {
+        console.log('[Auto-validation] Validate is the only choice, applying automatically');
+        makeChoice(validateAction);
+        return; // updateChoices will be called again after makeChoice
+      }
+      
+      // Update validation flag based on sheet state and available choices
+      if (state && state.rawSheet && state.rawSheet.is_valid_sheet === true && nonValidateChoices.length === 0) {
+        isSheetValidated = true;
+      } else if (nonValidateChoices.length > 0) {
+        // Reset validation flag if there are other choices to make
+        isSheetValidated = false;
+      }
       
       // Check if character has reached target level
       const currentLevel = creator.getCurrentLevel();
       const targetLevel = creator.targetLevel || 5;
       const hasReachedTargetLevel = currentLevel >= targetLevel;
       
-      // Update save character button state
+      // Update save character button state based on validation flag
       if (saveCharacterBtn) {
         if (!hasReachedTargetLevel) {
           saveCharacterBtn.disabled = true;
           saveCharacterBtn.textContent = `Reach level ${targetLevel} (currently ${currentLevel})`;
           saveCharacterBtn.className = 'btn btn--primary';
-        } else if (state && state.rawSheet && state.rawSheet.is_valid_sheet === true) {
-          saveCharacterBtn.disabled = false;
-          saveCharacterBtn.textContent = 'Save Character';
-          saveCharacterBtn.className = 'btn btn--primary';
-        } else if (validateAvailable) {
+        } else if (isSheetValidated) {
           saveCharacterBtn.disabled = false;
           saveCharacterBtn.textContent = 'Save Character';
           saveCharacterBtn.className = 'btn btn--primary';

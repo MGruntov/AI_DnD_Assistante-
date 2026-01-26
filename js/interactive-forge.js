@@ -166,15 +166,6 @@ async function startInteractiveForge() {
         creator.state.name = capturedName;
       }
     }
-    if (manualNameInput && manualNameInput.value && manualNameInput.value.trim()) {
-      const nameValue = manualNameInput.value.trim();
-      console.log('[Forge Debug] Setting creator name to:', nameValue);
-      if (typeof creator.setName === 'function') {
-        creator.setName(nameValue);
-      } else if (creator.state) {
-        creator.state.name = nameValue;
-      }
-    }
 
     // Read target level from manual forge input
     const levelInput = document.getElementById('manualForgeCharacterLevel');

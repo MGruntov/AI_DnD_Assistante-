@@ -83,9 +83,16 @@ export function initializeInteractiveForge() {
         console.log('[Save Character] Button is disabled, returning');
         return;
       }
-      
+
+      // Ensure creator.state.name is set from captured name before saving
+      if (window.__manualForgeCharacterName && creator && creator.state) {
+        creator.state.name = window.__manualForgeCharacterName;
+        console.log('[Forge Debug] Set creator.state.name from window.__manualForgeCharacterName:', window.__manualForgeCharacterName);
+      }
+      console.log('[Forge Debug] Before save: window.__manualForgeCharacterName =', window.__manualForgeCharacterName, ', creator.state.name =', creator && creator.state && creator.state.name);
+
       console.log('[Save Character] Starting save process');
-      
+
       // Auto-validate if needed
       const availableChoices = creator ? creator.getAvailableChoices() : [];
       const validateAction = availableChoices.find(c => c.id === 'validate_character_sheet');
@@ -95,7 +102,7 @@ export function initializeInteractiveForge() {
         // Wait a bit for validation to complete
         await new Promise(resolve => setTimeout(resolve, 200));
       }
-      
+
       // Then finish character creation
       console.log('[Save Character] Calling finishCharacterCreation');
       await finishCharacterCreation();

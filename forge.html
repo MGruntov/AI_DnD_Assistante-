@@ -140,7 +140,7 @@
           <!-- Mode Selection -->
           <div id="forgeModeSelection" class="forge__mode-selection">
             <div class="forge__mode-buttons" style="display:flex;flex-direction:column;gap:15px;">
-              <button id="autoForgeBtn" class="btn btn--primary forge__mode-btn" style="padding:20px;text-align:left;font-size:16px;cursor:pointer;">
+              <button id="autoForgeBtn" class="btn btn--primary forge__mode-btn" style="display:none;padding:20px;text-align:left;font-size:16px;cursor:pointer;">
                 <div><strong>Auto-Generate</strong></div>
                 <div style="font-size:14px;font-weight:normal;margin-top:5px;color:inherit;">Uses your narrative to create a character aligned with your story</div>
               </button>
@@ -449,6 +449,53 @@
       // Get available choices by category
       const choicesByCategory = creator.getChoicesByCategory();
       
+      // Find the option with highest similarity score across all categories
+      let bestChoice = null;
+      let bestSimilarity = 0;
+      Object.values(choicesByCategory).flat().forEach(choice => {
+        const similarity = choice.similarity || 0;
+        if (similarity > bestSimilarity) {
+          bestSimilarity = similarity;
+          bestChoice = choice;
+        }
+      });
+      
+      // Create/update AI recommendation box
+      const existingRecommendation = categoriesContainer.querySelector('.ai-recommendation');
+      if (existingRecommendation) {
+        existingRecommendation.remove();
+      }
+      
+      if (bestChoice && bestSimilarity > 0) {
+        const recommendationDiv = document.createElement('div');
+        recommendationDiv.className = 'ai-recommendation';
+        recommendationDiv.style.cssText = 'background: linear-gradient(135deg, #1a4d2e 0%, #2d5a3d 100%); padding: 1.25em; border-radius: 8px; margin: 1em 0; border: 2px solid #4ade80; box-shadow: 0 4px 12px rgba(74, 222, 128, 0.15);';
+        
+        const bestLabel = bestChoice.title || bestChoice.id;
+        recommendationDiv.innerHTML = `
+          <div style="display: flex; align-items: center; gap: 0.75em; margin-bottom: 0.5em;">
+            <span style="font-size: 1.5em;">✨</span>
+            <strong style="color: #4ade80; font-size: 1.1em; letter-spacing: 0.5px;">AI RECOMMENDED</strong>
+          </div>
+          <div style="color: #e8f5e9; font-size: 1em; margin-bottom: 0.75em;">
+            <strong style="font-size: 1.15em;">${bestLabel}</strong>
+          </div>
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <span style="color: #a7d8a7; font-size: 0.9em;">Match score: ${(bestSimilarity * 100).toFixed(1)}%</span>
+            <button 
+              class="btn btn--primary" 
+              style="background: #4ade80; color: #1a4d2e; border: none; font-weight: bold; padding: 0.5em 1.5em;"
+              onclick="(${function(choice) {
+                const makeChoiceFunc = window.__makeChoiceFromRecommendation || (() => {});
+                makeChoiceFunc(choice);
+              }.toString()})(${JSON.stringify(bestChoice).replace(/"/g, '&quot;')})"
+            >Choose This</button>
+          </div>
+        `;
+        
+        categoriesContainer.insertBefore(recommendationDiv, countersDiv.nextSibling);
+      }
+      
       console.log('Available choices by category:', choicesByCategory);
       console.log('Sample choice structure:', choicesByCategory.race[0] || choicesByCategory.other[0]);
 
@@ -467,13 +514,7 @@
             button.className = 'btn btn--choice';
             // Use title if available, otherwise fall back to id
             const label = choice.title || choice.id;
-            const similarity = choice.similarity || 0;
-            console.log('[forge button]', label, 'similarity:', similarity);
-            // Show similarity score in parentheses if > 0
-            const displayText = similarity > 0 
-              ? `${label} (${similarity.toFixed(3)})`
-              : label;
-            button.textContent = displayText;
+            button.textContent = label;
             button.onclick = () => makeChoice(choice);
             choiceContainers[category].appendChild(button);
           });
@@ -519,6 +560,7 @@
       if (!creator) return;
 
       const success = creator.applyChoice(decision);
+      window.__makeChoiceFromRecommendation = makeChoice;
       if (success) {
         forgeStatus.textContent = `Applied: ${decision.title || decision.id}`;
         forgeStatus.className = 'forge__status forge__status--success';

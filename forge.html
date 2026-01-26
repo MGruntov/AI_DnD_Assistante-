@@ -389,8 +389,8 @@
         if (transcriptText) {
           try {
             const { searchDecisionsByPrompt } = await import('./js/decision-matcher.js');
-            // Use the production backend URL directly
-            const backendUrl = 'https://backend.ev713-backend.workers.dev';
+            // Use the ada-assistante backend URL
+            const backendUrl = 'https://backend.ada-assistante.workers.dev';
             console.log('[forge] Using backend URL:', backendUrl);
             // Request all 433 decisions, not just top 15
             const response = await searchDecisionsByPrompt(backendUrl, transcriptText, 433);

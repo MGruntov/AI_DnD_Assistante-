@@ -20,15 +20,15 @@
 	"kv_namespaces": [
 		{
 			"binding": "ADA_DATA",
-			"id": "67c4f4854243498db6ca0309c924ebb2",
-			"preview_id": "881dc94fc8b54ce89413765545e81315"
+			"id": "27c1d12007be4bbf80a175eacdca6e0e",
+			"preview_id": "27c1d12007be4bbf80a175eacdca6e0e"
 		}
 	],
 	"d1_databases": [
 		{
 			"binding": "ADA_DB",
 			"database_name": "ada-db",
-			"database_id": "e48ed60f-5cf4-46c9-8f5e-be0b983174ee",
+			"database_id": "9e3ac2a0-fd50-465b-8e1f-5cdced476d98",
 			"preview_database_id": "a6459b57-9501-40f4-a750-4e6f0aea9c15"
 		}
 	],
@@ -43,15 +43,15 @@
 			"kv_namespaces": [
 				{
 					"binding": "ADA_DATA",
-					"id": "67c4f4854243498db6ca0309c924ebb2",
-					"preview_id": "881dc94fc8b54ce89413765545e81315"
+					"id": "27c1d12007be4bbf80a175eacdca6e0e",
+					"preview_id": "27c1d12007be4bbf80a175eacdca6e0e"
 				}
 			],
 			"d1_databases": [
 				{
 					"binding": "ADA_DB",
 					"database_name": "ada-db",
-					"database_id": "e48ed60f-5cf4-46c9-8f5e-be0b983174ee",
+					"database_id": "9e3ac2a0-fd50-465b-8e1f-5cdced476d98",
 					"preview_database_id": "a6459b57-9501-40f4-a750-4e6f0aea9c15"
 				}
 			]

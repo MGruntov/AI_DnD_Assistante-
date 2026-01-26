@@ -1032,9 +1032,7 @@ import { searchDecisionsByPrompt } from "./js/decision-matcher.js";
   //   when no dev server is running.
   
   // BACKEND OPTIONS - Choose one:
-  // Option 1: ev713's personal backend (fresh database, your own resources)
-  //const PROD_BACKEND_BASE_URL = "https://backend.ev713-backend.workers.dev";
-  // Option 2: Original shared backend (has all user data, requires owner's account to deploy)
+  // Using the ada-assistante backend
   const PROD_BACKEND_BASE_URL = "https://backend.ada-assistante.workers.dev";
   
   const LOCAL_WORKER_BACKEND_BASE_URL = "http://localhost:8787";

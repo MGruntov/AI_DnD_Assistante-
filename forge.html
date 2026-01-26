@@ -203,7 +203,7 @@
                 max="20"
               />
             </div>
-            <button id="startInteractiveForgeBtn" class="btn btn--primary">Begin Step-by-Step Creation</button>
+            <button id="startInteractiveForgeBtn" class="btn btn--primary" onclick="if(window.__startInteractiveForge) window.__startInteractiveForge(); else console.error('__startInteractiveForge not found on window');">Begin Step-by-Step Creation</button>
             <button id="backToModeBtn2" class="btn btn--secondary" style="margin-left:10px;">Back</button>
           </div>
           
@@ -271,7 +271,9 @@
     let isSheetValidated = false;
 
     function initializeElements() {
+      console.log('[initializeElements] Starting initialization...');
       startBtn = document.getElementById('startInteractiveForgeBtn');
+      console.log('[initializeElements] startBtn:', startBtn);
       restartBtn = document.getElementById('restartForgeBtn');
       interactivePanel = document.getElementById('interactiveForgePanel');
       progressDiv = document.getElementById('currentProgress');
@@ -303,47 +305,58 @@
       // Expose start function globally as a fallback
       window.__startInteractiveForge = startInteractiveForge;
       // Event listeners
-      startBtn.addEventListener('click', startInteractiveForge);
-      restartBtn.addEventListener('click', restartForge);
+      if (startBtn) {
+        startBtn.addEventListener('click', startInteractiveForge);
+      } else {
+        console.error('startInteractiveForgeBtn element not found!');
+      }
+      if (restartBtn) {
+        restartBtn.addEventListener('click', restartForge);
+      }
       
-      saveCharacterBtn.addEventListener('click', async () => {
-        console.log('[Save Character] Button clicked');
-        if (saveCharacterBtn.disabled) {
-          console.log('[Save Character] Button is disabled, returning');
-          return;
-        }
-        
-        console.log('[Save Character] Starting save process');
-        
-        // Auto-validate if needed
-        const availableChoices = creator ? creator.getAvailableChoices() : [];
-        const validateAction = availableChoices.find(c => c.id === 'validate_character_sheet');
-        if (validateAction) {
-          console.log('[Save Character] Auto-validating first');
-          makeChoice(validateAction);
-          // Wait a bit for validation to complete
-          await new Promise(resolve => setTimeout(resolve, 200));
-        }
-        
-        // Then finish character creation
-        console.log('[Save Character] Calling finishCharacterCreation');
-        await finishCharacterCreation();
-      });
-      finishBtn.addEventListener('click', async () => {
-        if (finishBtn.disabled) return;
-        
-        const mode = finishBtn.dataset.mode;
-        if (mode === 'validate') {
-          // Find and apply the validate action
+      if (saveCharacterBtn) {
+        saveCharacterBtn.addEventListener('click', async () => {
+          console.log('[Save Character] Button clicked');
+          if (saveCharacterBtn.disabled) {
+            console.log('[Save Character] Button is disabled, returning');
+            return;
+          }
+          
+          console.log('[Save Character] Starting save process');
+          
+          // Auto-validate if needed
           const availableChoices = creator ? creator.getAvailableChoices() : [];
           const validateAction = availableChoices.find(c => c.id === 'validate_character_sheet');
           if (validateAction) {
+            console.log('[Save Character] Auto-validating first');
             makeChoice(validateAction);
+            // Wait a bit for validation to complete
+            await new Promise(resolve => setTimeout(resolve, 200));
           }
-        } else if (mode === 'finish') {
+          
+          // Then finish character creation
+          console.log('[Save Character] Calling finishCharacterCreation');
           await finishCharacterCreation();
-        }
-      });
+        });
+      }
+      
+      if (finishBtn) {
+        finishBtn.addEventListener('click', async () => {
+          if (finishBtn.disabled) return;
+          
+          const mode = finishBtn.dataset.mode;
+          if (mode === 'validate') {
+            // Find and apply the validate action
+            const availableChoices = creator ? creator.getAvailableChoices() : [];
+            const validateAction = availableChoices.find(c => c.id === 'validate_character_sheet');
+            if (validateAction) {
+              makeChoice(validateAction);
+            }
+          } else if (mode === 'finish') {
+            await finishCharacterCreation();
+          }
+        });
+      }
     }
 
     function getCurrentUser() {
@@ -355,6 +368,9 @@
     }
 
     async function startInteractiveForge() {
+      console.log('[startInteractiveForge] Function called!');
+      console.log('[startInteractiveForge] startBtn:', startBtn);
+      console.log('[startInteractiveForge] creator:', creator);
       console.log('Starting interactive forge...');
       try {
         // Dynamic import to avoid named export errors (with cache busting)

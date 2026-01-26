@@ -244,7 +244,10 @@
                 <div id="otherChoiceButtons" style="display:flex;flex-direction:column;gap:10px;"></div>
               </div>
             </div>
-            <button id="restartForgeBtn" class="btn btn--secondary">Back to Mode Selection</button>
+            <div style="display:flex;gap:10px;margin-top:1em;">
+              <button id="saveCharacterBtn" class="btn btn--primary" disabled>Save Character</button>
+              <button id="restartForgeBtn" class="btn btn--secondary">Back to Mode Selection</button>
+            </div>
           </div>
         </section>
 
@@ -258,7 +261,7 @@
 
     let InteractiveCharacterCreator = null;
     let creator = null;
-    let startBtn, restartBtn, interactivePanel, progressDiv, forgeStatus, forgedCharacterDiv, finishBtn;
+    let startBtn, restartBtn, interactivePanel, progressDiv, forgeStatus, forgedCharacterDiv, finishBtn, saveCharacterBtn;
     let categories = {};
     let choiceContainers = {};
     let isSaving = false;
@@ -274,6 +277,7 @@
       forgeStatus = document.getElementById('forgeStatus');
       forgedCharacterDiv = document.getElementById('forgedCharacter');
       finishBtn = document.getElementById('forgeCharacterBtn');
+      saveCharacterBtn = document.getElementById('saveCharacterBtn');
 
       // Category containers
       categories = {
@@ -300,6 +304,22 @@
       // Event listeners
       startBtn.addEventListener('click', startInteractiveForge);
       restartBtn.addEventListener('click', restartForge);
+      
+      saveCharacterBtn.addEventListener('click', async () => {
+        if (saveCharacterBtn.disabled) return;
+        
+        // Auto-validate if needed
+        const availableChoices = creator ? creator.getAvailableChoices() : [];
+        const validateAction = availableChoices.find(c => c.id === 'validate_character_sheet');
+        if (validateAction) {
+          makeChoice(validateAction);
+          // Wait a bit for validation to complete
+          await new Promise(resolve => setTimeout(resolve, 200));
+        }
+        
+        // Then finish character creation
+        await finishCharacterCreation();
+      });
       finishBtn.addEventListener('click', async () => {
         if (finishBtn.disabled) return;
         
@@ -449,7 +469,14 @@
       // Get available choices by category
       const choicesByCategory = creator.getChoicesByCategory();
       
-      // Find the option with highest similarity score across all categories
+      // Filter out validate_character_sheet from all categories
+      Object.keys(choicesByCategory).forEach(category => {
+        choicesByCategory[category] = choicesByCategory[category].filter(
+          choice => choice.id !== 'validate_character_sheet'
+        );
+      });
+      
+      // Find the option with highest similarity score across all categories (excluding validate)
       let bestChoice = null;
       let bestSimilarity = 0;
       Object.values(choicesByCategory).flat().forEach(choice => {
@@ -525,34 +552,30 @@
       const availableChoices = creator.getAvailableChoices();
       const validateAvailable = availableChoices.some(c => c.id === 'validate_character_sheet');
       
-      // Auto-run validation when it becomes available (sneaky automation!)
-      if (validateAvailable && state && state.rawSheet && state.rawSheet.is_valid_sheet !== true) {
-        const validateAction = availableChoices.find(c => c.id === 'validate_character_sheet');
-        if (validateAction) {
-          setTimeout(() => {
-            makeChoice(validateAction);
-          }, 100);
+      // Check if character has reached target level
+      const currentLevel = creator.getCurrentLevel();
+      const targetLevel = creator.targetLevel || 5;
+      const hasReachedTargetLevel = currentLevel >= targetLevel;
+      
+      // Update save character button state
+      if (saveCharacterBtn) {
+        if (!hasReachedTargetLevel) {
+          saveCharacterBtn.disabled = true;
+          saveCharacterBtn.textContent = `Reach level ${targetLevel} (currently ${currentLevel})`;
+          saveCharacterBtn.className = 'btn btn--primary';
+        } else if (state && state.rawSheet && state.rawSheet.is_valid_sheet === true) {
+          saveCharacterBtn.disabled = false;
+          saveCharacterBtn.textContent = 'Save Character';
+          saveCharacterBtn.className = 'btn btn--primary';
+        } else if (validateAvailable) {
+          saveCharacterBtn.disabled = false;
+          saveCharacterBtn.textContent = 'Save Character';
+          saveCharacterBtn.className = 'btn btn--primary';
+        } else {
+          saveCharacterBtn.disabled = true;
+          saveCharacterBtn.textContent = 'Complete all choices first';
+          saveCharacterBtn.className = 'btn btn--primary';
         }
-      }
-      
-      // Enable finish button if sheet is valid
-      if (state && state.rawSheet && state.rawSheet.is_valid_sheet === true) {
-        finishBtn.disabled = false;
-        finishBtn.textContent = 'Finish Character Creation';
-        finishBtn.dataset.mode = 'finish';
-      } else if (validateAvailable) {
-        finishBtn.disabled = true;
-        finishBtn.textContent = 'Validating...';
-        finishBtn.dataset.mode = 'validating';
-      } else {
-        finishBtn.disabled = true;
-        finishBtn.textContent = 'Complete all choices first';
-        finishBtn.dataset.mode = 'disabled';
-      }
-      
-      // Auto-finish if validation passed and we have class
-      if (state && state.rawSheet && state.rawSheet.is_valid_sheet === true && state.classes.length > 0 && availableChoices.length === 0) {
-        finishCharacterCreation();
       }
     }
 

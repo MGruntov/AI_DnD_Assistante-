@@ -1,3 +1,5 @@
+  // Debug: log current creator.state.name and window.__manualForgeCharacterName
+  console.log('[Forge Debug] buildSavableCharacterState: creator.state.name =', creator && creator.state && creator.state.name, ', window.__manualForgeCharacterName =', window.__manualForgeCharacterName);
 /**
  * Interactive Character Forge Module
  * Handles step-by-step character creation with manual choice selection
@@ -472,8 +474,14 @@ function buildSavableCharacterState() {
       console.log('[Forge Debug] buildSavableCharacterState: using autoNameInput:', name);
     }
   }
-  character.name = name;
-  console.log('[Forge Debug] buildSavableCharacterState: final character.name:', character.name);
+  // Always set character.name from creator.state.name if available
+  if (creator && creator.state && creator.state.name && creator.state.name.trim()) {
+    character.name = creator.state.name.trim();
+    console.log('[Forge Debug] buildSavableCharacterState: forcibly set character.name from creator.state.name:', character.name);
+  } else {
+    character.name = name;
+    console.log('[Forge Debug] buildSavableCharacterState: final character.name:', character.name);
+  }
   return character;
 }
 

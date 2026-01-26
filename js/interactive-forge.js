@@ -6,13 +6,6 @@
 import { authHeaders } from './api.js';
 import { renderCharacterSheetHTML } from './character-sheet-renderer.js';
 
-// Provide safe global placeholders so inline onclicks or other scripts
-// that run before this module fully initializes don't throw.
-if (typeof window !== 'undefined') {
-  if (!window.__startInteractiveForge) window.__startInteractiveForge = null;
-  if (!window.__makeChoiceFromRecommendation) window.__makeChoiceFromRecommendation = null;
-}
-
 // Module state
 let InteractiveCharacterCreator = null;
 let creator = null;

@@ -276,12 +276,6 @@
     }
   </script>
 
-  <!-- Ensure global placeholders exist so inline onclicks don't fail if module hasn't loaded -->
-  <script>
-    if (!window.__startInteractiveForge) window.__startInteractiveForge = function() { console.warn('Interactive forge not initialized yet'); };
-    if (!window.__makeChoiceFromRecommendation) window.__makeChoiceFromRecommendation = function() { console.warn('Make choice function not ready'); };
-  </script>
-
   <script type="module" src="js/app.js"></script>
 </body>
 </html>

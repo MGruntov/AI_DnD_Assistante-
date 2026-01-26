@@ -452,17 +452,21 @@ function buildSavableCharacterState() {
   let name = '';
   if (window.__manualForgeCharacterName && window.__manualForgeCharacterName.trim()) {
     name = window.__manualForgeCharacterName.trim();
+    console.log('[Forge Debug] buildSavableCharacterState: using window.__manualForgeCharacterName:', name);
   } else if (creator && creator.state && creator.state.name && creator.state.name.trim()) {
     name = creator.state.name.trim();
+    console.log('[Forge Debug] buildSavableCharacterState: using creator.state.name:', name);
   }
   if (!name) {
     // Fallback to auto forge input if present
     const autoNameInput = document.getElementById('forgeCharacterName');
     if (autoNameInput && autoNameInput.value && autoNameInput.value.trim()) {
       name = autoNameInput.value.trim();
+      console.log('[Forge Debug] buildSavableCharacterState: using autoNameInput:', name);
     }
   }
   character.name = name;
+  console.log('[Forge Debug] buildSavableCharacterState: final character.name:', character.name);
   return character;
 }
 

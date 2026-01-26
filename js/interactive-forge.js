@@ -53,8 +53,9 @@ export function initializeInteractiveForge() {
     other: document.getElementById('otherChoiceButtons')
   };
 
-  // Expose start function globally as a fallback
+  // Expose start and AI choice functions globally as a fallback
   window.__startInteractiveForge = startInteractiveForge;
+  window.__makeChoiceFromRecommendation = makeChoice;
   // Event listeners
   if (startBtn) {
     startBtn.addEventListener('click', startInteractiveForge);

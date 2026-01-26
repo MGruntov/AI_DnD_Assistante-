@@ -719,6 +719,9 @@
       if (url) return url;
       // Using the ev713 backend
       return 'https://backend.ev713-backend.workers.dev';
+    }
+
+    async function saveCharacter(character, username) {
       console.log('[saveCharacter] Character data:', character);
       if (isSaving) {
         console.log('[saveCharacter] Already saving, returning');

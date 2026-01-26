@@ -146,6 +146,16 @@ async function startInteractiveForge() {
     await creator.initialize();
 
     // Set name from manual forge input if present
+    // Debug: log all input fields in manual forge panel
+    const manualForgePanel = document.getElementById('manualForgePanel');
+    if (manualForgePanel) {
+      const allInputs = manualForgePanel.querySelectorAll('input');
+      allInputs.forEach(input => {
+        console.log('[Forge Debug] manualForgePanel input:', input.id, input.value);
+      });
+    } else {
+      console.log('[Forge Debug] manualForgePanel not found');
+    }
     const manualNameInput = document.getElementById('manualForgeCharacterName');
     if (manualNameInput) {
       console.log('[Forge Debug] manualForgeCharacterName value at start:', manualNameInput.value);

@@ -307,18 +307,26 @@
       restartBtn.addEventListener('click', restartForge);
       
       saveCharacterBtn.addEventListener('click', async () => {
-        if (saveCharacterBtn.disabled) return;
+        console.log('[Save Character] Button clicked');
+        if (saveCharacterBtn.disabled) {
+          console.log('[Save Character] Button is disabled, returning');
+          return;
+        }
+        
+        console.log('[Save Character] Starting save process');
         
         // Auto-validate if needed
         const availableChoices = creator ? creator.getAvailableChoices() : [];
         const validateAction = availableChoices.find(c => c.id === 'validate_character_sheet');
         if (validateAction) {
+          console.log('[Save Character] Auto-validating first');
           makeChoice(validateAction);
           // Wait a bit for validation to complete
           await new Promise(resolve => setTimeout(resolve, 200));
         }
         
         // Then finish character creation
+        console.log('[Save Character] Calling finishCharacterCreation');
         await finishCharacterCreation();
       });
       finishBtn.addEventListener('click', async () => {
@@ -701,19 +709,31 @@
     }
 
     async function saveCharacter(character, username) {
-      if (isSaving) return false;
+      console.log('[saveCharacter] Starting save, username:', username);
+      console.log('[saveCharacter] Character data:', character);
+      if (isSaving) {
+        console.log('[saveCharacter] Already saving, returning');
+        return false;
+      }
       isSaving = true;
       finishBtn.disabled = true;
       finishBtn.textContent = 'Saving...';
       finishBtn.dataset.mode = 'saving';
 
       try {
-        const res = await fetch(`${getBackendBaseUrl()}/api/characters/save-sheet`, {
+        const backendUrl = getBackendBaseUrl();
+        const endpoint = `${backendUrl}/api/characters/save-sheet`;
+        console.log('[saveCharacter] Sending to:', endpoint);
+        
+        const res = await fetch(endpoint, {
           method: 'POST',
           headers: authHeaders({ 'Content-Type': 'application/json' }),
           body: JSON.stringify({ username, character, characterId: savedCharacterId })
         });
+        
+        console.log('[saveCharacter] Response status:', res.status);
         const data = await res.json().catch(() => ({}));
+        console.log('[saveCharacter] Response data:', data);
 
         // If this route doesn't exist on the backend (404), surface a clear message and do not fallback.
         if (res.status === 404) {
@@ -733,9 +753,10 @@
           savedCharacterId = data.character.id;
         }
 
+        console.log('[saveCharacter] Save successful, character ID:', savedCharacterId);
         return data.character || false;
       } catch (err) {
-        console.error('Failed to save character sheet', err);
+        console.error('[saveCharacter] Failed to save character sheet', err);
         forgeStatus.textContent = 'Network error while saving. Please try again.';
         forgeStatus.className = 'forge__status forge__status--error';
         return false;
@@ -748,9 +769,17 @@
     
 
     async function finishCharacterCreation() {
-      if (!creator) return;
+      console.log('[finishCharacterCreation] Starting');
+      if (!creator) {
+        console.log('[finishCharacterCreation] No creator found');
+        return;
+      }
       const character = creator.getCharacterState();
-      if (!character) return;
+      console.log('[finishCharacterCreation] Character state:', character);
+      if (!character) {
+        console.log('[finishCharacterCreation] No character state');
+        return;
+      }
 
       // Bring over any chosen portrait or name
       try {
@@ -764,6 +793,7 @@
         character.name = nameInput.value.trim();
       }
       const currentUser = getCurrentUser();
+      console.log('[finishCharacterCreation] Current user:', currentUser);
 
       forgeStatus.textContent = 'Character creation complete!';
       forgeStatus.className = 'forge__status forge__status--success';
@@ -776,6 +806,7 @@
 
       // Persist to backend (or show error)
       if (!currentUser) {
+        console.log('[finishCharacterCreation] No current user, cannot save');
         forgeStatus.textContent = 'Log in to save this character to My Characters.';
         forgeStatus.className = 'forge__status forge__status--error';
         markUnsavedChanges();
@@ -784,7 +815,9 @@
         return;
       }
 
+      console.log('[finishCharacterCreation] Calling saveCharacter');
       const saved = await saveCharacter(character, currentUser);
+      console.log('[finishCharacterCreation] Save result:', saved);
       if (saved) {
         needsSave = false;
         if (hint) {

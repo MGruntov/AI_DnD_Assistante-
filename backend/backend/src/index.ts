@@ -7703,6 +7703,72 @@ async function handleDeleteCharacter(request: Request, env: Env, origin: string 
 		return errorResponse('username and characterId are required', 400, origin);
 	}
 
+	// First, attempt to delete from D1 (new storage used by save-sheet).
+	try {
+		const db = (env as any).ADA_DB as D1Database | undefined | null;
+		if (db) {
+			// Resolve user id for provided username
+			let ownerUserId: string | null = null;
+			try {
+				const userRes = await db.prepare('SELECT id, username FROM users WHERE username = ?1 LIMIT 1').bind(username).all();
+				ownerUserId = userRes?.results?.[0]?.id ?? null;
+			} catch {
+				ownerUserId = null;
+			}
+
+			const charRes = await db.prepare('SELECT id, owner_user_id, data_json FROM characters WHERE id = ?1 LIMIT 1').bind(characterId).all();
+			const row = charRes?.results?.[0] ?? null;
+			if (row) {
+				// Ownership check
+				if (!ownerUserId || String(row.owner_user_id) !== String(ownerUserId)) {
+					return errorResponse('You do not own this character', 403, origin);
+				}
+
+				// Parse stored character JSON (data_json)
+				let character: Character;
+				try {
+					character = JSON.parse(row.data_json) as Character;
+				} catch {
+					return errorResponse('Corrupted character record', 500, origin);
+				}
+
+				// Remove from any linked campaigns (campaigns stored in KV)
+				const campaignIds = Array.isArray(character.campaignIds) ? character.campaignIds : [];
+				for (const cid of campaignIds) {
+					const storedCampaign = await env.ADA_DATA.get(`campaign:${cid}`);
+					if (!storedCampaign) continue;
+					try {
+						const campaign = JSON.parse(storedCampaign) as Campaign;
+						if (Array.isArray(campaign.linkedCharacterIds)) {
+							const filtered = campaign.linkedCharacterIds.filter((id) => id !== characterId);
+							if (filtered.length !== campaign.linkedCharacterIds.length) {
+								campaign.linkedCharacterIds = filtered;
+								await env.ADA_DATA.put(`campaign:${cid}`, JSON.stringify(campaign));
+							}
+						}
+					} catch {
+						// ignore malformed
+					}
+				}
+
+				// Delete D1 row
+				try {
+					await db.prepare('DELETE FROM characters WHERE id = ?1 AND owner_user_id = ?2').bind(characterId, ownerUserId).run();
+				} catch (e) {
+					console.error('[handleDeleteCharacter] failed to delete D1 row', e);
+					return errorResponse('Failed to delete character', 500, origin);
+				}
+
+				return jsonResponse({ ok: true }, { status: 200 }, origin);
+			}
+			// If not found in D1, fall through to legacy KV path below.
+		}
+	} catch (e) {
+		// Best-effort: if D1 check fails, continue to legacy KV handling.
+		console.warn('[handleDeleteCharacter] D1 check failed, falling back to KV:', e);
+	}
+
+	// Legacy KV-backed characters (fallback)
 	const stored = await env.ADA_DATA.get(`character:${characterId}`);
 	if (!stored) {
 		return errorResponse('Character not found', 404, origin);

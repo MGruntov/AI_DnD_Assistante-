@@ -527,28 +527,6 @@
       console.log('Available choices by category:', choicesByCategory);
       console.log('Sample choice structure:', choicesByCategory.race[0] || choicesByCategory.other[0]);
 
-      // Hide all categories first
-      Object.values(categories).forEach(cat => cat.style.display = 'none');
-
-      // Show categories with choices and populate buttons
-      Object.keys(choicesByCategory).forEach(category => {
-        const choices = choicesByCategory[category];
-        if (choices.length > 0) {
-          categories[category].style.display = 'block';
-          choiceContainers[category].innerHTML = '';
-          
-          choices.forEach(choice => {
-            const button = document.createElement('button');
-            button.className = 'btn btn--choice';
-            // Use title if available, otherwise fall back to id
-            const label = choice.title || choice.id;
-            button.textContent = label;
-            button.onclick = () => makeChoice(choice);
-            choiceContainers[category].appendChild(button);
-          });
-        }
-      });
-
       // Check if validate action is available (all counters zero and base choices made)
       const availableChoices = creator.getAvailableChoices();
       const validateAction = availableChoices.find(c => c.id === 'validate_character_sheet');
@@ -574,6 +552,57 @@
       const currentLevel = creator.getCurrentLevel();
       const targetLevel = creator.targetLevel || 5;
       const hasReachedTargetLevel = currentLevel >= targetLevel;
+      
+      // If target level reached and sheet is valid, don't show choices
+      if (hasReachedTargetLevel && isSheetValidated) {
+        // Hide all categories
+        Object.values(categories).forEach(cat => cat.style.display = 'none');
+        
+        // Remove AI recommendation if present
+        const existingRecommendation = categoriesContainer.querySelector('.ai-recommendation');
+        if (existingRecommendation) {
+          existingRecommendation.remove();
+        }
+        
+        // Show completion message
+        const existingCompletionMsg = categoriesContainer.querySelector('.completion-message');
+        if (existingCompletionMsg) {
+          existingCompletionMsg.remove();
+        }
+        
+        const completionDiv = document.createElement('div');
+        completionDiv.className = 'completion-message';
+        completionDiv.style.cssText = 'background: linear-gradient(135deg, #2d5a3d 0%, #1a4d2e 100%); padding: 1.5em; border-radius: 8px; margin: 1em 0; border: 2px solid #4ade80; text-align: center;';
+        completionDiv.innerHTML = `
+          <div style="font-size: 2em; margin-bottom: 0.5em;">🎉</div>
+          <strong style="color: #4ade80; font-size: 1.2em; display: block; margin-bottom: 0.5em;">Target Level Reached!</strong>
+          <p style="color: #e8f5e9; margin: 0;">You've reached level ${targetLevel}. Your character is complete and ready to save.</p>
+        `;
+        categoriesContainer.insertBefore(completionDiv, countersDiv.nextSibling);
+      } else {
+        // Show normal choices
+        // Hide all categories first
+        Object.values(categories).forEach(cat => cat.style.display = 'none');
+
+        // Show categories with choices and populate buttons
+        Object.keys(choicesByCategory).forEach(category => {
+          const choices = choicesByCategory[category];
+          if (choices.length > 0) {
+            categories[category].style.display = 'block';
+            choiceContainers[category].innerHTML = '';
+            
+            choices.forEach(choice => {
+              const button = document.createElement('button');
+              button.className = 'btn btn--choice';
+              // Use title if available, otherwise fall back to id
+              const label = choice.title || choice.id;
+              button.textContent = label;
+              button.onclick = () => makeChoice(choice);
+              choiceContainers[category].appendChild(button);
+            });
+          }
+        });
+      }
       
       // Update save character button state based on validation flag
       if (saveCharacterBtn) {

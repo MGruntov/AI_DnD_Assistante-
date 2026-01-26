@@ -147,10 +147,17 @@ async function startInteractiveForge() {
 
     // Set name from manual forge input if present
     const manualNameInput = document.getElementById('manualForgeCharacterName');
+    if (manualNameInput) {
+      console.log('[Forge Debug] manualForgeCharacterName value at start:', manualNameInput.value);
+    }
     if (manualNameInput && manualNameInput.value && manualNameInput.value.trim()) {
-      creator.setName && creator.setName(manualNameInput.value.trim());
-      // If no setName method, set directly on state if possible
-      if (creator.state) creator.state.name = manualNameInput.value.trim();
+      const nameValue = manualNameInput.value.trim();
+      console.log('[Forge Debug] Setting creator name to:', nameValue);
+      if (typeof creator.setName === 'function') {
+        creator.setName(nameValue);
+      } else if (creator.state) {
+        creator.state.name = nameValue;
+      }
     }
 
     // Read target level from manual forge input

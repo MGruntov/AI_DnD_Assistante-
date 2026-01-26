@@ -5,13 +5,34 @@ import { requireDb } from './client';
 // This helper keeps the pattern consistent and easy to audit.
 export async function withTransaction<T>(env: Env, fn: () => Promise<T>): Promise<T> {
 	const db = requireDb(env);
-	await db.exec('BEGIN');
+	// Some runtimes (notably certain test/preview environments) reject explicit
+	// BEGIN/COMMIT statements. In that case, fall back to best-effort execution
+	// without an explicit SQL transaction.
+	let began = false;
+	try {
+		await db.exec('BEGIN');
+		began = true;
+	} catch {
+		began = false;
+	}
 	try {
 		const out = await fn();
-		await db.exec('COMMIT');
+		if (began) {
+			try {
+				await db.exec('COMMIT');
+			} catch {
+				// ignore
+			}
+		}
 		return out;
 	} catch (e) {
-		await db.exec('ROLLBACK');
+		if (began) {
+			try {
+				await db.exec('ROLLBACK');
+			} catch {
+				// ignore
+			}
+		}
 		throw e;
 	}
 }

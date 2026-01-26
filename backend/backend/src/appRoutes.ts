@@ -6,6 +6,7 @@ import { registerHealthRoutes } from './routes/health';
 import { registerAuthRoutes } from './routes/auth';
 import { registerPortraitRoutes } from './routes/portraits';
 import { registerDecisionRoutes } from './routes/decisions';
+import { registerCharacterRoutes } from './routes/characters';
 
 export type App = Hono<{ Bindings: Env }>;
 
@@ -27,6 +28,7 @@ export function createApp(opts: {
 	registerAuthRoutes(app);
 	registerPortraitRoutes(app);
 	registerDecisionRoutes(app);
+	registerCharacterRoutes(app);
 
 	// Everything not explicitly migrated yet falls back to the legacy router.
 	app.all('*', (c) => {

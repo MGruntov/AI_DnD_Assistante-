@@ -4640,8 +4640,14 @@ import { searchDecisionsByPrompt } from "./js/decision-matcher.js";
         const card = document.createElement("button");
         card.type = "button";
         card.className = "vault-card";
-        const race = ch.concept?.race || "";
-        const cls = ch.concept?.classSummary || "Adventurer";
+        // Canonical: Forge formatCharacter() shape.
+        const race = ch.race || ch.concept?.race || "";
+        const classes = Array.isArray(ch.classes)
+          ? ch.classes
+          : (Array.isArray(ch.concept?.classes) ? ch.concept.classes : []);
+        const cls = classes.length
+          ? classes.map((c) => `${c.name} ${c.level}`).join(", ")
+          : (ch.concept?.classSummary || "Adventurer");
         const meta = [race, cls].filter(Boolean).join(" ");
         card.innerHTML = `
           <div class="vault-card__portrait" style="background-image: url('${(ch.portraitUrl || "").replace(/'/g, "&#39;")}')"></div>
@@ -4706,13 +4712,14 @@ import { searchDecisionsByPrompt } from "./js/decision-matcher.js";
   function renderVaultDetail(character) {
     setActiveCharacter(character);
     vaultDetailName.textContent = character.name || "Unnamed Adventurer";
-    const race = character.concept?.race || "";
-    const mainClass = Array.isArray(character.concept?.classes) && character.concept.classes.length
-      ? character.concept.classes[0].name
-      : "";
-    const level = Array.isArray(character.concept?.classes) && character.concept.classes.length
-      ? character.concept.classes[0].level
-      : undefined;
+    const race = character.race || character.concept?.race || "";
+    const classes = Array.isArray(character.classes)
+      ? character.classes
+      : (Array.isArray(character.concept?.classes) ? character.concept.classes : []);
+    const mainClass = classes.length ? classes[0].name : "";
+    const level = Number.isFinite(character.level)
+      ? character.level
+      : (classes.length ? classes.reduce((acc, c) => acc + (Number(c.level) || 0), 0) : undefined);
     const roleLine = [race, mainClass, level ? `Level ${level}` : ""].filter(Boolean).join(" • ");
     vaultDetailMeta.textContent = roleLine || "Adventurer";
     // Render portrait as an <img> so we don't rely on background-image vs gradient precedence
@@ -4725,20 +4732,33 @@ import { searchDecisionsByPrompt } from "./js/decision-matcher.js";
     }
 
     if (vaultDetailPrompt) {
-      const rawPrompt =
-        character.narrative && character.narrative.rawTranscript
+      const rawPrompt = character.narrativeText ||
+        (character.narrative && character.narrative.rawTranscript
           ? character.narrative.rawTranscript
-          : "";
+          : "");
       vaultDetailPrompt.value = rawPrompt;
     }
 
     // Abilities
     vaultDetailAbilities.innerHTML = "";
-    const abilities = character.mechanics?.abilityScores || {};
+    const abilities = character.abilityScores || character.mechanics?.abilityScores || {};
     const abilityOrder = ["STR", "DEX", "CON", "INT", "WIS", "CHA"];
     abilityOrder.forEach((abbr) => {
       const key = abbr.toLowerCase();
-      const score = abilities[key] ?? "—";
+      // Forge uses full names (strength, dexterity...). Legacy uses str/dex...
+      const score =
+        abilities[key] ??
+        abilities[
+          {
+            str: "strength",
+            dex: "dexterity",
+            con: "constitution",
+            int: "intelligence",
+            wis: "wisdom",
+            cha: "charisma",
+          }[key]
+        ] ??
+        "—";
       const dt = document.createElement("dt");
       dt.textContent = abbr;
       const dd = document.createElement("dd");
@@ -4750,11 +4770,22 @@ import { searchDecisionsByPrompt } from "./js/decision-matcher.js";
     // Mechanics summary
     const m = character.mechanics || {};
     const lines = [];
-    if (m.hitPoints != null) lines.push(`HP ${m.hitPoints}`);
-    if (m.armorClass != null) lines.push(`AC ${m.armorClass}`);
-    if (m.speed != null) lines.push(`Speed ${m.speed} ft`);
-    if (m.proficiencyBonus != null) lines.push(`Proficiency +${m.proficiencyBonus}`);
-    const savesArr = Array.isArray(m.savingThrows) ? m.savingThrows : [];
+    const hpMax = Number.isFinite(character.maxHp) ? character.maxHp : m.hitPoints;
+    const hpCur = Number.isFinite(character.currentHp) ? character.currentHp : null;
+    if (hpMax != null) lines.push(`HP ${hpCur != null ? `${hpCur} / ${hpMax}` : hpMax}`);
+    const ac = Number.isFinite(character.armorClass) ? character.armorClass : m.armorClass;
+    if (ac != null) lines.push(`AC ${ac}`);
+    const speed = character.rawSheet && typeof character.rawSheet.speed === "number"
+      ? character.rawSheet.speed
+      : m.speed;
+    if (speed != null) lines.push(`Speed ${speed} ft`);
+    const pb = Number.isFinite(character.proficiencyBonus) ? character.proficiencyBonus : m.proficiencyBonus;
+    if (pb != null) lines.push(`Proficiency +${pb}`);
+    const savesArr = Array.isArray(character.savingThrows)
+      ? character.savingThrows
+      : Array.isArray(character.rawSheet?.saving_throws_proficient)
+        ? character.rawSheet.saving_throws_proficient
+        : (Array.isArray(m.savingThrows) ? m.savingThrows : []);
     if (savesArr.length) lines.push(`Saves: ${savesArr.map((s) => s.toUpperCase()).join(", ")}`);
     vaultDetailMechanics.innerHTML = lines.map((l) => `<div>${l}</div>`).join("");
 
@@ -4763,7 +4794,7 @@ import { searchDecisionsByPrompt } from "./js/decision-matcher.js";
       vaultDetailSheet.innerHTML = renderCharacterSheetHTML(character, { compact: false });
     }
 
-    // Progression + resources (system-managed; not directly editable)
+    // Resources (Forge-canonical: derived from saved sheet data)
     const XP_THRESHOLD_BY_LEVEL = {
       1: 0,
       2: 300,
@@ -4787,26 +4818,19 @@ import { searchDecisionsByPrompt } from "./js/decision-matcher.js";
       20: 355000,
     };
 
-    const prog = character.progression || null;
-    const levelFromProg = prog && typeof prog.level === "number" ? prog.level : null;
-    const levelFromConcept =
-      Array.isArray(character.concept?.classes) && character.concept.classes.length
-        ? Number(character.concept.classes[0].level)
-        : 1;
-    const levelEffective = levelFromProg || (Number.isFinite(levelFromConcept) ? levelFromConcept : 1);
-
-    const xp = prog && typeof prog.xp === "number" ? prog.xp : 0;
-    const xpToNext = prog && typeof prog.xpToNextLevel === "number" ? prog.xpToNextLevel : null;
+    const levelEffective = Number.isFinite(character.level) ? character.level : (Number.isFinite(level) ? level : 1);
+    const xp = typeof character.xp === "number" ? character.xp : 0;
+    const xpToNext = null;
     const xpBase = XP_THRESHOLD_BY_LEVEL[levelEffective] || 0;
     const xpCeil = xpToNext != null ? xpToNext : (XP_THRESHOLD_BY_LEVEL[20] || 355000);
     const xpInto = Math.max(0, xp - xpBase);
     const xpSpan = Math.max(1, xpCeil - xpBase);
     const xpIntoClamped = Math.max(0, Math.min(xpSpan, xpInto));
 
-    const hpMax = prog && prog.hp && typeof prog.hp.max === "number" ? prog.hp.max : (m.hitPoints != null ? m.hitPoints : 0);
-    const hpCur = prog && prog.hp && typeof prog.hp.current === "number" ? prog.hp.current : hpMax;
-    const manaMax = prog && prog.manaSlots && typeof prog.manaSlots.max === "number" ? prog.manaSlots.max : 0;
-    const manaCur = prog && prog.manaSlots && typeof prog.manaSlots.current === "number" ? prog.manaSlots.current : manaMax;
+    const hpMaxRes = Number.isFinite(character.maxHp) ? character.maxHp : (hpMax != null ? hpMax : 0);
+    const hpCurRes = Number.isFinite(character.currentHp) ? character.currentHp : hpMaxRes;
+    const manaMax = typeof character.manaMax === "number" ? character.manaMax : 0;
+    const manaCur = typeof character.manaCurrent === "number" ? character.manaCurrent : manaMax;
 
     if (vaultDetailResources) {
       const rows = [];
@@ -4814,8 +4838,8 @@ import { searchDecisionsByPrompt } from "./js/decision-matcher.js";
         `<div class="vault-resource__row">
           <div class="vault-resource__label">HP</div>
           <div class="vault-resource__value">
-            <div>${hpCur} / ${hpMax}</div>
-            <progress value="${Math.max(0, Math.min(hpMax, hpCur))}" max="${Math.max(1, hpMax)}"></progress>
+            <div>${hpCurRes} / ${hpMaxRes}</div>
+            <progress value="${Math.max(0, Math.min(hpMaxRes, hpCurRes))}" max="${Math.max(1, hpMaxRes)}"></progress>
           </div>
         </div>`
       );
@@ -4846,9 +4870,9 @@ import { searchDecisionsByPrompt } from "./js/decision-matcher.js";
     }
 
     if (vaultLevelUpBtn) {
-      const canLevelUp = !!(prog && prog.canLevelUp);
-      vaultLevelUpBtn.hidden = !canLevelUp;
-      vaultLevelUpBtn.disabled = !canLevelUp;
+      // Level-up is not yet supported for Forge-canonical sheets via this UI.
+      vaultLevelUpBtn.hidden = true;
+      vaultLevelUpBtn.disabled = true;
     }
     if (vaultLevelUpStatus) vaultLevelUpStatus.textContent = "";
 

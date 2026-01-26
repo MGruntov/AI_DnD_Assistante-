@@ -12,6 +12,29 @@ export type DbUserRow = {
 	updated_at: string;
 };
 
+async function ensureUsersD1Schema(env: Env): Promise<void> {
+	const db = getDb(env);
+	if (!db) return;
+	try {
+		await db
+			.prepare(
+				`CREATE TABLE IF NOT EXISTS users (
+				  id TEXT PRIMARY KEY,
+				  username TEXT NOT NULL UNIQUE,
+				  password_hash TEXT NOT NULL,
+				  password_salt TEXT NOT NULL,
+				  password_iterations INTEGER NOT NULL,
+				  password_algo TEXT,
+				  created_at TEXT NOT NULL,
+				  updated_at TEXT NOT NULL
+				)`,
+			)
+			.run();
+	} catch {
+		// best-effort
+	}
+}
+
 export async function dbGetUserByUsername(env: Env, username: string): Promise<DbUserRow | null> {
 	const db = getDb(env);
 	if (!db) return null;
@@ -31,6 +54,23 @@ export async function dbGetUserByUsername(env: Env, username: string): Promise<D
 		// - if the schema hasn't been applied yet, treat D1 as empty.
 		// - if the table exists but the new column hasn't been migrated yet, fall back to the old select.
 		const msg = (e as Error)?.message || '';
+		if (msg.includes('no such table') && msg.includes('users')) {
+			await ensureUsersD1Schema(env);
+			try {
+				const res = await db
+					.prepare(
+						`SELECT id, username, password_algo, password_hash, password_salt, password_iterations, created_at, updated_at
+						 FROM users
+						 WHERE username = ?1
+						 LIMIT 1`,
+					)
+					.bind(username)
+					.all<DbUserRow>();
+				return res.results?.[0] ?? null;
+			} catch {
+				return null;
+			}
+		}
 		if (msg.includes('no such column') && msg.includes('password_algo')) {
 			try {
 				const res = await db
@@ -54,6 +94,7 @@ export async function dbGetUserByUsername(env: Env, username: string): Promise<D
 export async function dbInsertUser(env: Env, row: DbUserRow): Promise<void> {
 	const db = getDb(env);
 	if (!db) throw new Error('D1 not configured');
+	await ensureUsersD1Schema(env);
 	await db
 		.prepare(
 			`INSERT INTO users (id, username, password_algo, password_hash, password_salt, password_iterations, created_at, updated_at)
@@ -78,6 +119,7 @@ export async function dbUpdateUserPassword(
 ): Promise<void> {
 	const db = getDb(env);
 	if (!db) throw new Error('D1 not configured');
+	await ensureUsersD1Schema(env);
 	await db
 		.prepare(
 			`UPDATE users

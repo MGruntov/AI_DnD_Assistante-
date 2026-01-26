@@ -1,5 +1,3 @@
-  // Debug: log current creator.state.name and window.__manualForgeCharacterName
-  console.log('[Forge Debug] buildSavableCharacterState: creator.state.name =', creator && creator.state && creator.state.name, ', window.__manualForgeCharacterName =', window.__manualForgeCharacterName);
 /**
  * Interactive Character Forge Module
  * Handles step-by-step character creation with manual choice selection

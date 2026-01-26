@@ -58,7 +58,17 @@ export function initializeInteractiveForge() {
   window.__makeChoiceFromRecommendation = makeChoice;
   // Event listeners
   if (startBtn) {
-    startBtn.addEventListener('click', startInteractiveForge);
+    startBtn.addEventListener('click', () => {
+      // Capture manual name input at the moment of click
+      const manualNameInput = document.getElementById('manualForgeCharacterName');
+      if (manualNameInput && manualNameInput.value && manualNameInput.value.trim()) {
+        window.__manualForgeCharacterName = manualNameInput.value.trim();
+        console.log('[Forge Debug] Captured manual name on click:', window.__manualForgeCharacterName);
+      } else {
+        window.__manualForgeCharacterName = '';
+      }
+      startInteractiveForge();
+    });
   } else {
     console.error('startInteractiveForgeBtn element not found!');
   }
@@ -146,19 +156,15 @@ async function startInteractiveForge() {
     await creator.initialize();
 
     // Set name from manual forge input if present
-    // Debug: log all input fields in manual forge panel
-    const manualForgePanel = document.getElementById('manualForgePanel');
-    if (manualForgePanel) {
-      const allInputs = manualForgePanel.querySelectorAll('input');
-      allInputs.forEach(input => {
-        console.log('[Forge Debug] manualForgePanel input:', input.id, input.value);
-      });
-    } else {
-      console.log('[Forge Debug] manualForgePanel not found');
-    }
-    const manualNameInput = document.getElementById('manualForgeCharacterName');
-    if (manualNameInput) {
-      console.log('[Forge Debug] manualForgeCharacterName value at start:', manualNameInput.value);
+    // Use the captured name from the click event
+    const capturedName = window.__manualForgeCharacterName || '';
+    if (capturedName) {
+      console.log('[Forge Debug] Using captured manual name in startInteractiveForge:', capturedName);
+      if (typeof creator.setName === 'function') {
+        creator.setName(capturedName);
+      } else if (creator.state) {
+        creator.state.name = capturedName;
+      }
     }
     if (manualNameInput && manualNameInput.value && manualNameInput.value.trim()) {
       const nameValue = manualNameInput.value.trim();
@@ -509,6 +515,11 @@ function getBackendBaseUrl() {
 
 async function saveCharacter(character, username) {
   console.log('[saveCharacter] Character data:', character);
+  if (character && character.name) {
+    console.log('[Forge Debug] Name being sent to backend:', character.name);
+  } else {
+    console.log('[Forge Debug] No name found in character object being sent to backend.');
+  }
   if (isSaving) {
     console.log('[saveCharacter] Already saving, returning');
     return false;

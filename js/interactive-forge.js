@@ -457,19 +457,21 @@ function buildSavableCharacterState() {
     if (portraitUrl) character.portraitUrl = portraitUrl;
   } catch {}
 
-  // Try both name fields: manual and auto forge
+  // Always set name from captured value or creator state
   let name = '';
-  const manualNameInput = document.getElementById('manualForgeCharacterName');
-  if (manualNameInput && manualNameInput.value && manualNameInput.value.trim()) {
-    name = manualNameInput.value.trim();
+  if (window.__manualForgeCharacterName && window.__manualForgeCharacterName.trim()) {
+    name = window.__manualForgeCharacterName.trim();
+  } else if (creator && creator.state && creator.state.name && creator.state.name.trim()) {
+    name = creator.state.name.trim();
   }
-  const autoNameInput = document.getElementById('forgeCharacterName');
-  if (!name && autoNameInput && autoNameInput.value && autoNameInput.value.trim()) {
-    name = autoNameInput.value.trim();
+  if (!name) {
+    // Fallback to auto forge input if present
+    const autoNameInput = document.getElementById('forgeCharacterName');
+    if (autoNameInput && autoNameInput.value && autoNameInput.value.trim()) {
+      name = autoNameInput.value.trim();
+    }
   }
-  if (name) {
-    character.name = name;
-  }
+  character.name = name;
   return character;
 }
 

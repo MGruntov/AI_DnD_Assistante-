@@ -390,7 +390,7 @@
           try {
             const { searchDecisionsByPrompt } = await import('./js/decision-matcher.js');
             // Use the production backend URL directly
-            const backendUrl = 'https://backend.ada-assistante.workers.dev';
+            const backendUrl = 'https://backend.ev713-backend.workers.dev';
             console.log('[forge] Using backend URL:', backendUrl);
             // Request all 433 decisions, not just top 15
             const response = await searchDecisionsByPrompt(backendUrl, transcriptText, 433);
@@ -701,15 +701,8 @@
       const cfg = window.ADA && window.ADA.config;
       const url = (cfg && cfg.BACKEND_BASE_URL) || '';
       if (url) return url;
-      // BACKEND OPTIONS - Choose one:
-      // Option 1: ev713's personal backend
-      return 'https://backend.ada-assistante.workers.dev';
-      // Option 2: Original shared backend (uncomment below, comment above)
-      // return 'https://backend.ada-assistante.workers.dev';
-    }
-
-    async function saveCharacter(character, username) {
-      console.log('[saveCharacter] Starting save, username:', username);
+  // Using the ada-assistante backend
+  return 'https://backend.ada-assistante.workers.dev';
       console.log('[saveCharacter] Character data:', character);
       if (isSaving) {
         console.log('[saveCharacter] Already saving, returning');

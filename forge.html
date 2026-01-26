@@ -561,11 +561,12 @@
         return; // updateChoices will be called again after makeChoice
       }
       
-      // Update validation flag based on sheet state and available choices
-      if (state && state.rawSheet && state.rawSheet.is_valid_sheet === true && nonValidateChoices.length === 0) {
+      // Update validation flag based on sheet state
+      // Once validated, keep it true even if optional choices remain
+      if (state && state.rawSheet && state.rawSheet.is_valid_sheet === true) {
         isSheetValidated = true;
-      } else if (nonValidateChoices.length > 0) {
-        // Reset validation flag if there are other choices to make
+      } else if (state && state.rawSheet && state.rawSheet.is_valid_sheet === false) {
+        // Only reset if sheet explicitly becomes invalid
         isSheetValidated = false;
       }
       

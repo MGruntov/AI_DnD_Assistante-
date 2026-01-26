@@ -524,7 +524,7 @@ function formatCharacter(sheet, actions) {
   return {
     id: Date.now(),
     username: '',
-    name: '',
+    name: sheet.name || '',
     portraitUrl: null,
     race: sheet.race || 'Unknown',
     background: sheet.background || 'Unknown',
@@ -580,6 +580,12 @@ export class InteractiveCharacterCreator {
       });
       console.log('[InteractiveCharacterCreator] Stored similarity scores for', Object.keys(this.similarityScores).length, 'decisions');
     }
+  }
+
+  setName(name) {
+    if (!this.sheet) this.sheet = JSON.parse(JSON.stringify(initialSheet));
+    this.sheet.name = typeof name === 'string' ? name.trim() : String(name || '').trim();
+    console.log('[InteractiveCharacterCreator] setName:', this.sheet.name);
   }
 
   setTargetLevel(level) {

@@ -256,19 +256,19 @@
   </main>
 
   <script type="module">
-    import { authHeaders } from './js/api.js';
-    import { renderCharacterSheetHTML } from './js/character-sheet-renderer.js';
+    import { initializeInteractiveForge } from './js/interactive-forge.js';
 
-    let InteractiveCharacterCreator = null;
-    let creator = null;
-    let startBtn, restartBtn, interactivePanel, progressDiv, forgeStatus, forgedCharacterDiv, finishBtn, saveCharacterBtn;
-    let categories = {};
-    let choiceContainers = {};
-    let isSaving = false;
-    let needsSave = false;
-    let savedCharacterId = null;
-    let autosaveTimer = null;
-    let isSheetValidated = false;
+    // Initialize when DOM is ready
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', initializeInteractiveForge);
+    } else {
+      initializeInteractiveForge();
+    }
+  </script>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
 
     function initializeElements() {
       console.log('[initializeElements] Starting initialization...');

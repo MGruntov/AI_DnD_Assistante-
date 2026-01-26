@@ -144,7 +144,15 @@ async function startInteractiveForge() {
     creator = new InteractiveCharacterCreator();
     console.log('Creator instantiated');
     await creator.initialize();
-    
+
+    // Set name from manual forge input if present
+    const manualNameInput = document.getElementById('manualForgeCharacterName');
+    if (manualNameInput && manualNameInput.value && manualNameInput.value.trim()) {
+      creator.setName && creator.setName(manualNameInput.value.trim());
+      // If no setName method, set directly on state if possible
+      if (creator.state) creator.state.name = manualNameInput.value.trim();
+    }
+
     // Read target level from manual forge input
     const levelInput = document.getElementById('manualForgeCharacterLevel');
     const targetLevel = levelInput ? parseInt(levelInput.value, 10) : 5;

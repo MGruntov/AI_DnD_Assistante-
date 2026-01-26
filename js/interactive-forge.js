@@ -426,9 +426,18 @@ function buildSavableCharacterState() {
     if (portraitUrl) character.portraitUrl = portraitUrl;
   } catch {}
 
-  const nameInput = document.getElementById('forgeCharacterName');
-  if (nameInput && nameInput.value && nameInput.value.trim()) {
-    character.name = nameInput.value.trim();
+  // Try both name fields: manual and auto forge
+  let name = '';
+  const manualNameInput = document.getElementById('manualForgeCharacterName');
+  if (manualNameInput && manualNameInput.value && manualNameInput.value.trim()) {
+    name = manualNameInput.value.trim();
+  }
+  const autoNameInput = document.getElementById('forgeCharacterName');
+  if (!name && autoNameInput && autoNameInput.value && autoNameInput.value.trim()) {
+    name = autoNameInput.value.trim();
+  }
+  if (name) {
+    character.name = name;
   }
   return character;
 }

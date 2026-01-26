@@ -40,10 +40,10 @@
     try {
       const hostname = window.location && window.location.hostname ? window.location.hostname : "";
       const isDev = hostname === "localhost" || hostname === "127.0.0.1" || hostname === "0.0.0.0";
-      // Using the ada-assistante backend
-      return isDev ? "http://localhost:8787" : "https://backend.ada-assistante.workers.dev";
+      // Using the ev713 backend
+      return isDev ? "http://localhost:8787" : "https://backend.ev713-backend.workers.dev";
     } catch {
-      return "https://backend.ada-assistante.workers.dev";
+      return "https://backend.ev713-backend.workers.dev";
     }
   }
 

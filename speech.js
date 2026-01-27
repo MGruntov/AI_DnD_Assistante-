@@ -118,6 +118,114 @@ import { searchDecisionsByPrompt } from "./js/decision-matcher.js";
   const adventureTagsInput = document.getElementById("adventureTags");
   const publishAdventureStatus = document.getElementById("publishAdventureStatus");
   const campaignAiPlayerPrompt = document.getElementById("campaignAiPlayerPrompt");
+
+  // Intro modal: shows once after login, with a "Show Intro" button in the nav
+  function buildIntroModal() {
+    const modal = document.createElement('div');
+    modal.id = 'adaIntroModal';
+    modal.style.position = 'fixed';
+    modal.style.left = '0';
+    modal.style.top = '0';
+    modal.style.width = '100%';
+    modal.style.height = '100%';
+    modal.style.background = 'rgba(0,0,0,0.6)';
+    modal.style.display = 'flex';
+    modal.style.alignItems = 'center';
+    modal.style.justifyContent = 'center';
+    modal.style.zIndex = '9999';
+
+    const box = document.createElement('div');
+    box.style.width = 'min(900px, 90%)';
+    box.style.maxHeight = '90%';
+    box.style.overflow = 'auto';
+    box.style.background = '#fff';
+    box.style.padding = '24px';
+    box.style.borderRadius = '8px';
+    box.style.boxShadow = '0 10px 30px rgba(0,0,0,0.3)';
+
+    const title = document.createElement('h2');
+    title.textContent = 'Welcome to ADA';
+    box.appendChild(title);
+
+    const p = document.createElement('p');
+    p.innerHTML = `This site helps you create characters, run campaigns, and play AI-driven adventures.`;
+    box.appendChild(p);
+
+    const list = document.createElement('ul');
+    list.style.marginTop = '8px';
+    list.innerHTML = `
+      <li><strong>Character Forge</strong>: Step-by-step character creation and saving.</li>
+      <li><strong>Campaign Creator</strong>: Start and manage campaigns, add participants and linked characters.</li>
+      <li><strong>AI Sagas</strong>: Play adventures with an AI Dungeon Master — send messages, resolve checks, and follow the narrative.</li>
+    `;
+    box.appendChild(list);
+
+    const hint = document.createElement('p');
+    hint.style.marginTop = '12px';
+    hint.textContent = 'Use the navigation to switch between the Forge, Campaigns, and AI Sagas. You can find your profile and saved characters in the Vault.';
+    box.appendChild(hint);
+
+    const controls = document.createElement('div');
+    controls.style.display = 'flex';
+    controls.style.gap = '8px';
+    controls.style.marginTop = '16px';
+
+    const dontShow = document.createElement('button');
+    dontShow.textContent = "Don't show again";
+    dontShow.className = 'btn';
+    dontShow.addEventListener('click', () => {
+      try { localStorage.setItem('adaIntroDismissed', 'true'); } catch {};
+      document.body.removeChild(modal);
+    });
+
+    const closeBtn = document.createElement('button');
+    closeBtn.textContent = 'Close';
+    closeBtn.className = 'btn btn--secondary';
+    closeBtn.addEventListener('click', () => {
+      document.body.removeChild(modal);
+    });
+
+    controls.appendChild(dontShow);
+    controls.appendChild(closeBtn);
+    box.appendChild(controls);
+
+    modal.appendChild(box);
+    return modal;
+  }
+
+  function showIntroIfNeeded() {
+    let user = null;
+    try { user = localStorage.getItem('adaCurrentUser'); } catch (e) { user = null; }
+    const dismissed = (() => { try { return localStorage.getItem('adaIntroDismissed') === 'true'; } catch { return false; } })();
+    if (user && !dismissed) {
+      const modal = buildIntroModal();
+      document.body.appendChild(modal);
+    }
+  }
+
+  // Add a "Show Intro" button to the app nav so users can reopen the intro anytime.
+  (function addShowIntroNavButton() {
+    try {
+      if (appNav) {
+        const btn = document.createElement('button');
+        btn.id = 'showIntroBtn';
+        btn.className = 'nav-button';
+        btn.style.marginLeft = '8px';
+        btn.textContent = 'Intro';
+        btn.addEventListener('click', () => {
+          try { localStorage.removeItem('adaIntroDismissed'); } catch {};
+          const modal = buildIntroModal();
+          document.body.appendChild(modal);
+        });
+        appNav.appendChild(btn);
+      }
+    } catch (e) {
+      // ignore
+    }
+  })();
+
+  // Run after a short delay to allow login code to set `adaCurrentUser`.
+  setTimeout(showIntroIfNeeded, 600);
   const aiPlayerPromptField = document.getElementById("aiPlayerPromptField");
 
   // Human Lobbies page

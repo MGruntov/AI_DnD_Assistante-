@@ -1132,7 +1132,8 @@ async function handleAIDMResolveCheck(request: Request, env: Env, origin: string
 	} catch {
 		return errorResponse('Corrupted character record', 500, origin);
 	}
-	if (character.owner !== username && campaign.dm !== username) {
+	// Allow campaign participants (including DM) to resolve checks.
+	if (!isParticipant) {
 		return errorResponse('You are not allowed to control this AI-DM session', 403, origin);
 	}
 

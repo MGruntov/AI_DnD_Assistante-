@@ -5174,8 +5174,13 @@ async function handleAIDMTurn(request: Request, env: Env, origin: string | null)
 		return errorResponse('Corrupted character record for AI-DM session', 500, origin);
 	}
 
-	// Only the character owner or campaign DM may drive the AI-DM
-	if (character.owner !== username && campaign.dm !== username) {
+	// Allow the character owner, the campaign DM, or any campaign participant
+	// to drive the AI-DM. This relaxes the previous restriction which blocked
+	// participants when the character record lacked an `owner` field.
+	const isParticipant =
+		campaign.dm === username ||
+		(Array.isArray(campaign.participants) && campaign.participants.includes(username));
+	if (character.owner !== username && !isParticipant) {
 		return errorResponse('You are not allowed to control this AI-DM session', 403, origin);
 	}
 
